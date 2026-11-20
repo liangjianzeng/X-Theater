@@ -100,7 +100,7 @@ async function run(job, ctx) {
   const titles = [base, base + " · 变奏", base + "（未许可 · 备选）"];
   const jobSeg = safeSeg(j.id || "music_" + sub(hash12(ctx, { lane: NAME, p }), 0, 8));
 
-  if (ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) {
+  if ((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL) {
     const cand = await runReal(ctx, j, p, mood);
     if (cand) {
       const bag2 = { ok: true, cents: 12, count: 1, mood, candidates: [cand], engine: "自部署·标准档", cost_cents: 12, meta: { kind: "music-real" } };

@@ -105,7 +105,7 @@ async function genOne(ctx, job, { tmplId, prompt, negative, image, seedHex, widt
   }
   const r = await comfy.runTemplate(ctx, job, {
     tmplId: tmpl,
-    params: Object.assign({}, params, tmpl === TMPL_I2I ? { IMAGE: params.IMAGE } : {}),
+    params: Object.assign({}, params, tmpl === TMPL_I2I ? { IMAGE: params.IMAGE, DENOISE: 0.45 } : {}),
     timeoutMs: 300000
   });
   return r;

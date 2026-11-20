@@ -40,7 +40,9 @@ const cfg = {
     enabled: process.env.THEATER_COMFY === "1",
     base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188",
     inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input"
-  }
+  },
+  music: { url: process.env.THEATER_MUSIC_URL || "" },
+  tts: { url: process.env.THEATER_TTS_URL || "" }
 };
 const engine = createEngine({ store, bus, cfg });
 

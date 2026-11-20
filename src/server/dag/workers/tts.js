@@ -87,7 +87,7 @@ async function runReal(ctx, job, p, seed) {
 async function run(job, ctx) {
   const j = job || {};
   const p = j.payload || {};
-  if (ctx.cfg && ctx.cfg.tts && ctx.cfg.tts.url) {
+  if ((ctx.cfg && ctx.cfg.tts && ctx.cfg.tts.url) || process.env.THEATER_TTS_URL) {
     const rr = await runReal(ctx, job, p, null);
     if (rr) {
       const id2 = "voice_" + safeSeg(job.id);

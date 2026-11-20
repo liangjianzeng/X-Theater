@@ -368,6 +368,8 @@ function reEnqueueOnReject(ctx, card) {
       return ctx.engine.enqueue("c1plan", { episodeId: epId }, opts);
     case "C2":
       return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
+    case "C3":
+      return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
     case "C5":
       return ctx.engine.enqueue("compose", { episodeId: epId, purpose: "preview" }, opts);
     case "C9": {
@@ -427,7 +429,18 @@ function onStoryboardDone(ctx, job, episodeId) {
   const r = upsertCard(ctx, { episodeId, type: "C2", payload, skipIfDecided: true });
   if (r.created) publishCard(ctx, "created", r.card);
   else if (r.card) publishCard(ctx, "updated", r.card);
-  // 真实模式：为缺真定妆的角色派生 casting 任务（onCastingDone 回填 C2）
+  // 数据刷新：新分镜图刷进本集所有 C2/C4（含已拍板卡）——不改任何决策，仅产物更新
+  const allCards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  allCards.forEach((x) => {
+    if (x.episodeId !== episodeId) return;
+    if (x.type !== "C2" && x.type !== "C4") return;
+    if (x.status === "pending" && x.id === (r.card && r.card.id)) return; // pending 新卡已在 upsert 时写入
+    x.payload = Object.assign({}, x.payload, { images: images });
+    x.ver += 1;
+    x.updated_at = ctx.util.now();
+    publishCard(ctx, "updated", x);
+  });
+    // 真实模式：为缺真定妆的角色派生 casting 任务（onCastingDone 回填 C2）
   if (comfyOn && cast.length) {
     const actors = (r.card && r.card.payload && r.card.payload.actors) || [];
     actors.forEach((a) => {
@@ -779,7 +792,12 @@ function register(router, ctx) {
       }
 
       if (card.status !== "pending") {
-        throw { code: "ALREADY_DECIDED", message: "卡片已决策" };
+        // 重出语义：已拍板的卡产物不满意 → 允许驳回重出（决策留痕不撤、计数不变）
+        if (card.status === "decided" && action === "reject") {
+          card.status = "rejected";
+        } else {
+          throw { code: "ALREADY_DECIDED", message: "卡片已决策" };
+        }
       }
 
       if (action === "reject") {
