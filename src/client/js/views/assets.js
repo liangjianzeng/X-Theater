@@ -108,7 +108,7 @@
     template: `
       <div class="v-assets">
         <div class="panel">
-          <div class="panel-title">曲库 <span class="weak">影子成本＝候选产出的记账，采用不另收费</span></div>
+          <div class="panel-title">曲库 <span class="weak">「分」＝内部成本核算（影子记账·非收费）；付费 API 档才显示实付价格</span></div>
           <loading v-if="loading && !err"></loading>
           <err-state v-else-if="err" :err="err" :on-retry="loadMusic"></err-state>
           <empty-state v-else-if="!library.length" icon="🎵" text="曲库还是空的"
@@ -118,7 +118,7 @@
             <thead>
               <tr>
                 <th>曲目</th><th>心情</th><th>时长</th><th>许可</th>
-                <th>影子成本</th><th>挂接场</th><th>挂到本场</th>
+                <th>内部核算</th><th>挂接场</th><th>挂到本场</th>
               </tr>
             </thead>
             <tbody>

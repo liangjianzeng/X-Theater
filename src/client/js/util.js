@@ -9,6 +9,11 @@
     if (cents == null || !Number.isFinite(Number(cents))) return "—";
     return "¥" + (Number(cents) / 100).toFixed(2);
   };
+  /* 一期自部署口径：分＝内部成本核算单位（影子记账），不是价格；付费 API 面才用 fmtYuan */
+  T.fmtFen = function (cents) {
+    if (cents == null || !Number.isFinite(Number(cents))) return "—";
+    return Number(cents) + " 分";
+  };
   T.fmtMin = function (min) {
     if (min == null || !Number.isFinite(Number(min))) return "—";
     const m = Math.round(Number(min));
