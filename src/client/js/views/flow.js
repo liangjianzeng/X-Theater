@@ -129,7 +129,7 @@
             const bits = [];
             if (e.shots != null) bits.push(e.shots + " 镜");
             if (e.time_min != null) bits.push("约 " + clean(T.fmtMin(e.time_min)));
-            if (e.cents != null) bits.push("内部核算 " + T.fmtFen(e.cents));
+            if (e.cents != null) bits.push(T.fmtFen(e.cents));
             return bits.join(" · ");
           }
           case "C7": {
@@ -339,7 +339,7 @@
               <template v-else-if="est.data">
                 <div class="kv-row"><span>镜头数</span><b class="num">{{ est.data.shots }}</b></div>
                 <div class="kv-row"><span>预计耗时</span><b class="num">{{ fmtMin(est.data.time_min) }}</b></div>
-                <div class="kv-row"><span>内部核算（非收费）</span><money :cents="est.data.cents"></money></div>
+                <div class="kv-row"><span>成本</span><money :cents="est.data.cents"></money></div>
                 <hr class="sep" />
                 <div class="kv-row" v-for="(b, i) in (est.data.breakdown || [])" :key="i">
                   <span class="grow">{{ clean(b.item) }}</span>

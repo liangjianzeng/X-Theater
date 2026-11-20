@@ -33,7 +33,7 @@
      付费 API（二期托管/商业档）接入后，付费面才显示实付货币。 */
   C.Money = {
     props: { cents: [Number, String] },
-    template: `<b class="num" title="内部成本核算（影子记账）· 非收费">{{ txt }}</b>`,
+    template: `<b class="num">{{ txt }}</b>`,
     setup(props) { return { txt: global.Vue.computed(() => T.fmtFen(props.cents)) }; }
   };
 

@@ -312,7 +312,7 @@
           <div class="v-copilot-budgetrow" v-if="L.sid">
             <div class="row">
               <span class="weak">本会话已用</span><money :cents="L.used_cents"></money>
-              <span class="weak">/ 预算线（内部核算·非收费）</span><money :cents="L.budget_line"></money>
+              <span class="weak">/ 预算</span><money :cents="L.budget_line"></money>
             </div>
             <div class="progress v-copilot-budget" :class="{ over: budgetOver }">
               <div class="bar"><span :style="{ width: budgetPct + '%' }"></span></div>

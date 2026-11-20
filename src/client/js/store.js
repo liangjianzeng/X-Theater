@@ -174,7 +174,7 @@
     const ok = await store.confirm({
       title: "开机确认（服务端报价）",
       time: e.time_min != null ? "约 " + e.time_min + " 分钟" : null,
-      cost: "本地自部署 · 无生成费用（内部核算 " + (e.cents != null ? e.cents : "—") + " 分）",
+
       shots: e.shots != null ? "拍 " + e.shots + " 镜" : null,
       okLabel: "确认开跑"
     });

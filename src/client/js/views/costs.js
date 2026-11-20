@@ -65,7 +65,7 @@
           </div>
 
           <div class="panel">
-            <div class="panel-title">镜头账本 <span class="weak">「分」＝内部成本核算（影子记账·非收费）；付费 API 档才显示实付价格</span>
+            <div class="panel-title">镜头账本 
               <span class="weak" v-if="overFlag">已超预算，超支会触发自动暂停；差额见 Σ 对账行</span>
               <span class="weak" v-else>账本与记账差额见 Σ 对账行</span>
               <button class="btn btn-ghost btn-sm" @click="showBilling" :aria-busy="billingLoading">影子账本全量</button>
