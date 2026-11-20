@@ -174,9 +174,34 @@ function seedState() {
   };
 }
 
+
+/* 极简种子（THEATER_SEED_MINIMAL=1）：真实流程档——无假镜头/假账本/假复审/假曲库，
+   一切数据由真实操作产生。验收套件不设此 env，仍用完整种子。 */
+function seedStateMinimal() {
+  return {
+    users: {
+      u1: { id: "u1", name: "阿航", role: "creator" },
+      u2: { id: "u2", name: "运营小李", role: "ops" }
+    },
+    invites: ["INV-DEMO-1"],
+    projects: {
+      p1: { id: "p1", title: "剧场首部短剧", style_pkg: { look: "写实电影感", palette: "青橙", ratio: "9:16" }, music_enabled: true }
+    },
+    episodes: {},
+    scenes: {},
+    shots: {},
+    cards: {},
+    music_lib: [],
+    review_q: [],
+    alerts: [],
+    l2_sessions: {},
+    settings: seedState().settings
+  };
+}
+
 /* ---------------- openStore ---------------- */
 
-function openStore(varDir) {
+function openStore(varDir, opts) {
   fs.mkdirSync(varDir, { recursive: true });
   const statePath = path.join(varDir, "state.json");
 
@@ -190,7 +215,7 @@ function openStore(varDir) {
     }
   }
   if (!state || typeof state !== "object" || !state.projects || !state.episodes) {
-    state = seedState();
+    state = (opts && opts.minimal) ? seedStateMinimal() : seedState();
     seeded = true;
     // e1 演示集已开拍：镜像种子影子账本，Σbilling(episode)==cost_cents 不变量出生即成立（V5）
     let sum = 0;

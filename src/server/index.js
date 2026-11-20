@@ -30,7 +30,7 @@ const outDir = path.join(varDir, "out");
 fs.mkdirSync(outDir, { recursive: true });
 
 /* ---------- 装配 ---------- */
-const store = openStore(varDir);
+const store = openStore(varDir, { minimal: process.env.THEATER_SEED_MINIMAL === "1" });
 const bus = createBus();
 // comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
 const cfg = {
@@ -38,7 +38,8 @@ const cfg = {
   seed: true,
   comfy: {
     enabled: process.env.THEATER_COMFY === "1",
-    base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188"
+    base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188",
+    inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input"
   }
 };
 const engine = createEngine({ store, bus, cfg });

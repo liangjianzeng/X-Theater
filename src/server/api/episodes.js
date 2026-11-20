@@ -81,12 +81,39 @@ function register(router, ctx) {
         throw { code: "NOT_FOUND", message: "项目不存在: " + b.projectId };
       }
       const kind = b.kind === "novel" ? "novel" : "one_liner";
+      // 剧本结构（真实流程档）：scenes 分镜表（场/镜/台词）＋cast 角色定义（含参考图）。
+      // 一期不用 LLM 解析——剧本即结构化输入；C1/C2/拍摄全链按此跑。
+      let script = null;
+      if (b.script && typeof b.script === "object") {
+        const scenes = Array.isArray(b.script.scenes) ? b.script.scenes : [];
+        const cast = Array.isArray(b.script.cast) ? b.script.cast : [];
+        if (!scenes.length) throw { code: "BAD_REQUEST", message: "script.scenes 不能为空（至少一场）" };
+        script = {
+          scenes: scenes.map((sc) => ({
+            name: String(sc.name || "场").slice(0, 40),
+            mood: String(sc.mood || "中性").slice(0, 20),
+            shots: (Array.isArray(sc.shots) ? sc.shots : []).map((sh) => ({
+              desc: String(sh.desc || "").slice(0, 300),
+              sec: Number(sh.sec) > 0 ? Math.min(Number(sh.sec), 15) : 5,
+              cast: Array.isArray(sh.cast) ? sh.cast.map(String) : [],
+              dialogue: String(sh.dialogue || "").slice(0, 200)
+            }))
+          })),
+          cast: cast.map((c) => ({
+            role: String(c.role || "角色").slice(0, 30),
+            name: String(c.name || "").slice(0, 30),
+            desc: String(c.desc || "").slice(0, 400),
+            refImage: c.refImage ? String(c.refImage).replace(/[^\w.\-]/g, "_") : null
+          }))
+        };
+      }
       const ep = {
         id: util.uid("ep"),
         projectId: b.projectId,
         title: b.title,
         brief: b.brief,
         kind,
+        script,
         stage: 1,
         decisions: 0,
         budget_cents: typeof b.budget_cents === "number" ? b.budget_cents : DEFAULT_BUDGET_CENTS,

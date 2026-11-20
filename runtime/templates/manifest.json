@@ -26,6 +26,166 @@
    ],
    "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存",
    "evidence": "runtime/comfyui-evidence/EVIDENCE.md"
+  },
+  "qwen-image-turbo-i2i": {
+   "tmpl_sha16": "8d6d497cd41b80a7",
+   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+   "cn_commits": {
+    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+   },
+   "weights": [
+    {
+     "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
+     "sha16": "37c51ff446f4db2e",
+     "role": "diffusion_model"
+    },
+    {
+     "file": "qwen3vl_8b_int8_convrot.safetensors",
+     "sha16": "8bfd0f6e12abf2d2",
+     "role": "text_encoder"
+    },
+    {
+     "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
+     "sha16": "bb21f7473051e1ac",
+     "role": "vae"
+    }
+   ],
+   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存；i2i：LoadImage→VAEEncode→denoise0.7（保影调变构图）"
+  },
+  "ltx25-t2v": {
+   "tmpl_sha16": "f4a3eae224cbb3e1",
+   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+   "cn_commits": {
+    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+   },
+   "weights": [
+    {
+     "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
+     "sha16": "55442750eb0013d9",
+     "role": "diffusion_model",
+     "source": "modelscope:unsloth/LTX-2.5-GGUF",
+     "bytes": 14000234880
+    },
+    {
+     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+     "sha16": "6ce688a0aa98a5fa",
+     "role": "text_encoder",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 15372969374
+    },
+    {
+     "file": "ltx-2.5-video-vae-bf16.safetensors",
+     "sha16": "847e14ca7f3355de",
+     "role": "vae",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 1472223346
+    },
+    {
+     "file": "ltx-2.5-audio-vae-bf16.safetensors",
+     "sha16": "c52733d37f6a7fb7",
+     "role": "vae_audio",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 364866540
+    },
+    {
+     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+     "sha16": "eb5a71fe4068ee87",
+     "role": "latent_upscale_model",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 995778752
+    }
+   ],
+   "vram_profile": "16G：DiT UD-Q4_K_XL GGUF 全驻 + TE int8-convrot 15.4G staged 编码后逐出 + VAE×2/upscale ≈2.8G；实测峰值 15785MiB（96.8%）无 OOM；两段蒸馏 8+3 步 CFG1；禁与生图三件套热载共存，切换前必须 POST /free",
+   "params": {
+    "PROMPT": "场景+动作+镜头+风格描述",
+    "NEGATIVE": "默认 pc game, console game, video game, cartoon, childish, ugly",
+    "WIDTH": 720,
+    "HEIGHT": 1280,
+    "SEED": "int",
+    "FPS": 24,
+    "LENGTH": 121,
+    "STAGE1_W": 360,
+    "STAGE1_H": 640,
+    "CFG": 1,
+    "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+    "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
+   },
+   "notes": "LTX-2.5 VAE 空间下采样 32、两段流水线原生输出=STAGE1×64 对齐：720×1280 目标经 360×640 stage1 → 原生 704×1280 → ImageScale lanczos 到精确 720×1280；含同步音频（audio VAE）；输出 mp4 H.264",
+   "verified": {
+    "prompt_id": "12b1146b-608b-43d4-a48e-ea50b9695e72",
+    "wall_s": 190.7,
+    "vram_peak_mib": 15785,
+    "output": "runtime/ltx25-evidence/t2v_test_720x1280_00001_.mp4"
+   },
+   "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
+  },
+  "ltx25-i2v": {
+   "tmpl_sha16": "fefa64344445cc8d",
+   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+   "cn_commits": {
+    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+   },
+   "weights": [
+    {
+     "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
+     "sha16": "55442750eb0013d9",
+     "role": "diffusion_model",
+     "source": "modelscope:unsloth/LTX-2.5-GGUF",
+     "bytes": 14000234880
+    },
+    {
+     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+     "sha16": "6ce688a0aa98a5fa",
+     "role": "text_encoder",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 15372969374
+    },
+    {
+     "file": "ltx-2.5-video-vae-bf16.safetensors",
+     "sha16": "847e14ca7f3355de",
+     "role": "vae",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 1472223346
+    },
+    {
+     "file": "ltx-2.5-audio-vae-bf16.safetensors",
+     "sha16": "c52733d37f6a7fb7",
+     "role": "vae_audio",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 364866540
+    },
+    {
+     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+     "sha16": "eb5a71fe4068ee87",
+     "role": "latent_upscale_model",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 995778752
+    }
+   ],
+   "vram_profile": "16G：同 ltx25-t2v；实测峰值 15755MiB（96.6%）无 OOM；首帧 guide 两段 Inplace（stage1 strength 0.7 / stage2 1.0）；禁与生图三件套热载共存",
+   "params": {
+    "IMAGE": "ComfyUI/input 内首帧文件名（竖屏 9:16 最佳）",
+    "PROMPT": "动作+表情+镜头描述",
+    "NEGATIVE": "默认同上",
+    "WIDTH": 720,
+    "HEIGHT": 1280,
+    "SEED": "int",
+    "FPS": 24,
+    "LENGTH": 121,
+    "STAGE1_W": 360,
+    "STAGE1_H": 640,
+    "CFG": 1,
+    "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+    "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
+   },
+   "notes": "LoadImage → LTXVPreprocess(18) → 两段 LTXVImgToVideoInplace（首帧锁定）；首帧在 stage2 以 strength 1.0 重编码锁死；其余同 ltx25-t2v",
+   "verified": {
+    "prompt_id": "f31002dd-0e37-4571-b4cc-8f285503e416",
+    "wall_s": 220.9,
+    "vram_peak_mib": 15755,
+    "output": "runtime/ltx25-evidence/i2v_test_720x1280_00001_.mp4"
+   },
+   "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
   }
  }
 }

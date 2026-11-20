@@ -126,6 +126,17 @@ function synthesizeCasting(ctx, episodeId) {
   return { actors, note: "定妆照 4 候选/人 · 机检通过" };
 }
 
+function realStoryboardImages(ctx, episodeId) {
+  // 从 C2 卡取真实分镜图（seq→shotId 已绑定）；不足或缺失则回退 stub
+  const st = ctx.store.get();
+  const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  const c2 = cards.find((x) => x.episodeId === episodeId && x.type === "C2");
+  const images = (c2 && c2.payload && c2.payload.images) || [];
+  const ok = images.filter((im) => im.art && im.shotId);
+  if (!ok.length) return null;
+  return { images: ok, note: "分镜首帧（真机）· 逐格可查" };
+}
+
 function synthesizeStoryboard(ctx, episodeId) {
   const shots = shotsOf(ctx, episodeId);
   return {
@@ -263,10 +274,11 @@ function advanceOnAccept(ctx, card, episode, operator) {
       derived.push({ kind: "card", card: r.card });
     }
   } else if (t === "C3") {
+    const realImages = realStoryboardImages(ctx, epId);
     const r = upsertCard(ctx, {
       episodeId: epId,
       type: "C4",
-      payload: synthesizeStoryboard(ctx, epId),
+      payload: realImages || synthesizeStoryboard(ctx, epId),
       skipIfDecided: true
     });
     if (r.created) {
@@ -386,11 +398,76 @@ function onPlanDone(ctx, job, episodeId) {
 }
 
 function onStoryboardDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
   const art = job.art || job.result || {};
-  const payload = art.casting || synthesizeCasting(ctx, episodeId);
+  const ep2 = (st.episodes || {})[episodeId];
+  const cast = (ep2 && ep2.script && ep2.script.cast) || [];
+  const comfyOn = !!(ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.enabled);
+  let payload;
+  if (comfyOn && cast.length) {
+    // 真实模式：角色定义即选角卡主体；定妆图由 casting 任务异步回填
+    payload = {
+      actors: cast.map((cc, i) => ({
+        id: "actor_" + i, role: cc.role, name: cc.name, desc: cc.desc, refImage: cc.refImage,
+        candidates: [{ id: "cand_" + i + "_0", name: "定妆生成中…", art: null, score: null }]
+      })),
+      images: (art.images || []).map(im => im),
+      note: "角色定义 " + cast.length + " 人 · 定妆生成中（真机）"
+    };
+  } else {
+    payload = art.casting || synthesizeCasting(ctx, episodeId);
+  }
+  // 分镜图按 seq 绑定 shotId（真实模式 images 带真实产物）
+  const shots = shotsOf(ctx, episodeId).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const images = (art.images || []).map((im) => {
+    const sh = shots[(im.seq || 1) - 1];
+    return Object.assign({}, im, { shotId: sh ? sh.id : null });
+  });
+  payload.images = images;
   const r = upsertCard(ctx, { episodeId, type: "C2", payload, skipIfDecided: true });
   if (r.created) publishCard(ctx, "created", r.card);
   else if (r.card) publishCard(ctx, "updated", r.card);
+  // 真实模式：为缺真定妆的角色派生 casting 任务（onCastingDone 回填 C2）
+  if (comfyOn && cast.length) {
+    const actors = (r.card && r.card.payload && r.card.payload.actors) || [];
+    actors.forEach((a) => {
+      if (((a.candidates || [])[0] || {}).art) return;
+      const idx = cast.findIndex((cc) => cc.role === a.role);
+      if (idx < 0) return;
+      ctx.engine.enqueue(
+        "casting",
+        { episodeId: episodeId, castIdx: idx },
+        { episodeId: episodeId, initiated_by: "system" }
+      );
+    });
+  }
+  return true;
+}
+
+function onCastingDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
+  const art = job.art || job.result || {};
+  const actor = art.actor || { idx: (job.payload || {}).castIdx };
+  // 找本集 pending 的 C2 卡，把真定妆图回填到对应角色首个候选
+  const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  const c2 = cards.find((x) => x.episodeId === episodeId && x.type === "C2" && x.status === "pending");
+  if (!c2 || !art.art) return false;
+  const actors = (c2.payload || {}).actors || [];
+  const target = actors[actor.idx] || actors.find((a) => a.role === actor.role);
+  if (!target) return false;
+  target.candidates = [{
+    id: "cand_" + actor.idx + "_0",
+    name: "定妆·真机（自部署）",
+    art: art.art,
+    score: null
+  }];
+  const pendingCast = actors.filter((a) => !(a.candidates || [])[0] || !(a.candidates[0] || {}).art).length;
+  c2.payload.note = pendingCast
+    ? "角色定义 " + actors.length + " 人 · 定妆生成中（剩 " + pendingCast + " 人）"
+    : "角色定义 " + actors.length + " 人 · 定妆齐（真机）";
+  c2.ver += 1;
+  c2.updated_at = ctx.util.now();
+  try { ctx.bus.publish("cards", { event: "updated", card: c2 }); } catch (e) {}
   return true;
 }
 
@@ -568,6 +645,9 @@ function handleJobDone(ctx, evt) {
       break;
     case "storyboard":
       touched = onStoryboardDone(ctx, job, episodeId);
+      break;
+    case "casting":
+      touched = onCastingDone(ctx, job, episodeId);
       break;
     case "video":
       touched = onVideoDone(ctx, job, episodeId);

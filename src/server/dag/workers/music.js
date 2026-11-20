@@ -56,6 +56,42 @@ function writeOut(ctx, fileName, data) {
   return fp;
 }
 
+async function runReal(ctx, job, p, mood) {
+  // 真模式：W-M ACE-Step :8190（MIT；惰性加载，响应即释放显存）。产物 wav → var/out + 曲库候选结构。
+  const http = require("http");
+  const url = String((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL || "");
+  if (!url) return null;
+  const body = JSON.stringify({ mood, seconds: 45, seed: numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295 });
+  const r = await new Promise((resolve, reject) => {
+    const rq = http.request(url + "/music", { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) }, timeout: 300000 }, (rs) => {
+      let s = ""; rs.on("data", (c) => s += c); rs.on("end", () => { try { resolve({ st: rs.statusCode, b: JSON.parse(s || "{}") }); } catch (e) { reject(Object.assign(new Error("W-M 响应异常"), { code: "MUSIC_BAD" })); } });
+    });
+    rq.on("timeout", () => { rq.destroy(); reject(Object.assign(new Error("W-M 超时（300s）"), { code: "MUSIC_TIMEOUT" })); });
+    rq.on("error", (e) => reject(Object.assign(new Error("W-M 不可达：" + e.message), { code: "MUSIC_UNREACHABLE" })));
+    rq.write(body); rq.end();
+  });
+  if (r.st !== 200) throw Object.assign(new Error("W-M 生成失败 HTTP " + r.st + ": " + JSON.stringify(r.b).slice(0, 200)), { code: "MUSIC_HTTP" });
+  const info = r.b;
+  // wav 拷进 var/out（/var/out 静态面可播放）
+  const wav = fs.readFileSync(info.file);
+  const seed = hash12(ctx, { lane: NAME, jobId: job.id, mood, k: "real" });
+  const id = "mus_" + sub(seed, 0, 8);
+  const fileName = "music_" + id + ".wav";
+  const abs = writeOut(ctx, fileName, wav);
+  const meta = {
+    kind: "music-real", lane: NAME, engine: ENGINE + "（int8 权重档）", engine_user: "自部署·标准档",
+    id, title: mood + " · " + Math.round(info.seconds) + "s", mood, sec: info.seconds,
+    license: { model: "MIT", usage: "ok" }, sceneId: p.sceneId || null,
+    episodeId: p.episodeId || job.episodeId || null, cents: 12, seed: String(info.seed || ""),
+    gen_seconds: info.gen_seconds, vram_peak_mb: info.vram_peak_mb, source: info.file
+  };
+  writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  return {
+    id, title: meta.title, mood, sec: info.seconds, license: { model: "MIT", usage: "ok" },
+    engine: "自部署·标准档", shadow_cents: 12, sceneId: p.sceneId || null, art: "var/out/" + fileName, art_abs: abs
+  };
+}
+
 async function run(job, ctx) {
   const j = job || {};
   const p = j.payload || {};
@@ -64,6 +100,14 @@ async function run(job, ctx) {
   const titles = [base, base + " · 变奏", base + "（未许可 · 备选）"];
   const jobSeg = safeSeg(j.id || "music_" + sub(hash12(ctx, { lane: NAME, p }), 0, 8));
 
+  if (ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) {
+    const cand = await runReal(ctx, j, p, mood);
+    if (cand) {
+      const bag2 = { ok: true, cents: 12, count: 1, mood, candidates: [cand], engine: "自部署·标准档", cost_cents: 12, meta: { kind: "music-real" } };
+      j.result = bag2; j.art = bag2;
+      return { ok: true, cents: 12, art: cand.art, meta: bag2.meta };
+    }
+  }
   const candidates = [];
   let total = 0;
   for (let i = 0; i < 3; i++) {

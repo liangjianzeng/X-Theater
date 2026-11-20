@@ -52,9 +52,51 @@ function writeOut(ctx, fileName, data) {
   return fp;
 }
 
+async function runReal(ctx, job, p, seed) {
+  const http = require("http");
+  const url = String((ctx.cfg && ctx.cfg.tts && ctx.cfg.tts.url) || process.env.THEATER_TTS_URL || "");
+  if (!url) return null;
+  const st = ctx.store.get();
+  const ep = st.episodes && st.episodes[(p.episodeId || job.episodeId || "")];
+  const script = ep && ep.script;
+  const lines = [];
+  (script && script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh, i) => {
+    if (sh.dialogue) lines.push({ seq: i + 1, text: sh.dialogue, cast: (sh.cast || [])[0] || "" });
+  }));
+  if (!lines.length) return null;
+  const out = [];
+  for (const ln of lines) {
+    const body = JSON.stringify({ text: ln.text, speaker: ln.cast });
+    const r = await new Promise((resolve, reject) => {
+      const rq = http.request(url + "/tts", { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) }, timeout: 180000 }, (rs) => {
+        let s = ""; rs.on("data", (c) => s += c); rs.on("end", () => { try { resolve({ st: rs.statusCode, b: JSON.parse(s || "{}") }); } catch (e) { reject(Object.assign(new Error("TTS 响应异常"), { code: "TTS_BAD" })); } });
+      });
+      rq.on("timeout", () => { rq.destroy(); reject(Object.assign(new Error("TTS 超时"), { code: "TTS_TIMEOUT" })); });
+      rq.on("error", (e) => reject(Object.assign(new Error("TTS 不可达：" + e.message), { code: "TTS_UNREACHABLE" })));
+      rq.write(body); rq.end();
+    });
+    if (r.st !== 200) throw Object.assign(new Error("TTS 失败 HTTP " + r.st), { code: "TTS_HTTP" });
+    const wav = fs.readFileSync(r.b.file);
+    const fn = "tts_" + safeSeg(job.id) + "_" + ln.seq + ".wav";
+    writeOut(ctx, fn, wav);
+    out.push({ seq: ln.seq, text: ln.text, cast: ln.cast, art: "var/out/" + fn, seconds: r.b.seconds || null });
+  }
+  return { lines: out };
+}
+
 async function run(job, ctx) {
   const j = job || {};
   const p = j.payload || {};
+  if (ctx.cfg && ctx.cfg.tts && ctx.cfg.tts.url) {
+    const rr = await runReal(ctx, job, p, null);
+    if (rr) {
+      const id2 = "voice_" + safeSeg(job.id);
+      const meta2 = { kind: "voice-real", lane: NAME, engine: ENGINE, episodeId: p.episodeId || job.episodeId || null, lines: rr.lines, cents: 5 };
+      const bag2 = { ok: true, cents: 5, art: rr.lines[0] ? rr.lines[0].art : null, meta: meta2, lines: rr.lines, engine: "自部署·标准档" };
+      job.result = bag2; job.art = bag2;
+      return { ok: true, cents: 5, art: bag2.art, meta: meta2 };
+    }
+  }
   const seed = hash12(ctx, { lane: NAME, jobId: j.id, shotId: p.shotId || null, text: p.text || p.line || null, voice: p.voice || null });
   const cents = 2 + (numFrom(seed) % 5); // 2–6 分（确定性）
 

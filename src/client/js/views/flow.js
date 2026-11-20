@@ -244,6 +244,13 @@
         finally { busyId.value = ""; }
       }
 
+      function p(card) { return (card && card.payload) || {}; }
+      function firstArt(a) {
+        const cs = (a && a.candidates) || [];
+        for (const c of cs) if (c && c.art) return '/' + c.art;
+        return null;
+      }
+
       function reload() { return store.loadCards(props.epId); }
 
       let timer = null;
@@ -264,7 +271,7 @@
         playingId, playingSrc, audioErr, audioEl,
         list, loading, err, isEmpty, pendingCount, decidedCount, ordered, c6Decided,
         typeLabel, cardTitle, summary, c7Items, cands,
-        clean, fmtMin: T.fmtMin,
+        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, firstArt,
         accept, reject, openNote, editSubmit,
         loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio
       };
@@ -300,6 +307,27 @@
             </div>
 
             <div class="card-sub" v-if="summary(card)">{{ summary(card) }}</div>
+
+            <!-- C2：角色定义＋真定妆＋分镜首帧 -->
+            <div class="v-flow-cast" v-if="card.type === 'C2'">
+              <div class="v-flow-actor" v-for="(a, ai) in (p(card).actors || [])" :key="ai">
+                <div class="v-flow-actor-art">
+                  <img v-if="firstArt(a)" :src="firstArt(a)" alt="定妆" loading="lazy" />
+                  <span class="v-flow-art-pending" v-else>⏳<br/>定妆生成中</span>
+                </div>
+                <div class="v-flow-actor-meta">
+                  <b>{{ clean(a.name || a.role) }}</b>
+                  <span class="badge">{{ clean(a.role) }}</span>
+                  <div class="weak">{{ clean(a.desc || '') }}</div>
+                </div>
+              </div>
+              <div class="v-flow-sb" v-if="(p(card).images || []).length">
+                <div class="v-flow-sb-cell" v-for="(im, i) in p(card).images" :key="i">
+                  <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" />
+                  <span class="weak" v-else>生成中</span>
+                </div>
+              </div>
+            </div>
 
             <!-- C7：复审清单（镜号＋理由） -->
             <div class="kv v-flow-c7" v-if="card.type === 'C7'">
