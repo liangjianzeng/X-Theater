@@ -341,3 +341,70 @@ a { color: inherit; text-decoration: none; }
   .v-copilot-ttl { font-size: 12.5px; }
   .v-copilot-chips .chip { font-size: 12.5px; }
 }
+
+/* ==========================================================================
+   H5 精修（≤860px）：原生 App 质感——细滚动条、紧凑顶栏、卡片节奏、安全区
+   ========================================================================== */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #D8D5CC; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #C2BEB2; }
+
+@media (max-width: 860px) {
+  /* 触屏端：滚动条只占视觉不占交互 */
+  *::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* 顶栏：52px 原生 app 条，横向可滑但无裸滚动条 */
+  .app-nav { height: 52px; min-height: 52px; padding: 0 10px; gap: 6px; scrollbar-width: none; }
+  .app-nav::-webkit-scrollbar { display: none; }
+  .nav-brand { font-size: 14px; gap: 6px; flex: none; }
+  .nav-brand b { display: none; }            /* 只留「剧」标，导航位让给页面 */
+  .app-nav nav { gap: 2px; }
+  .nav-item { padding: 8px 11px; font-size: 13px; min-height: 36px; }
+  .nav-badge { padding: 0 6px; font-size: 11px; }
+  .nav-foot { gap: 6px; flex: none; }
+  .conn { font-size: 0; gap: 0; }            /* 实时状态收为小圆点 */
+  .conn i { width: 9px; height: 9px; }
+
+  /* 页面节奏：紧凑卡片 + 底部安全区（fab 与 toast 不压内容） */
+  .app-main { padding: 12px 12px calc(84px + env(safe-area-inset-bottom)); }
+  .panel { padding: 13px 14px; margin-bottom: 12px; }
+  .card { padding: 13px 14px; }
+  .panel-title { margin-bottom: 10px; font-size: 14.5px; }
+
+  /* 集工作台顶栏：标题+tabs 两行堆叠，tabs 可滑无滚动条 */
+  .ep-head { gap: 8px; }
+  .ep-title { font-size: 17px; }
+  .ep-meta { font-size: 12px; }
+  .ep-tabs { width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; }
+  .ep-tabs::-webkit-scrollbar { display: none; }
+  .ep-tabs a { padding: 8px 13px; min-height: 36px; display: inline-flex; align-items: center; }
+
+  /* 首页集行：按钮等宽成排、成本/进度独立成行 */
+  .v-home-ep { display: flex; flex-direction: column; gap: 9px; }
+  .v-home-ep a.btn { min-width: 44%; flex: 1; display: inline-flex; align-items: center; justify-content: center; }
+  .v-home-cost { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
+  .v-home-cost .num { font-size: 14.5px; }
+  .v-home-cost .progress { flex: 1 1 100%; }
+  .progress .bar { height: 6px; }
+  .v-home-form { gap: 10px; }
+
+  /* 表格容器手机上贴边少留白 */
+  .table-scroll { margin: 0 -14px; padding: 0 14px; }
+}
+
+/* 最窄手机档（≤440px 逻辑宽）：顶栏五项全显 */
+@media (max-width: 440px) {
+  .app-nav { padding: 0 7px; }
+  .nav-brand .brand-mark { width: 26px; height: 26px; border-radius: 7px; }
+  .nav-item { padding: 8px 8px; font-size: 12.5px; }
+  .nav-item.on::before { width: 2px; }
+}
+
+/* 手机档宽表：保形横滚，禁止压碎折行 */
+@media (max-width: 860px) {
+  .table-scroll .table { min-width: 620px; }
+  .table td, .table th { white-space: nowrap; }
+  /* 镜名等长文本列允许两行省略，避免单字竖排 */
+  .table td.wrap-cell { white-space: normal; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+}

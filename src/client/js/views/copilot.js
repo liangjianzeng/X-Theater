@@ -101,7 +101,7 @@
       function isMobile() {
         return !!(global.matchMedia && global.matchMedia("(max-width: 860px)").matches);
       }
-      /* 桌面默认展开；H5 默认收起，靠 .rail-fab 唤出 */
+      /* 桌面默认展开；H5 一律收起（fab 唤出），跨断点切换时强制归位 */
       const open = Vue.ref(!isMobile());
       function syncParent() {
         const el = rootEl.value;
@@ -112,6 +112,13 @@
       function toggleFab() { open.value = !open.value; }
       function closeRail() { open.value = false; }
       Vue.watch(open, syncParent);
+      if (global.matchMedia) {
+        try {
+          global.matchMedia("(max-width: 860px)").addEventListener("change", (ev) => {
+            open.value = !ev.matches; // 进手机档→收起；回桌面→展开
+          });
+        } catch (e) { /* 老内核无 change 事件：保持挂载初态 */ }
+      }
 
       /* ---------- 连接 ---------- */
       async function connect() {
