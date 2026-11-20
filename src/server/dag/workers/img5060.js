@@ -143,11 +143,12 @@ async function runComfy(ctx, job, p, seed, cents) {
       const sh = shots[i];
       const refName = (sh.cast || [])[0];
       const ref = cast.find((c) => c.role === refName || c.name === refName);
-      const who = ref ? ref.desc + "。" : "";
+      // 人设文字锚定身份（同名同装），构图跟剧本走——i2i 锚图会把参考姿势冻进每一帧（漫画化），禁用于分镜
+      const who = ref ? "角色设定：" + ref.desc + "。" : "";
       const r = await genOne(ctx, j, {
-        tmplId: ref && ref.refImage ? TMPL_I2I : TMPL_T2I,
-        prompt: [sh.desc, who, STYLE_SUFFIX].filter(Boolean).join(" "),
-        image: ref ? ref.refImage : null,
+        tmplId: TMPL_T2I,
+        prompt: [who, sh.desc, STYLE_SUFFIX].filter(Boolean).join(" "),
+        image: null,
         seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
         width: 720, height: 1280, steps: 8, cfgv: 1.0
       });
