@@ -135,8 +135,24 @@
       async function send(t) {
         const text = String(t == null ? draft.value : t).trim();
         if (!text || L.sending || !L.sid) return;
-        if (t == null) draft.value = "";
+        if (t == null) {
+          draft.value = "";
+          const el = document.querySelector(".v-copilot-input");
+          if (el) el.style.height = "";
+        }
         try { await store.l2Send(text); } catch (e) { /* store 已 toast */ }
+      }
+      /* Enter 发送（中文输入法组词中的 Enter 不发送）；Shift+Enter 由浏览器默认换行 */
+      function onEnter(e) {
+        if (e && (e.isComposing || e.keyCode === 229)) return;
+        send();
+      }
+      /* 自适应增高（3 行起步，封顶约 10 行） */
+      function autoGrow(e) {
+        const el = e && e.target;
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = Math.min(el.scrollHeight, 220) + "px";
       }
 
       /* ---------- 8s 全量兜底（SSE 已增量；合并以服务端为准） ---------- */
@@ -287,7 +303,7 @@
       }
 
       return {
-        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl,
+        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
@@ -359,12 +375,14 @@
               <div class="row wrap v-copilot-chips">
                 <button class="chip" v-for="(c, i) in CHIPS" :key="i" :disabled="L.sending" @click="send(c)">{{ c }}</button>
               </div>
-              <div class="row">
-                <input class="input grow" v-model="draft" :disabled="L.sending"
-                  placeholder="问进度、问成本、让它去办…（Enter 发送）"
-                  @keydown.enter.prevent="send()" />
-                <span class="v-copilot-sending" v-if="L.sending"><i></i><i></i><i></i></span>
-                <button class="btn btn-primary" :disabled="L.sending || !draft.trim()" @click="send()">发送</button>
+              <div class="row v-copilot-inrow">
+                <textarea class="input grow v-copilot-input" v-model="draft" :disabled="L.sending" rows="3"
+                  placeholder="问进度、问成本、让它去办…（Enter 发送，Shift+Enter 换行）"
+                  @keydown.enter.exact.prevent="onEnter" @input="autoGrow"></textarea>
+                <div class="v-copilot-side">
+                  <span class="v-copilot-sending" v-if="L.sending"><i></i><i></i><i></i></span>
+                  <button class="btn btn-primary" :disabled="L.sending || !draft.trim()" @click="send()">发送</button>
+                </div>
               </div>
             </div>
           </template>
