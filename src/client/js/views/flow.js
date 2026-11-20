@@ -245,11 +245,22 @@
       }
 
       function p(card) { return (card && card.payload) || {}; }
+      function altArts(a) {
+        const cs = ((a && a.candidates) || []).slice(1);
+        return cs.filter(c => c && c.art).map(c => '/' + c.art);
+      }
       function firstArt(a) {
         const cs = (a && a.candidates) || [];
         for (const c of cs) if (c && c.art) return '/' + c.art;
         return null;
       }
+
+      const lightbox = Vue.ref(null);
+      function openLb(src, title) { lightbox.value = { src, title }; }
+      function closeLb() { lightbox.value = null; }
+      const onKey = (e) => { if (e.key === "Escape") lightbox.value = null; };
+      Vue.onMounted(() => global.addEventListener("keydown", onKey));
+      Vue.onUnmounted(() => global.removeEventListener("keydown", onKey));
 
       function reload() { return store.loadCards(props.epId); }
 
@@ -271,7 +282,7 @@
         playingId, playingSrc, audioErr, audioEl,
         list, loading, err, isEmpty, pendingCount, decidedCount, ordered, c6Decided,
         typeLabel, cardTitle, summary, c7Items, cands,
-        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, firstArt,
+        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, firstArt, altArts, lightbox, openLb, closeLb,
         accept, reject, openNote, editSubmit,
         loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio
       };
@@ -308,23 +319,31 @@
 
             <div class="card-sub" v-if="summary(card)">{{ summary(card) }}</div>
 
-            <!-- C2：角色定义＋真定妆＋分镜首帧 -->
+            <!-- C2：角色定义（定妆确认）＋分镜首帧（拍摄输入） -->
             <div class="v-flow-cast" v-if="card.type === 'C2'">
+              <div class="v-flow-cast-title"><b>角色定妆</b><span class="badge badge-ok">主选形象 → 进入分镜锚定</span><span class="weak">备选不进视频</span></div>
               <div class="v-flow-actor" v-for="(a, ai) in (p(card).actors || [])" :key="ai">
                 <div class="v-flow-actor-art">
-                  <img v-if="firstArt(a)" :src="firstArt(a)" alt="定妆" loading="lazy" />
+                  <img v-if="firstArt(a)" :src="firstArt(a)" alt="主选定妆" loading="lazy" :title="'点击看大图 · ' + (a.name || a.role)" @click="openLb(firstArt(a), (a.name || a.role) + ' · 主选定妆')" style="cursor:zoom-in" />
                   <span class="v-flow-art-pending" v-else>⏳<br/>定妆生成中</span>
                 </div>
                 <div class="v-flow-actor-meta">
                   <b>{{ clean(a.name || a.role) }}</b>
                   <span class="badge">{{ clean(a.role) }}</span>
                   <div class="weak">{{ clean(a.desc || '') }}</div>
+                  <div class="v-flow-actor-alts" v-if="altArts(a).length">
+                    <img v-for="(src, k) in altArts(a)" :key="k" :src="src" :title="'备选 · 不进视频'" loading="lazy" alt="备选" />
+                  </div>
                 </div>
               </div>
-              <div class="v-flow-sb" v-if="(p(card).images || []).length">
-                <div class="v-flow-sb-cell" v-for="(im, i) in p(card).images" :key="i">
-                  <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" />
-                  <span class="weak" v-else>生成中</span>
+              <div class="v-flow-sb-wrap" v-if="(p(card).images || []).length">
+                <div class="v-flow-cast-title"><b>分镜首帧</b><span class="badge badge-ok">每镜视频的 I2V 输入</span><span class="weak">拍摄阶段逐镜动起来</span></div>
+                <div class="v-flow-sb">
+                  <div class="v-flow-sb-cell" v-for="(im, i) in p(card).images" :key="i">
+                    <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" :title="'点击看大图 · 镜 ' + (im.seq || i + 1)" @click="openLb('/' + im.art, '镜 ' + (im.seq || (i + 1)) + (im.shotId ? ' · 拍摄输入' : ''))" style="cursor:zoom-in" />
+                    <span class="weak" v-else>生成中</span>
+                    <span class="v-flow-sb-tag">镜 {{ im.seq || i + 1 }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -408,6 +427,11 @@
 
         <audio ref="audioEl" :src="playingSrc" preload="none" style="display:none"
           @error="audioErr = '这条听不了：音频文件还没落盘'; playingId = ''"></audio>
+        <!-- 灯箱：看大图 -->
+        <div class="lightbox" v-if="lightbox" @click.self="closeLb">
+          <img :src="lightbox.src" alt="大图" />
+          <div class="lb-cap">{{ lightbox.title }} · 点击空白或按 Esc 关闭</div>
+        </div>
       </div>`
   };
 })(window);
