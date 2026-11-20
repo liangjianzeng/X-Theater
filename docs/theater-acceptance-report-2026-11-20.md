@@ -28,12 +28,12 @@
 | 项 | 判定 | 证据 |
 |---|---|---|
 | V1 全链路自部署成片 | **PASS**（软件面） | 套件：login→建集→C1..C8 逐卡→16 镜 job 全 self-host-stub＋initiated_by 齐；决策计数恰 5（C1/C2/C6/C7/C8）；`ep_a56b646f5dec` 浏览器全链复演 |
-| V2 5060 Ti 真推理 | **BLOCKED** | 需要 W1 硬件（5060 Ti 16G＋ComfyUI 实位）。当前 vid5060/img5060 为确定性 stub（hash12 播种，产物落盘 `var/out/*`） |
-| V3 DGX Spark 真推理 | **BLOCKED** | 同上（FastH3/MiniMax-H3 实位待 Spark 到位；nvfp4 段位裁决逻辑已按硬规则实现） |
+| V2 5060 Ti 真推理（生图先行） | **PASS**（2026-11-21 起） | W-B 无头 ComfyUI 0.46.0 常驻 :8188（仅 127.0.0.1）；qwen-image-2.1-turbo-Q5_K_M（盘内权重）＋TE int8 档（nvfp4 官方无货）＋官方 VAE；产品链路端到端：建集→c1plan→**真 PNG 1.18MB/21s**（prompt_id 留痕）；四元组锁定入 `runtime/templates/manifest.json`；显存峰值 14800MiB/16G（90.7%）无 OOM；证据 `runtime/comfyui-evidence/`。视频（LTX-2.5）与音乐（ACE-Step :8190）真推理仍待部署（见 §6） |
+| V3 DGX Spark 真推理 | **BLOCKED** | Spark 硬件未到位（FastH3/MiniMax-H3 实位待机） |
 | V4 静态可用＋SSE | **PASS** | 套件 V4-lite：SSE jobs 事件、retry 语义；浏览器实测连接指示器「实时连接正常」 |
 | V5 影子记账不变量 | **PASS** | Σbilling(episode)==cost_cents 出生即成立；套件＋成本页 Σ 对账行 |
 | V6 机审送复审＋告警/审计 | **PASS** | 第 7 镜（全局 rank）＋抽帧 hash 灰区 → review_q；ops 通过→镜 ok；C7 批复卡（每集一张、批量并入）；alerts 0→9 |
-| V7 L2 双模式 | **PASS**（桩） | 套件 V9×2：A/B 模式 5 类查询路由白名单工具；reroll 审批→job 入队；红队三案（注入拒答留痕/未批不执行/跨会话 FORBIDDEN＋SSE denied 帧）。**真实 DSH 实例 BLOCKED** |
+| V7 L2 双模式 | **PASS**（桩） | 套件 V9×2：A/B 模式 5 类查询路由白名单工具；reroll 审批→job 入队；红队三案（注入拒答留痕/未批不执行/跨会话 FORBIDDEN＋SSE denied 帧）。**真实 DSH 实例 BLOCKED**。助手 agent 体验（2026-11-21）：上下文芯片自动绑定当前集（发消息随行，助手就本集作答）、＋新会话/历史会话切换、消息复制、Esc/自动聚焦、软键盘避让、三行自适应输入 |
 | V8 语言表纪律 | **PASS** | /state 全量消毒（219 串过禁词表）；二期 13 端点全 404；用户面引擎型号不出（豁免面＝运维台注册表，实测显原值 qwen-image-2.1-turbo-Q5_K_M 等） |
 | V9 副驾三视图 | **PASS** | 对话（流式＋署名徽标）/任务/审批（TTL 倒计时→批准→job）；浏览器实测「重拍第3镜」→审批→批准→任务 |
 | V10 配乐标准版 | **PASS**（软件面） | 候选 3 条/影子计费/双许可预检拦截→换许可曲→全绿→导出＋sidecar explicit_mark。**ACE-Step 1.5 真模型生成 BLOCKED**（W1） |
