@@ -423,3 +423,13 @@ a { color: inherit; text-decoration: none; }
   .v-copilot-side .btn { min-height: 40px; padding: 0 18px; }
   .v-copilot-foot { padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* 副驾输入区常驻屏幕底部（flex 骨架：消息区撑满、foot 钉底）——修复内容短时输入区漂在屏幕中间 */
+.rail { height: 100%; display: flex; flex-direction: column; }
+.v-copilot-sticky { flex: 1 1 auto; min-height: 0; }
+.v-copilot-foot { flex: none; }
+
+/* 抽屉展开时隐藏 fab（避免压住发送键） */
+@media (max-width: 860px) {
+  body:has(.app-rail.open) .rail-fab { display: none; }
+}
