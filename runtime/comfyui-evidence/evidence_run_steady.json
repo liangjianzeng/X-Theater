@@ -1,0 +1,35 @@
+{
+  "prompt_id": "c05e7fa4-1623-467c-a59b-4d81a1e78076",
+  "submit_iso": "2026-11-21T00:35:54",
+  "generate_seconds": 21.2,
+  "vram_peak_mib": 14800,
+  "vram_samples_mib": [
+    13328,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14800,
+    14576,
+    13168,
+    13168,
+    14800
+  ],
+  "outputs": [
+    "E:\\ComfyUI\\output\\w_b_lighthouse_00002_.png"
+  ],
+  "png_sizes": {
+    "E:\\ComfyUI\\output\\w_b_lighthouse_00002_.png": 1444398
+  }
+}

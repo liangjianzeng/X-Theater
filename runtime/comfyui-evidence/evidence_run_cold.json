@@ -1,0 +1,17 @@
+{
+  "prompt_id": "a3aa528e-e6cd-491a-97dc-3b646cdd8829",
+  "submit_iso": "2026-11-21T00:35:27",
+  "generate_seconds": 2.1,
+  "vram_peak_mib": 13168,
+  "vram_samples_mib": [
+    13168,
+    13168,
+    13168
+  ],
+  "outputs": [
+    "E:\\ComfyUI\\output\\w_b_lighthouse_00001_.png"
+  ],
+  "png_sizes": {
+    "E:\\ComfyUI\\output\\w_b_lighthouse_00001_.png": 1180983
+  }
+}

@@ -14,7 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const REPO_ROOT = path.join(__dirname, "..", "..", "..");
+const REPO_ROOT = path.join(__dirname, "..", "..", "..", ".."); // src/server/dag/adapters → 仓库根
 const TEMPLATES_DIR = path.join(REPO_ROOT, "runtime", "templates");
 
 function loadManifest(tmplId) {
@@ -157,14 +157,16 @@ async function runTemplate(ctx, job, spec) {
     const rec = hist && hist[promptId];
     if (!rec) continue;
     const st = rec.status || {};
+    const done = st.completed === true || st.status_str === "success" || st.status_str === "completed";
     if (st.status_str === "error") {
       const msgs = ((st.messages || []).map((m) => JSON.stringify(m)).join(" | ") || "").slice(0, 400);
       throw err("COMFY_EXEC_ERROR", "执行失败：" + msgs);
     }
-    if (st.status_str === "completed" && rec.outputs && Object.keys(rec.outputs).length) {
+    if (done && rec.outputs && Object.keys(rec.outputs).length) {
       outputs = rec.outputs;
       break;
     }
+    if (done) { outputs = rec.outputs || {}; break; } // success 但无输出节点 → 下游 NO_IMAGE 真错误
   }
   if (!outputs) throw err("COMFY_TIMEOUT", "生成超时（" + Math.round((spec.timeoutMs || 240000) / 1000) + "s）：模板 " + spec.tmplId);
 

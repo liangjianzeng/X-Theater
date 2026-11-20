@@ -1,0 +1,1 @@
+8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f */e/ComfyUI/models/text_encoders/qwen3vl_8b_int8_convrot.safetensors

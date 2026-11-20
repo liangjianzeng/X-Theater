@@ -1,0 +1,31 @@
+{
+ "schema": 1,
+ "templates": {
+  "qwen-image-turbo": {
+   "tmpl_sha16": "8ca46a9c07700932",
+   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+   "cn_commits": {
+    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+   },
+   "weights": [
+    {
+     "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
+     "sha16": "37c51ff446f4db2e",
+     "role": "diffusion_model"
+    },
+    {
+     "file": "qwen3vl_8b_int8_convrot.safetensors",
+     "sha16": "8bfd0f6e12abf2d2",
+     "role": "text_encoder"
+    },
+    {
+     "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
+     "sha16": "bb21f7473051e1ac",
+     "role": "vae"
+    }
+   ],
+   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存",
+   "evidence": "runtime/comfyui-evidence/EVIDENCE.md"
+  }
+ }
+}
