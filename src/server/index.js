@@ -33,6 +33,7 @@ fs.mkdirSync(outDir, { recursive: true });
 const store = openStore(varDir, { minimal: process.env.THEATER_SEED_MINIMAL === "1" });
 const bus = createBus();
 // comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
+// comfySpark 通道：THEATER_COMFY_SPARK=1 启用 DGX Spark ComfyUI（H3 线 vidspark/imgspark 真引擎）
 const cfg = {
   outDir,
   seed: true,
@@ -40,6 +41,14 @@ const cfg = {
     enabled: process.env.THEATER_COMFY === "1",
     base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188",
     inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input"
+  },
+  comfySpark: {
+    enabled: process.env.THEATER_COMFY_SPARK === "1",
+    base: process.env.THEATER_COMFY_SPARK_URL || "http://100.81.83.59:8188"
+  },
+  h3ir: {
+    llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
+    llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
   },
   music: { url: process.env.THEATER_MUSIC_URL || "" },
   tts: { url: process.env.THEATER_TTS_URL || "" }

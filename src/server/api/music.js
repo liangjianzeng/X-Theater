@@ -55,6 +55,7 @@ function adoptCandidate(ctx, candidateId, sceneIdOverride) {
     engine: cand.engine || "ACE-Step 1.5",
     license: cand.license || { model: "MIT", usage: "missing" }, // 直接来自候选
     shadow_cents: typeof cand.shadow_cents === "number" ? cand.shadow_cents : 10,
+    art: cand.art || null, // 采用条目必须携带音频文件引用（compose BGM 依赖）
     sceneId
   };
   st.music_lib.push(entry);

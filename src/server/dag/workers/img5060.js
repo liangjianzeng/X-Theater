@@ -61,6 +61,14 @@ function writeOut(ctx, fileName, data) {
   fs.writeFileSync(fp, data);
   return fp;
 }
+/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 CWD 字面路径 */
+function resolveArt(ctx, art) {
+  const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const byBase = path.join(base, path.basename(a));
+  if (fs.existsSync(byBase)) return byBase;
+  return path.join(process.cwd(), a);
+}
 function scriptOf(ctx, episodeId) {
   try {
     const st = ctx.store.get();
@@ -165,7 +173,7 @@ async function runComfy(ctx, job, p, seed, cents) {
     // 角色镜：编辑模型（定妆主选图为身份输入）＋镜描述指令＝保脸换姿势
     const st0 = ctx.store.get();
     const cards = Object.keys(st0.cards || {}).map((k) => st0.cards[k]);
-    const c2 = cards.find((x) => x.episodeId === p.episodeId && x.type === "C2");
+    const c2 = cards.filter((x) => x.episodeId === p.episodeId && x.type === "C2").pop(); // 最新 C2（驳回重出会产生多张）
     const actors = (c2 && c2.payload && c2.payload.actors) || [];
     const script = scriptOf(ctx, p.episodeId) || { scenes: [] };
     const shots = [];
@@ -179,17 +187,37 @@ async function runComfy(ctx, job, p, seed, cents) {
       const castDef = castOf(ctx, p.episodeId).find((x) => x.role === refName || x.name === refName);
       const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
       if (!art) continue; // 定妆未就绪（编排层保证次序）
-      const local = path.join(process.cwd(), art);
+      const local = resolveArt(ctx, art);
       const inputName = "cast_" + safeSeg(refName) + ".png";
       const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
       if (!inputDir) throw Object.assign(new Error("comfy inputDir 未配置"), { code: "NO_INPUT_DIR" });
       try { fs.copyFileSync(local, path.join(inputDir, inputName)); } catch (e) { throw Object.assign(new Error("定妆图拷贝失败：" + e.message), { code: "CAST_COPY" }); }
+      // 身份锚点前置＋如实描述参考图本人＋服装锁（T2 实测：泛写或与图像矛盾的锚点会换人/发型跑偏）
+      const anchor = (castDef && (castDef.anchor || castDef.desc)) || "";
+      const wardrobe = (castDef && castDef.wardrobe) || "";
+      const pron = /女/.test(refName) ? "她" : "他";
       const r = await genOne(ctx, j, {
         tmplId: TMPL_EDIT,
-        prompt: ["让画面中的" + ((castDef && castDef.name) || refName) + "：" + sh.desc + "。保持面部特征与发型不变，全片同一人同一套服装。", STYLE_SUFFIX].filter(Boolean).join(" "),
+        prompt: [
+          "画面中是参考图里同一位人物（同一人）：" + anchor + "。",
+          pron + "正在" + sh.desc + "。",
+          // 双人镜：第二角色用形象块文字锚定（否则漂成女性——实测 char7/tk_92624377）
+          (sh.cast || []).slice(1, 2).map((role2) => {
+            const cd2 = castOf(ctx, p.episodeId).find((x) => x.role === role2 || x.name === role2);
+            const an2 = (cd2 && (cd2.anchor || cd2.desc)) || "";
+            const wd2 = (cd2 && cd2.wardrobe) || "";
+            const nm2 = (cd2 && cd2.name) || role2;
+            if (!an2) return "";
+            return nm2 + "：" + (/女/.test(role2) ? "一位年轻东亚女性" : "一位年轻东亚男性") + "，" + an2 + (wd2 ? "，穿" + wd2 : "") + "。";
+          }).join(""),
+          "单幅剧照（single frame）：整个画面只有一个镜头时刻，禁止分屏、多格拼贴、连环画分镜。",
+          wardrobe ? "服装：" + wardrobe + "，与参考图一致。" : "",
+          ((castDef && castDef.name) || refName) + "的面部五官、脸型与发型与参考图完全一致，全片同一人。",
+          STYLE_SUFFIX
+        ].filter(Boolean).join(" "),
         image: inputName,
         seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
-        width: 720, height: 1280, steps: 8, cfgv: 1.0
+        width: 720, height: 1280, steps: 25, cfgv: 1.0
       });
       const fn = idSeg + "_char" + (i + 1) + ".png";
       images.push({ shotId: null, seq: i + 1, art: "var/out/" + fn, bytes: r.bytes.length });

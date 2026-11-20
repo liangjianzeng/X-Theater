@@ -17,6 +17,7 @@ const ENGINE_USER = "自部署·标准档";
 const TIER = "UD-Q4_K_XL";
 const COST_CENTS = 80;
 const TMPL_I2V = "ltx25-i2v";
+const TMPL_I2V_REF = "ltx25-i2v-ref";
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
 const STYLE = "电影感镜头运动，青橙影调，雨夜暖光，浅景深";
 
@@ -80,6 +81,49 @@ function sbFileForShot(ctx, episodeId, shotId) {
   return name;
 }
 /** 该镜描述（剧本 shots 按 seq 对齐）＋在场角色人设 */
+/** art 虚拟路径（var/out/x）→ cfg.outDir 物理文件（读回产物统一口径） */
+function resolveArt(ctx, art) {
+  const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const byBase = path.join(base, path.basename(a));
+  if (fs.existsSync(byBase)) return byBase;
+  return path.join(process.cwd(), a);
+}
+
+/** 该镜主角色（cast[0]）的定妆原片 → 拷进 ComfyUI input 作 overlap 参考；无则 null */
+function castRefForShot(ctx, episodeId, shot) {
+  try {
+    const st = ctx.store.get();
+    const script = ((st.episodes || {})[episodeId] || {}).script;
+    if (!script) return null;
+    const flat = [];
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(sh)));
+    // state 镜 seq 是全局编号（场×100+序），须按 seq 排序后取位，不能直接当下标
+    const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
+      .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    const pos = sorted.findIndex((x) => x.id === (shot && shot.id));
+    const sh = (pos >= 0 ? flat[pos] : null) || flat[(shot.seq || 1) - 1] || {};
+    const refName = (sh.cast || [])[0];
+    if (!refName) return null;
+    // 双人及以上镜不挂单人 overlap 参考（参考会把第二人拽向参考形象——实测 tk_92624377）；
+    // 多人镜靠首帧（编辑模型已保证双人正确）＋文字形象块锚定
+    if ((sh.cast || []).length > 1) return null;
+    const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+    const c2 = cards.find((x) => x.episodeId === episodeId && x.type === "C2" && (x.payload || {}).actors);
+    const actor = c2 && (c2.payload.actors || []).find((a) => a.role === refName || a.name === refName);
+    const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
+    if (!art) return null;
+    const local = resolveArt(ctx, art);
+    if (!fs.existsSync(local)) return null;
+    const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
+    if (!inputDir) return null;
+    const name = "ref_" + safeSeg((actor && actor.id) || refName) + ".png";
+    fs.copyFileSync(local, path.join(inputDir, name));
+    return name;
+  } catch (e) { return null; }
+}
+
+/** 提示词锚定：角色 anchor 块前置（功课结论 V1/V2），只变动作与镜头 */
 function shotDesc(ctx, episodeId, shot) {
   try {
     const st = ctx.store.get();
@@ -87,14 +131,39 @@ function shotDesc(ctx, episodeId, shot) {
     const script = ep && ep.script;
     if (!script) return shot.name || "";
     const flat = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name }, sh))));
-    const sh = flat[(shot.seq || 1) - 1] || {};
-    const cast = script.cast || [];
-    const who = (sh.cast || []).map((role) => {
-      const c = cast.find((x) => x.role === role || x.name === role);
-      return c ? c.desc + "。" : "";
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(sh)));
+    // state 镜 seq 是全局编号（场×100+序），须按 seq 排序后取位，不能直接当下标
+    const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
+      .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    const pos = sorted.findIndex((x) => x.id === (shot && shot.id));
+    const sh = (pos >= 0 ? flat[pos] : null) || flat[(shot.seq || 1) - 1] || {};
+    const refName = (sh.cast || [])[0];
+    // 参考图只锚 cast[0]；其余角色用形象块文字锚定（否则双人镜第二人会漂成女性——实测）
+    const whoBlocks = (sh.cast || []).slice(0, 2).map((role, ci) => {
+      const cc = (script.cast || []).find((x) => x.role === role || x.name === refName && x.role === role || x.name === role);
+      const an = (cc && (cc.anchor || cc.desc)) || "";
+      const wd = (cc && cc.wardrobe) || "";
+      const nm = (cc && cc.name) || role;
+      const fem = /女/.test(role);
+      const pron = fem ? "她" : "他";
+      if (ci === 0) {
+        return [
+          an ? "画面中是参考图里同一位人物（同一人）：" + an + "。" : "",
+          "" + pron + "的面部五官、脸型与发型与参考图完全一致，全片同一人。",
+          wd ? "服装：" + wd + "，与参考图一致。" : ""
+        ].filter(Boolean).join("");
+      }
+      return nm + "：" + (fem ? "一位年轻东亚女性" : "一位年轻东亚男性") + "，" + an + (wd ? "，穿" + wd : "") + "。";
     }).join("");
-    return [sh.desc || shot.name, who, STYLE].filter(Boolean).join(" ");
+    const legacyWho = (sh.cast || []).map((role) => {
+      const cc = (script.cast || []).find((x) => x.role === role || x.name === role);
+      return cc ? cc.desc + "。" : "";
+    }).join("");
+    return [
+      whoBlocks.length ? whoBlocks : legacyWho,
+      sh.desc || shot.name || "",
+      STYLE
+    ].filter(Boolean).join(" ");
   } catch (e) { return (shot && shot.name) || ""; }
 }
 
@@ -114,9 +183,10 @@ async function runComfy(ctx, job, p, seed, cents) {
   const img = sbFileForShot(ctx, episodeId, shotId);
   if (!img) throw (() => { const e = new Error("该镜没有可用的分镜首帧（storyboard 真图缺失）: " + shotId); e.code = "NO_STORYBOARD_ART"; return e; })();
   await freeComfy(ctx); // 显存互斥：卸掉生图/其它家族再加载 LTX
+  const ref = castRefForShot(ctx, episodeId, shot);
   const r = await comfy.runTemplate(ctx, j, {
-    tmplId: TMPL_I2V,
-    params: {
+    tmplId: ref ? TMPL_I2V_REF : TMPL_I2V,
+    params: Object.assign({
       SEED: numFrom(seed) % 4294967295,
       PROMPT: shotDesc(ctx, episodeId, shot),
       NEGATIVE: "低质量，模糊，变形，水印，文字，闪切",
@@ -126,7 +196,7 @@ async function runComfy(ctx, job, p, seed, cents) {
       CFG: 1, SIGMAS1: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
       SIGMAS2: "0.85, 0.7250, 0.4219, 0.0",
       IMAGE: img
-    },
+    }, ref ? { REF: ref } : {}),
     timeoutMs: 900000
   });
   await freeComfy(ctx); // 生成完归还显存（音乐/配音 lane 要用）

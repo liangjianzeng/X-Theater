@@ -1,0 +1,591 @@
+{
+  "mood": "释然，平静温暖的钢琴与弦乐，放下与释怀的情感，柔和渐远",
+  "seconds": 45,
+  "seed": 20261121,
+  "started_at": "2026-11-21 01:40:04",
+  "comfyui_free_error": "Expecting value: line 1 column 1 (char 0)",
+  "music_response": {
+    "id": "1a1fa0caef9-06d60b09",
+    "seconds": 45,
+    "file": "E:\\Work\\X-Theater\\runtime\\acestep\\out\\1a1fa0caef9-06d60b09.wav",
+    "url": "/music/1a1fa0caef9-06d60b09/file",
+    "bytes": 17280088,
+    "gen_seconds": 91.12,
+    "model_seconds": 44.53,
+    "warmup_seconds": 45.3,
+    "seed": 20261121,
+    "vram_peak_mb": 6839.3,
+    "mood": "释然，平静温暖的钢琴与弦乐，放下与释怀的情感，柔和渐远"
+  },
+  "wall_seconds": 91.14,
+  "download_bytes": 17280088,
+  "download_matches": true,
+  "vram_samples": [
+    {
+      "t": 1795196407.868,
+      "used_mb": 14337,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196408.925,
+      "used_mb": 14337,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196409.982,
+      "used_mb": 14337,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196411.037,
+      "used_mb": 14337,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196412.089,
+      "used_mb": 5441,
+      "total_mb": 16311,
+      "util_pct": "79"
+    },
+    {
+      "t": 1795196413.157,
+      "used_mb": 5441,
+      "total_mb": 16311,
+      "util_pct": "25"
+    },
+    {
+      "t": 1795196414.244,
+      "used_mb": 1729,
+      "total_mb": 16311,
+      "util_pct": "0"
+    },
+    {
+      "t": 1795196415.318,
+      "used_mb": 4193,
+      "total_mb": 16311,
+      "util_pct": "41"
+    },
+    {
+      "t": 1795196416.402,
+      "used_mb": 6945,
+      "total_mb": 16311,
+      "util_pct": "46"
+    },
+    {
+      "t": 1795196417.468,
+      "used_mb": 10115,
+      "total_mb": 16311,
+      "util_pct": "37"
+    },
+    {
+      "t": 1795196418.525,
+      "used_mb": 14057,
+      "total_mb": 16311,
+      "util_pct": "42"
+    },
+    {
+      "t": 1795196419.587,
+      "used_mb": 15853,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196420.664,
+      "used_mb": 15705,
+      "total_mb": 16311,
+      "util_pct": "96"
+    },
+    {
+      "t": 1795196421.725,
+      "used_mb": 15867,
+      "total_mb": 16311,
+      "util_pct": "91"
+    },
+    {
+      "t": 1795196422.804,
+      "used_mb": 15871,
+      "total_mb": 16311,
+      "util_pct": "56"
+    },
+    {
+      "t": 1795196423.891,
+      "used_mb": 15605,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196424.963,
+      "used_mb": 15841,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196426.037,
+      "used_mb": 15821,
+      "total_mb": 16311,
+      "util_pct": "49"
+    },
+    {
+      "t": 1795196427.099,
+      "used_mb": 14989,
+      "total_mb": 16311,
+      "util_pct": "100"
+    },
+    {
+      "t": 1795196428.167,
+      "used_mb": 15053,
+      "total_mb": 16311,
+      "util_pct": "99"
+    },
+    {
+      "t": 1795196429.226,
+      "used_mb": 15053,
+      "total_mb": 16311,
+      "util_pct": "99"
+    },
+    {
+      "t": 1795196430.297,
+      "used_mb": 15053,
+      "total_mb": 16311,
+      "util_pct": "99"
+    },
+    {
+      "t": 1795196431.367,
+      "used_mb": 15053,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196432.438,
+      "used_mb": 13579,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196433.507,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196434.586,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196435.652,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196436.706,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196437.762,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196438.82,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196439.876,
+      "used_mb": 13771,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196440.947,
+      "used_mb": 12075,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196442.0,
+      "used_mb": 12683,
+      "total_mb": 16311,
+      "util_pct": "17"
+    },
+    {
+      "t": 1795196443.082,
+      "used_mb": 8587,
+      "total_mb": 16311,
+      "util_pct": "26"
+    },
+    {
+      "t": 1795196444.148,
+      "used_mb": 8587,
+      "total_mb": 16311,
+      "util_pct": "19"
+    },
+    {
+      "t": 1795196445.223,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0"
+    },
+    {
+      "t": 1795196446.288,
+      "used_mb": 5675,
+      "total_mb": 16311,
+      "util_pct": "25"
+    },
+    {
+      "t": 1795196447.349,
+      "used_mb": 8235,
+      "total_mb": 16311,
+      "util_pct": "37"
+    },
+    {
+      "t": 1795196448.408,
+      "used_mb": 11275,
+      "total_mb": 16311,
+      "util_pct": "95"
+    },
+    {
+      "t": 1795196449.646,
+      "used_mb": 11179,
+      "total_mb": 16311,
+      "util_pct": "18"
+    },
+    {
+      "t": 1795196450.762,
+      "used_mb": 11467,
+      "total_mb": 16311,
+      "util_pct": "5"
+    },
+    {
+      "t": 1795196451.848,
+      "used_mb": 12011,
+      "total_mb": 16311,
+      "util_pct": "5"
+    },
+    {
+      "t": 1795196452.97,
+      "used_mb": 12747,
+      "total_mb": 16311,
+      "util_pct": "6"
+    },
+    {
+      "t": 1795196454.029,
+      "used_mb": 15745,
+      "total_mb": 16311,
+      "util_pct": "10"
+    },
+    {
+      "t": 1795196455.095,
+      "used_mb": 15689,
+      "total_mb": 16311,
+      "util_pct": "19"
+    },
+    {
+      "t": 1795196456.16,
+      "used_mb": 14065,
+      "total_mb": 16311,
+      "util_pct": "8"
+    },
+    {
+      "t": 1795196457.229,
+      "used_mb": 14003,
+      "total_mb": 16311,
+      "util_pct": "41"
+    },
+    {
+      "t": 1795196458.299,
+      "used_mb": 13911,
+      "total_mb": 16311,
+      "util_pct": "43"
+    },
+    {
+      "t": 1795196459.353,
+      "used_mb": 14337,
+      "total_mb": 16311,
+      "util_pct": "34"
+    },
+    {
+      "t": 1795196460.417,
+      "used_mb": 14045,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196461.478,
+      "used_mb": 14301,
+      "total_mb": 16311,
+      "util_pct": "95"
+    },
+    {
+      "t": 1795196462.551,
+      "used_mb": 14813,
+      "total_mb": 16311,
+      "util_pct": "95"
+    },
+    {
+      "t": 1795196463.615,
+      "used_mb": 15167,
+      "total_mb": 16311,
+      "util_pct": "95"
+    },
+    {
+      "t": 1795196464.667,
+      "used_mb": 15167,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196465.717,
+      "used_mb": 15167,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196466.782,
+      "used_mb": 15071,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196467.847,
+      "used_mb": 15071,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196468.925,
+      "used_mb": 15071,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196469.987,
+      "used_mb": 12555,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196471.037,
+      "used_mb": 15269,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196472.093,
+      "used_mb": 15273,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196473.158,
+      "used_mb": 15049,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196474.218,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196475.285,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196476.34,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196477.398,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196478.462,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196479.534,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196480.599,
+      "used_mb": 14539,
+      "total_mb": 16311,
+      "util_pct": "83"
+    },
+    {
+      "t": 1795196481.685,
+      "used_mb": 13483,
+      "total_mb": 16311,
+      "util_pct": "31"
+    },
+    {
+      "t": 1795196482.759,
+      "used_mb": 13035,
+      "total_mb": 16311,
+      "util_pct": "60"
+    },
+    {
+      "t": 1795196483.845,
+      "used_mb": 7243,
+      "total_mb": 16311,
+      "util_pct": "43"
+    },
+    {
+      "t": 1795196484.929,
+      "used_mb": 7243,
+      "total_mb": 16311,
+      "util_pct": "57"
+    },
+    {
+      "t": 1795196485.987,
+      "used_mb": 10155,
+      "total_mb": 16311,
+      "util_pct": "67"
+    },
+    {
+      "t": 1795196487.067,
+      "used_mb": 12715,
+      "total_mb": 16311,
+      "util_pct": "70"
+    },
+    {
+      "t": 1795196488.145,
+      "used_mb": 15051,
+      "total_mb": 16311,
+      "util_pct": "67"
+    },
+    {
+      "t": 1795196489.223,
+      "used_mb": 4717,
+      "total_mb": 16311,
+      "util_pct": "1"
+    },
+    {
+      "t": 1795196490.282,
+      "used_mb": 5953,
+      "total_mb": 16311,
+      "util_pct": "10"
+    },
+    {
+      "t": 1795196491.347,
+      "used_mb": 6811,
+      "total_mb": 16311,
+      "util_pct": "7"
+    },
+    {
+      "t": 1795196492.425,
+      "used_mb": 8471,
+      "total_mb": 16311,
+      "util_pct": "22"
+    },
+    {
+      "t": 1795196493.499,
+      "used_mb": 8339,
+      "total_mb": 16311,
+      "util_pct": "11"
+    },
+    {
+      "t": 1795196494.58,
+      "used_mb": 9191,
+      "total_mb": 16311,
+      "util_pct": "93"
+    },
+    {
+      "t": 1795196495.661,
+      "used_mb": 10795,
+      "total_mb": 16311,
+      "util_pct": "33"
+    },
+    {
+      "t": 1795196496.72,
+      "used_mb": 11619,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196497.788,
+      "used_mb": 11373,
+      "total_mb": 16311,
+      "util_pct": "95"
+    },
+    {
+      "t": 1795196498.864,
+      "used_mb": 11373,
+      "total_mb": 16311,
+      "util_pct": "94"
+    },
+    {
+      "t": 1795196499.94,
+      "used_mb": 8303,
+      "total_mb": 16311,
+      "util_pct": "97"
+    },
+    {
+      "t": 1795196500.999,
+      "used_mb": 8303,
+      "total_mb": 16311,
+      "util_pct": "98"
+    },
+    {
+      "t": 1795196502.077,
+      "used_mb": 8303,
+      "total_mb": 16311,
+      "util_pct": "99"
+    }
+  ],
+  "vram_peak_mb_sampled": 15871,
+  "vram_total_mb_sampled": 16311,
+  "health_after": {
+    "service": "w-m-acestep",
+    "version": "1.0.0",
+    "port": 8190,
+    "models_dir": "E:\\Work\\X-Theater\\runtime\\acestep\\models",
+    "handler_ready": true,
+    "lm_ready": true,
+    "init_error": null,
+    "gen_count": 1,
+    "uptime_seconds": 141.2,
+    "vram": {
+      "cuda": true,
+      "gpu": "NVIDIA GeForce RTX 5060 Ti",
+      "vram_allocated_mb": 180.0,
+      "vram_reserved_mb": 252.0,
+      "vram_free_mb": 14870.0,
+      "vram_total_mb": 16310.6,
+      "vram_peak_mb": 6839.3
+    }
+  },
+  "unload_after": {
+    "ok": true,
+    "cuda": true,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti",
+    "vram_allocated_mb": 180.0,
+    "vram_reserved_mb": 252.0,
+    "vram_free_mb": 14870.0,
+    "vram_total_mb": 16310.6,
+    "vram_peak_mb": 6839.3
+  }
+}

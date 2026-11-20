@@ -29,6 +29,10 @@ const TYPE_LANE = {
 
 function laneFor(type, opts) {
   if (type === "video") return opts && opts.tier === "high" ? "vidspark" : "vid5060";
+  // H3 线（2026-11-21）：Spark 通道启用时 casting 走 imgspark（MiniMax-H3-Image 真定妆）
+  if (type === "casting" && opts && opts.tier === "high") return "imgspark";
+  // H3 线：Spark 通道启用时角色分镜也走 imgspark（MiniMax-H3-Image 保脸分镜）
+  if (type === "storyboard_char" && opts && opts.tier === "high") return "imgspark";
   const l = TYPE_LANE[type];
   if (!l) {
     const err = { code: "BAD_TYPE", message: "未知任务类型: " + type };

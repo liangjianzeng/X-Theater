@@ -56,7 +56,22 @@ function writeOut(ctx, fileName, data) {
   return fp;
 }
 
+/** 显存互斥：卸载 ComfyUI 常驻模型（编辑模型热载 ~14.5G，不卸载则 TTS/音乐必 OOM） */
+async function freeComfy(ctx) {
+  const base = String((ctx && ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "");
+  if (!base) return;
+  try {
+    await new Promise((resolve) => {
+      const u = new URL(base + "/free");
+      const rq = require("http").request(u, { method: "POST", headers: { "content-type": "application/json" } }, (rs) => { rs.resume(); rs.on("end", resolve); rs.on("error", resolve); });
+      rq.on("error", resolve);
+      rq.end(JSON.stringify({ unload_models: true, free_memory: true }));
+    });
+  } catch (e) { /* 卸载失败不阻断主流程 */ }
+}
+
 async function runReal(ctx, job, p, mood) {
+  await freeComfy(ctx);
   // 真模式：W-M ACE-Step :8190（MIT；惰性加载，响应即释放显存）。产物 wav → var/out + 曲库候选结构。
   const http = require("http");
   const url = String((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL || "");

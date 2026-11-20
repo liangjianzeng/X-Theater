@@ -96,7 +96,10 @@ function register(router, ctx) {
               desc: String(sh.desc || "").slice(0, 300),
               sec: Number(sh.sec) > 0 ? Math.min(Number(sh.sec), 15) : 5,
               cast: Array.isArray(sh.cast) ? sh.cast.map(String) : [],
-              dialogue: String(sh.dialogue || "").slice(0, 200)
+              dialogue: String(sh.dialogue || "").slice(0, 200),
+              tier: sh.tier === "high" ? "high" : undefined,
+              width: Number(sh.width) > 0 ? Number(sh.width) : undefined,
+              height: Number(sh.height) > 0 ? Number(sh.height) : undefined
             }))
           })),
           cast: cast.map((c) => ({
@@ -181,11 +184,13 @@ function register(router, ctx) {
         throw { code: "NOT_READY", message: "镜头未生成，无法开机" };
       }
       const jobs = [];
+      const only = Array.isArray(body && body.shotIds) ? body.shotIds.map(String) : null; // 局部重拍（复审 stale 镜）
       shots.forEach((sh) => {
+        if (only && only.indexOf(sh.id) < 0) return;
         const job = engine.enqueue(
           "video",
-          { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5 },
-          { episodeId: ep.id, initiated_by: "user" }
+          { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
+          { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
         );
         jobs.push(job);
       });
@@ -195,6 +200,77 @@ function register(router, ctx) {
       audit(auth, "shoot", ep.id, { shots: shots.length, estimate_ver: ep.estimate_ver });
       try { bus.publish("cards", { event: "shot_start", episodeId: ep.id, jobs: jobs.length }); } catch (e) {}
       return router.json(res, 202, { episodeId: ep.id, jobs, started: jobs.length });
+    },
+    { auth: true }
+  );
+
+    router.add(
+      "POST",
+      "/api/episodes/:id/cast",
+      (req, res, body, params, auth) => {
+        if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+        const st = store.get();
+        const ep = requireEpisode(ctx, params.id);
+        const b = body || {};
+        const list = Array.isArray(b.cast) ? b.cast : [];
+        if (!list.length) throw { code: "BAD_REQUEST", message: "cast 不能为空" };
+        if (!ep.script || !Array.isArray(ep.script.cast)) throw { code: "BAD_REQUEST", message: "本集无剧本 cast" };
+        // 只允许修订既有角色（场景/镜已入 state，不可通过此口变动）
+        const changed = [];
+        list.forEach((c) => {
+          const role = String(c.role || "");
+          const cur = ep.script.cast.find((x) => x.role === role);
+          if (!cur) throw { code: "NOT_FOUND", message: "角色不存在: " + role };
+          if (c.desc != null) cur.desc = String(c.desc).slice(0, 400);
+          if (c.anchor != null) cur.anchor = String(c.anchor).slice(0, 400);
+          if (c.wardrobe != null) cur.wardrobe = String(c.wardrobe).slice(0, 120);
+          if (c.refImage !== undefined) cur.refImage = c.refImage ? String(c.refImage).replace(/[^A-Za-z0-9._-]/g, "_") : null;
+          changed.push(role);
+        });
+        store.commit();
+        audit(auth, "cast_revise", ep.id, { roles: changed });
+        try { ctx.bus.publish("episodes", { event: "cast_revise", episodeId: ep.id }); } catch (e) {}
+        return router.json(res, 200, { cast: ep.script.cast });
+      },
+      { auth: true }
+    );
+
+  // POST /api/episodes/:id/script-scenes — 剧本场景修订（拍摄前；与 state 场景按 seq 1:1 对齐）
+  router.add(
+    "POST",
+    "/api/episodes/:id/script-scenes",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const e = requireEpisode(ctx, params.id);
+      if ((e.stage || 1) >= 7) throw { code: "LOCKED", message: "已开拍，场景表锁定" };
+      if (!e.script || !Array.isArray(e.script.cast)) throw { code: "BAD_REQUEST", message: "本集无剧本" };
+      const b = body || {};
+      const scenes = Array.isArray(b.scenes) ? b.scenes : [];
+      const stScenes = Object.keys(st.scenes || {}).map((k) => st.scenes[k])
+        .filter((x) => x && x.episodeId === e.id).sort((x, y) => (x.seq || 0) - (y.seq || 0));
+      if (scenes.length !== stScenes.length) {
+        throw { code: "BAD_REQUEST", message: "场景数须与镜库一致（" + stScenes.length + " 场，按 seq 顺序 1:1）" };
+      }
+      const castRoles = (e.script.cast || []).map((c) => c.role);
+      e.script.scenes = scenes.map((sc, i) => {
+        const shots = (Array.isArray(sc.shots) ? sc.shots : []).map((sh) => ({
+          desc: String(sh.desc || "").slice(0, 300),
+          sec: Number(sh.sec) > 0 ? Math.min(Number(sh.sec), 15) : 5,
+          cast: (Array.isArray(sh.cast) ? sh.cast : []).map(String).filter((r) => castRoles.indexOf(r) >= 0),
+          dialogue: String(sh.dialogue || "").slice(0, 200)
+        }));
+        if (!shots.length) throw { code: "BAD_REQUEST", message: "每场至少 1 镜（场 " + (i + 1) + "）" };
+        return {
+          name: String(sc.name || stScenes[i].name || "场").slice(0, 40),
+          mood: String(sc.mood || "中性").slice(0, 20),
+          shots
+        };
+      });
+      store.commit();
+      audit(auth, "script_scenes_revise", e.id, { scenes: e.script.scenes.length });
+      try { ctx.bus.publish("episodes", { event: "script_scenes_revise", episodeId: e.id }); } catch (err) {}
+      return router.json(res, 200, { scenes: e.script.scenes });
     },
     { auth: true }
   );

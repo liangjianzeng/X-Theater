@@ -119,8 +119,9 @@ async function httpBytes(base, pathname, timeoutMs) {
 
 let lastTemplateFamily = null; // 进程内记录：跨模板族切换先卸载（显存纪律）
 
-async function unloadIfSwitched(base, tmplId) {
-  const family = String(tmplId).split(".")[0];
+async function unloadIfSwitched(base, tmplId, entry) {
+  // 模板族以 manifest 登记的 family 为准（同族不卸载＝内存常驻优先，用户纪律 2026-11-21）
+  const family = (entry && entry.family) || String(tmplId).split(".")[0];
   if (lastTemplateFamily && lastTemplateFamily !== family) {
     try {
       await httpJson(base, "/free", { unload_models: true, free_memory: true }, "POST", 15000);
@@ -130,17 +131,58 @@ async function unloadIfSwitched(base, tmplId) {
 }
 
 /**
+ * 内存守卫（Spark 统一内存纪律）：ram_free 低于阈值（GB）才 /free，平时常驻。
+ * 返回 {freed:bool, ram_free_gb}
+ */
+async function ensureFree(base, minFreeGB) {
+  let stats = null;
+  try { stats = await httpJson(base, "/system_stats", null, "GET", 8000); } catch (e) { return { freed: false, ram_free_gb: null }; }
+  const total = stats && stats.system && stats.system.ram_total;
+  const free = stats && stats.system && stats.system.ram_free;
+  if (typeof free !== "number") return { freed: false, ram_free_gb: null };
+  const freeGB = free / 1024 ** 3;
+  if (typeof minFreeGB !== "number") minFreeGB = 6; // 用户纪律：预留几 GB 即可
+  if (freeGB >= minFreeGB) return { freed: false, ram_free_gb: freeGB };
+  try { await httpJson(base, "/free", { unload_models: true, free_memory: true }, "POST", 15000); } catch (e) { /* 同上 */ }
+  return { freed: true, ram_free_gb: freeGB };
+}
+
+/**
+ * 资产上传：把字节图（定妆照/分镜首帧）传到远端 ComfyUI input 目录，返回 LoadImage 可用文件名。
+ */
+async function uploadAsset(base, bytes, filename) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30000);
+  let res;
+  try {
+    const fd = new FormData();
+    fd.append("image", new Blob([bytes]), String(filename || "asset.png"));
+    fd.append("overwrite", "true");
+    res = await fetch(base + "/upload/image", { method: "POST", body: fd, signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(t);
+    throw err("COMFY_UPLOAD_FAIL", "上传资产失败：" + e.message);
+  }
+  clearTimeout(t);
+  if (!res.ok) throw err("COMFY_UPLOAD_HTTP", "上传资产 HTTP " + res.status);
+  const data = await res.json().catch(() => null);
+  if (!data || !data.name) throw err("COMFY_UPLOAD_BAD", "上传资产未返回文件名");
+  return data.subfolder ? data.subfolder + "/" + data.name : data.name;
+}
+
+/**
  * 主入口。cfg.comfy = { enabled:true, base:"http://127.0.0.1:8188" }
+ * spec.base 可显式指定端点（Spark 通道），缺省回退 cfg.comfy.base。
  */
 async function runTemplate(ctx, job, spec) {
   const cfg = (ctx && ctx.cfg && ctx.cfg.comfy) || {};
-  if (!cfg.enabled) throw err("COMFY_DISABLED", "comfy 通道未启用（THEATER_COMFY=1 启用）");
-  const base = String(cfg.base || "http://127.0.0.1:8188").replace(/\/+$/, "");
+  if (!cfg.enabled && !spec.base) throw err("COMFY_DISABLED", "comfy 通道未启用（THEATER_COMFY=1 启用）");
+  const base = String(spec.base || cfg.base || "http://127.0.0.1:8188").replace(/\/+$/, "");
   const entry = loadManifest(spec.tmplId);
   const raw = loadTemplate(spec.tmplId, entry);
   const wf = applyParams(raw, spec.params || {});
 
-  await unloadIfSwitched(base, spec.tmplId);
+  await unloadIfSwitched(base, spec.tmplId, entry);
 
   const clientId = "theater-" + (job && job.id || "x");
   const sub = await httpJson(base, "/prompt", { prompt: wf, client_id: clientId }, "POST", 15000);
@@ -170,13 +212,14 @@ async function runTemplate(ctx, job, spec) {
   }
   if (!outputs) throw err("COMFY_TIMEOUT", "生成超时（" + Math.round((spec.timeoutMs || 240000) / 1000) + "s）：模板 " + spec.tmplId);
 
-  // 取第一个图像输出节点
+  // 取第一个产物节点：视频模板（SaveVideo → videos）优先，其次 gifs，再次图像
   let img = null;
   for (const nid of Object.keys(outputs)) {
-    const arr = outputs[nid] && outputs[nid].images;
+    const o = outputs[nid] || {};
+    const arr = o.videos || o.gifs || o.images || (o.video ? [o.video] : null);
     if (arr && arr.length) { img = arr[0]; break; }
   }
-  if (!img || !img.filename) throw err("COMFY_NO_IMAGE", "history 无图像输出：" + JSON.stringify(outputs).slice(0, 200));
+  if (!img || !img.filename) throw err("COMFY_NO_IMAGE", "history 无产物输出：" + JSON.stringify(outputs).slice(0, 200));
   const q = "?filename=" + encodeURIComponent(img.filename)
     + "&subfolder=" + encodeURIComponent(img.subfolder || "")
     + "&type=" + encodeURIComponent(img.type || "output");
@@ -186,4 +229,4 @@ async function runTemplate(ctx, job, spec) {
   return { bytes, promptId, entry, meta: { tmpl_sha16: entry.tmpl_sha16, comfy_commit: entry.comfy_commit, cn_commits: entry.cn_commits, weights: entry.weights } };
 }
 
-module.exports = { runTemplate, loadManifest, sha16, TEMPLATES_DIR };
+module.exports = { runTemplate, loadManifest, sha16, TEMPLATES_DIR, uploadAsset, ensureFree };

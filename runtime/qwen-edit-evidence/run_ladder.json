@@ -1,0 +1,17 @@
+{
+ "tag": "ladder",
+ "prompt_id": "06ad41f9-7779-4c43-9253-72d6220c130f",
+ "wall_s": 59.3,
+ "vram_peak_mib": 15969,
+ "samples": 56,
+ "seed": 20261121,
+ "size": [
+  720,
+  1280
+ ],
+ "steps": 25,
+ "cfg": 1.0,
+ "instruction": "让画面中的女子站在雨夜灯塔旋梯上，手提点亮的老式马灯，裙摆被风吹动，保持面部特征与发型不变，实拍电影剧照质感，青橙影调",
+ "output": "E:\\Work\\X-Theater\\runtime\\qwen-edit-evidence\\ladder_06ad41f9.png",
+ "output_bytes": 1301074
+}

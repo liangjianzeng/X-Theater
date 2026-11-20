@@ -58,13 +58,39 @@ function runFfmpeg(ctx, args, timeoutMs) {
     if (!fs.existsSync(exe)) return reject(Object.assign(new Error("ffmpeg 不存在（runtime/bin）"), { code: "NO_FFMPEG" }));
     const pr = spawn(exe, args, { cwd: process.cwd() });
     let err = "";
-    pr.stderr.on("data", (d) => { if (err.length < 4000) err += String(d); });
+    pr.stderr.on("data", (d) => { err = (err + String(d)).slice(-4000); });
     pr.on("close", (code) => code === 0 ? resolve(true) : reject(Object.assign(new Error("ffmpeg 失败：" + err.slice(-400))), { code: "FFMPEG_FAIL" }));
     pr.on("error", (e) => reject(Object.assign(new Error("ffmpeg 启动失败：" + e.message), { code: "FFMPEG_SPAWN" })));
     setTimeout(() => { try { pr.kill(); } catch (e) {} reject(Object.assign(new Error("ffmpeg 超时"), { code: "FFMPEG_TIMEOUT" })); }, timeoutMs || 600000).unref();
   });
 }
 
+/** ffmpeg -i stderr 解析时长与音轨存在性（essentials 包无 ffprobe） */
+function probeMedia(file) {
+  return new Promise((resolve) => {
+    const { spawn } = require("child_process");
+    const exe = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
+    const pr = spawn(exe, ["-i", file], { cwd: process.cwd() });
+    let err = "";
+    pr.stderr.on("data", (d) => { err += String(d); });
+    pr.on("close", () => {
+      const m = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(err);
+      const sec = m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null;
+      resolve({ sec, hasAudio: /Stream.*Audio:/.test(err) });
+    });
+    pr.on("error", () => resolve({ sec: null, hasAudio: false }));
+    setTimeout(() => { try { pr.kill(); } catch (e) {} resolve({ sec: null, hasAudio: false }); }, 15000).unref();
+  });
+}
+
+/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 CWD 字面路径 */
+function resolveArt(ctx, art) {
+  const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const byBase = path.join(base, path.basename(a));
+  if (fs.existsSync(byBase)) return byBase;
+  return path.join(process.cwd(), a);
+}
 function stripLead(s) {
   let x = String(s == null ? "" : s);
   while (x.startsWith("/") || x.startsWith("\\")) x = x.slice(1);
@@ -78,39 +104,101 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
   fs.mkdirSync(tmp, { recursive: true });
   const parts = [];
   const episode = (ctx.store.get().episodes || {})[episodeId] || {};
-  // 1) 片头字幕卡（黑底白字 2s）
+  // 1) 片头字幕卡（黑底白字 2s；垫无声轨保证 concat 流统一）
   const title = (episode.title || "短剧") + "｜" + String(episode.brief || "").slice(0, 20);
   const cardMp4 = path.join(tmp, "card.mp4");
   await runFfmpeg(ctx, ["-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=2:r=24",
+    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+    "-map", "0:v", "-map", "1:a", "-shortest",
     "-vf", "drawtext=text=" + JSON.stringify(title.replace(/['":\\]/g, "").slice(0, 30)) + ":fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2",
-    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", cardMp4], 120000);
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", cardMp4], 120000);
   parts.push(cardMp4);
-  // 2) 逐镜 take（best 条）
+  const partShots = [null]; // parts[i] ↔ 镜对象（0=片头卡）
+  // 2) 逐镜 take（best 条）——音轨统一重编码（aac 48k stereo；video copy）
   for (const s of shotsSorted) {
     const takes = (s.takes || []).filter((t) => t && t.art);
     if (!takes.length) continue;
     const best = takes.find((t) => t.best) || takes[0];
-    const src = path.join(process.cwd(), stripLead(best.art));
+    const src = resolveArt(ctx, best.art);
     if (!fs.existsSync(src)) throw Object.assign(new Error("镜 take 文件缺失：" + src), { code: "TAKE_MISSING" });
-    parts.push(src);
+    const info = await probeMedia(src);
+    const norm = path.join(tmp, "norm_" + path.basename(src));
+    if (info.hasAudio) {
+      await runFfmpeg(ctx, ["-y", "-i", src, "-map", "0:v", "-map", "0:a",
+        "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", norm], 120000);
+    } else {
+      await runFfmpeg(ctx, ["-y", "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+        "-map", "0:v", "-map", "1:a", "-shortest",
+        "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", norm], 120000);
+    }
+    parts.push(norm);
+    partShots.push(s);
   }
   if (parts.length < 2) throw Object.assign(new Error("无可拼接镜头（takes 不足）"), { code: "NO_TAKES" });
   // 3) concat 列表
   const listFile = path.join(tmp, "list.txt");
-  fs.writeFileSync(listFile, parts.map((f) => "file " + JSON.stringify("file:" + f)).join("\n"));
-  // 4) BGM（挂在任意场的采用曲；音量 -13dB 垫底）
+  fs.writeFileSync(listFile, parts.map((f) => "file '" + String(f).replace(/\\/g, "/") + "'").join("\n"));
+  // 3.5) 台词对位：voice 真实产物按台词文本对齐全局镜序（LTX 音轨是环境声，台词必须叠加）
+  const dlgInputs = [];
+  const dlgFilters = [];
+  try {
+    const st1 = ctx.store.get();
+    const epScript = ((st1.episodes || {})[episodeId] || {}).script || null;
+    const jobs = (ctx.engine && typeof ctx.engine.listJobs === "function")
+      ? ctx.engine.listJobs({ episodeId: episodeId, status: "done" }).filter((jb) => jb && jb.type === "voice" && jb.result && Array.isArray(jb.result.lines))
+      : [];
+    const pool = ((st1.voice_lines || {})[episodeId] || []).filter((l) => l && l.text && l.art).slice();
+    jobs.forEach((jb) => (jb.result.lines || []).forEach((l) => { if (l && l.text && l.art) pool.push(l); }));
+    // 镜时间轴起点（parts 顺序＝片头卡＋shotsSorted）
+    const starts = [];
+    let cum = 0;
+    for (let i = 0; i < parts.length; i++) {
+      starts[i] = cum;
+      const d = await probeMedia(parts[i]);
+      cum += (d && d.sec) || 0;
+    }
+    // 剧本扁平镜序（与 img5060 分镜绑定同一口径）：场序 si、场内镜序 i → shot.seq=(si+1)*100+i+1
+    const flat = [];
+    (epScript && epScript.scenes || []).forEach((sc, si) => (sc.shots || []).forEach((sh, i) => flat.push({ si, i, dialogue: sh.dialogue || null })));
+    const usedArts = {};
+    for (const f of flat) {
+      if (!f.dialogue) continue;
+      const ln = pool.find((l) => l.text === f.dialogue && !usedArts[l.art]);
+      if (!ln) continue;
+      const expectedSeq = (f.si + 1) * 100 + f.i + 1;
+      const partIdx = partShots.findIndex((ps) => ps && Number(ps.seq) === expectedSeq);
+      if (partIdx < 0) continue; // 该镜无 take，不混
+      const wavAbs = resolveArt(ctx, ln.art);
+      if (!fs.existsSync(wavAbs)) continue;
+      usedArts[ln.art] = true;
+      const ms = Math.round((starts[partIdx] || 0) * 1000);
+      const di = dlgInputs.length;
+      dlgInputs.push(wavAbs);
+      dlgFilters.push("[" + (2 + di) + ":a]aresample=48000,aformat=channel_layouts=stereo" + (ms > 0 ? ",adelay=" + ms + ":all=1" : "") + "[d" + di + "]");
+    }
+  } catch (e) { /* 台词对位失败不阻断成片（BGM/画面兜底） */ }
+  // 4) 终混：concat（含环境声）＋BGM 垫底＋台词对位叠加（normalize=0 保留各轨电平）
   const adopted = (lib || []).find((m) => m.sceneId && m.art);
-  const bgm = adopted ? path.join(process.cwd(), stripLead(adopted.art)) : null;
+  const bgm = adopted && fs.existsSync(resolveArt(ctx, adopted.art)) ? resolveArt(ctx, adopted.art) : null;
   const finalName = safeSeg(episodeId) + "_final.mp4";
   const finalPath = path.join(outDir, finalName);
-  if (bgm && fs.existsSync(bgm)) {
-    await runFfmpeg(ctx, ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-i", bgm,
-      "-filter_complex", "[1:a]volume=0.18[b];[0:a][b]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-      "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", finalPath], 600000);
+  if ((bgm || dlgInputs.length) && fs.existsSync(path.join(tmp, "list.txt"))) {
+    const inputs = ["-y", "-f", "concat", "-safe", "0", "-i", listFile];
+    if (bgm) inputs.push("-i", bgm);
+    dlgInputs.forEach((f) => inputs.push("-i", f));
+    const fc = [];
+    let mix = "[0:a]";
+    if (bgm) { fc.push("[1:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.18[b]"); mix += "[b]"; }
+    dlgFilters.forEach((f) => fc.push(f));
+    for (let i = 0; i < dlgInputs.length; i++) mix += "[d" + i + "]";
+    const nIn = 1 + (bgm ? 1 : 0) + dlgInputs.length;
+    fc.push(mix + "amix=inputs=" + nIn + ":duration=first:normalize=0[aout]");
+    await runFfmpeg(ctx, inputs.concat(["-filter_complex", fc.join(";"),
+      "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", finalPath]), 600000);
   } else {
     await runFfmpeg(ctx, ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", finalPath], 600000);
   }
-  return { finalPath, finalName, parts: parts.length, bgm: bgm || null };
+  return { finalPath, finalName, parts: parts.length, bgm: bgm || null, dialogue: dlgInputs.length };
 }
 
 async function run(job, ctx) {
@@ -186,7 +274,7 @@ async function run(job, ctx) {
       episodeId, episodeTitle: episode.title || null, purpose: "export",
       explicit_mark: true, implicit_mark: true, watermark: "内测水印",
       resolution: "720x1280", fps: 24, music, shots: shotList, parts: real.parts,
-      bgm: real.bgm, gen_seconds: Math.round((Date.now() - t0) / 1000), seed: seedR
+      bgm: real.bgm, dialogue_lines: real.dialogue != null ? real.dialogue : null, gen_seconds: Math.round((Date.now() - t0) / 1000), seed: seedR
     };
     writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
     const bag = { ok: true, cents: COST_CENTS, art, path: art, meta, engine: "FFmpeg 6.0（真合成）", resolution: meta.resolution, fps: meta.fps, watermark: meta.watermark };

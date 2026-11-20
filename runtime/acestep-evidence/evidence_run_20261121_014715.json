@@ -1,0 +1,512 @@
+{
+  "mood": "离别，钢琴主导的抒情曲，弦乐渐弱，克制的忧伤与祝福",
+  "seconds": 45,
+  "seed": 20261122,
+  "started_at": "2026-11-21 01:45:55",
+  "comfyui_free_error": "Expecting value: line 1 column 1 (char 0)",
+  "music_response": {
+    "id": "1a1fa11be98-31cc722c",
+    "seconds": 45,
+    "file": "E:\\Work\\X-Theater\\runtime\\acestep\\out\\1a1fa11be98-31cc722c.wav",
+    "url": "/music/1a1fa11be98-31cc722c/file",
+    "bytes": 17280088,
+    "gen_seconds": 73.07,
+    "model_seconds": 33.5,
+    "warmup_seconds": 37.73,
+    "seed": 20261122,
+    "vram_peak_mb": 6864.4,
+    "mood": "离别，钢琴主导的抒情曲，弦乐渐弱，克制的忧伤与祝福"
+  },
+  "wall_seconds": 73.08,
+  "download_bytes": 17280088,
+  "download_matches": true,
+  "vram_samples": [
+    {
+      "t": 1795196758.234,
+      "used_mb": 321,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196759.35,
+      "used_mb": 321,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196760.473,
+      "used_mb": 321,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196761.609,
+      "used_mb": 925,
+      "total_mb": 16311,
+      "util_pct": "32",
+      "procs": {}
+    },
+    {
+      "t": 1795196762.756,
+      "used_mb": 1877,
+      "total_mb": 16311,
+      "util_pct": "51",
+      "procs": {}
+    },
+    {
+      "t": 1795196763.897,
+      "used_mb": 2809,
+      "total_mb": 16311,
+      "util_pct": "63",
+      "procs": {}
+    },
+    {
+      "t": 1795196765.037,
+      "used_mb": 3739,
+      "total_mb": 16311,
+      "util_pct": "59",
+      "procs": {}
+    },
+    {
+      "t": 1795196766.177,
+      "used_mb": 4721,
+      "total_mb": 16311,
+      "util_pct": "56",
+      "procs": {}
+    },
+    {
+      "t": 1795196767.319,
+      "used_mb": 5101,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196768.455,
+      "used_mb": 5101,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196769.638,
+      "used_mb": 5101,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196770.781,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196771.917,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196773.037,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196774.157,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196775.277,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196776.398,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196777.518,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196778.64,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196779.771,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196780.921,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196782.058,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196783.197,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196784.361,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196785.619,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196787.709,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196789.417,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196790.775,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196792.037,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196793.206,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196794.641,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196795.819,
+      "used_mb": 3467,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196796.972,
+      "used_mb": 5809,
+      "total_mb": 16311,
+      "util_pct": "1",
+      "procs": {}
+    },
+    {
+      "t": 1795196798.097,
+      "used_mb": 7023,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196799.217,
+      "used_mb": 7045,
+      "total_mb": 16311,
+      "util_pct": "32",
+      "procs": {}
+    },
+    {
+      "t": 1795196800.347,
+      "used_mb": 7049,
+      "total_mb": 16311,
+      "util_pct": "35",
+      "procs": {}
+    },
+    {
+      "t": 1795196801.515,
+      "used_mb": 7053,
+      "total_mb": 16311,
+      "util_pct": "33",
+      "procs": {}
+    },
+    {
+      "t": 1795196802.666,
+      "used_mb": 7055,
+      "total_mb": 16311,
+      "util_pct": "34",
+      "procs": {}
+    },
+    {
+      "t": 1795196803.802,
+      "used_mb": 7059,
+      "total_mb": 16311,
+      "util_pct": "36",
+      "procs": {}
+    },
+    {
+      "t": 1795196804.94,
+      "used_mb": 7065,
+      "total_mb": 16311,
+      "util_pct": "44",
+      "procs": {}
+    },
+    {
+      "t": 1795196806.059,
+      "used_mb": 7065,
+      "total_mb": 16311,
+      "util_pct": "23",
+      "procs": {}
+    },
+    {
+      "t": 1795196807.178,
+      "used_mb": 6483,
+      "total_mb": 16311,
+      "util_pct": "57",
+      "procs": {}
+    },
+    {
+      "t": 1795196808.313,
+      "used_mb": 7279,
+      "total_mb": 16311,
+      "util_pct": "34",
+      "procs": {}
+    },
+    {
+      "t": 1795196809.437,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "36",
+      "procs": {}
+    },
+    {
+      "t": 1795196810.562,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "36",
+      "procs": {}
+    },
+    {
+      "t": 1795196811.711,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "34",
+      "procs": {}
+    },
+    {
+      "t": 1795196812.857,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "32",
+      "procs": {}
+    },
+    {
+      "t": 1795196814.006,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "39",
+      "procs": {}
+    },
+    {
+      "t": 1795196815.157,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "43",
+      "procs": {}
+    },
+    {
+      "t": 1795196816.302,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "49",
+      "procs": {}
+    },
+    {
+      "t": 1795196817.461,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "49",
+      "procs": {}
+    },
+    {
+      "t": 1795196818.617,
+      "used_mb": 7281,
+      "total_mb": 16311,
+      "util_pct": "17",
+      "procs": {}
+    },
+    {
+      "t": 1795196819.774,
+      "used_mb": 3807,
+      "total_mb": 16311,
+      "util_pct": "8",
+      "procs": {}
+    },
+    {
+      "t": 1795196820.959,
+      "used_mb": 3803,
+      "total_mb": 16311,
+      "util_pct": "12",
+      "procs": {}
+    },
+    {
+      "t": 1795196822.186,
+      "used_mb": 3835,
+      "total_mb": 16311,
+      "util_pct": "9",
+      "procs": {}
+    },
+    {
+      "t": 1795196823.361,
+      "used_mb": 4655,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196824.52,
+      "used_mb": 3607,
+      "total_mb": 16311,
+      "util_pct": "18",
+      "procs": {}
+    },
+    {
+      "t": 1795196825.68,
+      "used_mb": 3627,
+      "total_mb": 16311,
+      "util_pct": "93",
+      "procs": {}
+    },
+    {
+      "t": 1795196826.838,
+      "used_mb": 4777,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196828.003,
+      "used_mb": 4039,
+      "total_mb": 16311,
+      "util_pct": "96",
+      "procs": {}
+    },
+    {
+      "t": 1795196829.159,
+      "used_mb": 3765,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196830.322,
+      "used_mb": 3765,
+      "total_mb": 16311,
+      "util_pct": "13",
+      "procs": {}
+    },
+    {
+      "t": 1795196831.475,
+      "used_mb": 667,
+      "total_mb": 16311,
+      "util_pct": "17",
+      "procs": {}
+    },
+    {
+      "t": 1795196832.621,
+      "used_mb": 667,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    },
+    {
+      "t": 1795196833.759,
+      "used_mb": 667,
+      "total_mb": 16311,
+      "util_pct": "0",
+      "procs": {}
+    }
+  ],
+  "vram_peak_mb_sampled": 7281,
+  "vram_total_mb_sampled": 16311,
+  "health_after": {
+    "service": "w-m-acestep",
+    "version": "1.0.0",
+    "port": 8190,
+    "models_dir": "E:\\Work\\X-Theater\\runtime\\acestep\\models",
+    "handler_ready": true,
+    "lm_ready": true,
+    "init_error": null,
+    "gen_count": 1,
+    "uptime_seconds": 94.0,
+    "vram": {
+      "cuda": true,
+      "gpu": "NVIDIA GeForce RTX 5060 Ti",
+      "vram_allocated_mb": 181.0,
+      "vram_reserved_mb": 296.0,
+      "vram_free_mb": 14826.0,
+      "vram_total_mb": 16310.6,
+      "vram_peak_mb": 6864.4
+    }
+  },
+  "unload_after": {
+    "ok": true,
+    "cuda": true,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti",
+    "vram_allocated_mb": 181.0,
+    "vram_reserved_mb": 296.0,
+    "vram_free_mb": 14826.0,
+    "vram_total_mb": 16310.6,
+    "vram_peak_mb": 6864.4
+  }
+}

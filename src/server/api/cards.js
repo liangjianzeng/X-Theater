@@ -199,7 +199,12 @@ function ensureScenesAndShots(ctx, episode, card) {
   const existing = scenesOf(ctx, episode.id);
   if (existing.length) return { scenes: existing, shots: shotsOf(ctx, episode.id) };
   const payload = (card && card.payload) || {};
-  const planScenes = Array.isArray(payload.scenes) && payload.scenes.length ? payload.scenes : DEFAULT_SCENES;
+  // 剧本是结构化源头（契约：episodes POST script）：有 script.scenes 时以其为准，
+  // C1 plan 的场景仅为无剧本时的兜底（2026-11-21 修复：H3 线镜 5-8 未物化）。
+  const scriptScenes = episode.script && Array.isArray(episode.script.scenes) ? episode.script.scenes : null;
+  const planScenes = scriptScenes && scriptScenes.length
+    ? scriptScenes
+    : (Array.isArray(payload.scenes) && payload.scenes.length ? payload.scenes : DEFAULT_SCENES);
   st.scenes = st.scenes || {};
   st.shots = st.shots || {};
   const scenes = [];
@@ -215,13 +220,18 @@ function ensureScenesAndShots(ctx, episode, card) {
     scenes.push(sc);
     const n = Array.isArray(ps.shots) && ps.shots.length ? ps.shots.length : SHOTS_PER_SCENE;
     for (let j = 1; j <= n; j++) {
+      // 剧本是结构化源头：sec/tier/width/height 从 ep.script.scenes 透传（H3 线 2026-11-21）
+      const ss = (episode.script && Array.isArray(episode.script.scenes) && episode.script.scenes[i] && Array.isArray(episode.script.scenes[i].shots)) ? (episode.script.scenes[i].shots[j - 1] || {}) : {};
       const sh = {
         id: ctx.util.uid("sh"),
         sceneId: sc.id,
         episodeId: episode.id,
         seq: (i + 1) * 100 + j,
         name: sc.name + "-镜" + j,
-        sec: 5,
+        sec: Number(ss.sec) > 0 ? Number(ss.sec) : 5,
+        tier: ss.tier === "high" ? "high" : undefined,
+        width: Number(ss.width) > 0 ? Number(ss.width) : undefined,
+        height: Number(ss.height) > 0 ? Number(ss.height) : undefined,
         status: "pending",
         takes: [],
         rerolls: 0,
@@ -370,6 +380,16 @@ function reEnqueueOnReject(ctx, card) {
       return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
     case "C3":
       return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
+    case "C4": {
+      // 配音重出：重派全场景 voice（真 TTS 重渲染，产物落盘并持久化）
+      const scenes2 = scenesOf(ctx, epId);
+      let first = null;
+      (scenes2 || []).forEach((sc) => {
+        const jb = ctx.engine.enqueue("voice", { episodeId: epId, sceneId: sc.id, text: sc.name }, { episodeId: epId, initiated_by: "user" });
+        if (!first) first = jb;
+      });
+      return first;
+    }
     case "C5":
       return ctx.engine.enqueue("compose", { episodeId: epId, purpose: "preview" }, opts);
     case "C9": {
@@ -396,6 +416,24 @@ function onPlanDone(ctx, job, episodeId) {
   const r = upsertCard(ctx, { episodeId, type: "C1", payload, skipIfDecided: true });
   if (r.created) publishCard(ctx, "created", r.card);
   else if (r.card) publishCard(ctx, "updated", r.card);
+  return true;
+}
+
+function onVoiceDone(ctx, job, episodeId) {
+  // 台词产物持久化（voice job result 只在内存，重启即失 → compose 依赖它做台词混流）
+  const st = ctx.store.get();
+  const lines = ((job.art || job.result || {}).lines) || [];
+  if (!lines.length) return false;
+  st.voice_lines = st.voice_lines || {};
+  const cur = (st.voice_lines[episodeId] || []).slice();
+  const byText = {};
+  cur.forEach((l) => { if (l && l.text) byText[l.text] = l; });
+  lines.forEach((l) => {
+    if (l && l.text && l.art && !byText[l.text]) {
+      byText[l.text] = { text: l.text, art: l.art, seconds: l.seconds || null, cast: l.cast || null, sceneName: l.sceneName || null, seq: l.seq || null };
+    }
+  });
+  st.voice_lines[episodeId] = Object.values(byText);
   return true;
 }
 
@@ -457,7 +495,8 @@ function onStoryboardDone(ctx, job, episodeId) {
       ctx.engine.enqueue(
         "casting",
         { episodeId: episodeId, castIdx: idx },
-        { episodeId: episodeId, initiated_by: "system" }
+        // Spark 通道启用 → casting 走 imgspark（H3-Image 真定妆，engine.laneFor tier:"high" 路由）
+        { episodeId: episodeId, initiated_by: "system", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
       );
     });
   }
@@ -466,7 +505,7 @@ function onStoryboardDone(ctx, job, episodeId) {
     const allHave = actors.length > 0 && actors.every((a) => ((a.candidates || [])[0] || {}).art);
     if (allHave) {
       // 定妆已齐（继承）→ 直接入队角色分镜（编辑模型）
-      ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system" });
+      ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined });
     }
   }
   return true;
@@ -720,7 +759,7 @@ function handleJobDone(ctx, evt) {
       touched = onMusicDone(ctx, job, episodeId);
       break;
     case "voice":
-      touched = false;
+      touched = onVoiceDone(ctx, job, episodeId);
       break;
     default:
       touched = false;
@@ -848,6 +887,7 @@ function register(router, ctx) {
       if (action === "reject") {
         const reJob = reEnqueueOnReject(ctx, card);
         card.ver += 1;
+        if (card.type === "C4" && reJob) card.status = "pending"; // 配音卡重出＝回待确认（新产物到位后重新拍板）
         card.payload = Object.assign({}, card.payload, {
           regenerating: !!reJob,
           reject_note: (b.payload && b.payload.note) || null

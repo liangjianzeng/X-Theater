@@ -1,0 +1,14 @@
+[
+ {
+  "tag": "T1_res2048_origanchor",
+  "prompt_id": "d7a220a3-9e08-4664-a7c8-a5cfac25c398",
+  "seconds": 57,
+  "file": "runtime\\qwen-edit-evidence\\T1_res2048_origanchor_d7a220a3.png"
+ },
+ {
+  "tag": "T2_res2048_richanchor",
+  "prompt_id": "bf522c00-d9d6-476f-81b1-1511444922cc",
+  "seconds": 60,
+  "file": "runtime\\qwen-edit-evidence\\T2_res2048_richanchor_bf522c00.png"
+ }
+]

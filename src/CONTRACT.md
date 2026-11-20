@@ -103,9 +103,9 @@ engine.retry(jobId) engine.stop(jobId) engine.queueState()
 | lane | 段位 | 引擎 stub 行为（确定性！同输入同输出，hash 种子） |
 |---|---|---|
 | img5060 | qwen-image-2.1-turbo-Q5_K_M · W-B ComfyUI :8188 | job c1plan/storyboard 出图占位＋cost 3–8 分 |
-| imgspark | MiniMax-H3-Image · MXFP8+FP8（unavail:["nvfp4","int8"]） | 高价值出图 15–25 分 |
+| imgspark | MiniMax-H3-Image · int8_convrot（Spark ComfyUI :8188，published:["int8","MXFP8+FP8"]，unavail:["nvfp4"]） | 高价值出图 20 分（stub 15–25 分）；THEATER_COMFY_SPARK=1 真引擎，仅 casting 类型 |
 | vid5060 | LTX-2.5 UD-Q4_K_XL | video job：cost 80 分/5s，art=占位 mp4（写 var/out/<takeId>.mp4 二进制 stub＋.meta.json） |
-| vidspark | FastH3 nvfp4 | 高价值档 150 分；夜间闲时标记 peak_valley 时排队慢档 |
+| vidspark | MiniMax-H3 int8_convrot（Spark ComfyUI :8188，nvfp4 可切） | 高价值档 150 分；真模式 fl2va（分镜首帧）/ref2va（定妆 refs）声画直出，turbo 4step，timeout 1800s；夜间闲时标记 peak_valley 时排队慢档 |
 | music | ACE-Step 1.5 · W-M :8190 | music job：30–60s 占位 mp3 stub＋license{model:"MIT",usage 由曲库策略确定性给：标题含"未许可"→missing}，5–15 分 |
 | tts | CosyVoice2 | voice job stub |
 | compose | FFmpeg stub | 成片 stub＋显式/隐式标识写入 meta（explicit_mark:true） |

@@ -139,16 +139,16 @@ function seedState() {
           endpoint: "W-B ComfyUI :8188", published: ["Q5_K_M"], unavail: []
         },
         "MiniMax-H3-Image": {
-          lane: "imgspark", engine: "MiniMax-H3-Image", quant: "MXFP8+FP8",
-          endpoint: "Spark SGLang 常驻", published: ["MXFP8+FP8"], unavail: ["nvfp4", "int8"]
+          lane: "imgspark", engine: "MiniMax-H3-Image", quant: "int8_convrot",
+          endpoint: "Spark ComfyUI :8188", published: ["int8", "MXFP8+FP8"], unavail: ["nvfp4"]
         },
         "LTX-2.5": {
           lane: "vid5060", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
           endpoint: "W-B ComfyUI :8188", published: ["UD-Q4_K_XL"], unavail: []
         },
         "FastH3": {
-          lane: "vidspark", engine: "FastH3", quant: "nvfp4",
-          endpoint: "Spark", published: ["nvfp4"], unavail: []
+          lane: "vidspark", engine: "MiniMax-H3", quant: "int8_convrot",
+          endpoint: "Spark ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: []
         },
         "ACE-Step 1.5": {
           lane: "music", engine: "ACE-Step 1.5", quant: "fp16",

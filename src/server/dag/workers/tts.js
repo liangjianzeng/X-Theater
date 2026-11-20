@@ -37,6 +37,9 @@ function sub(hex, start, len) {
 function numFrom(hex) {
   return parseInt(String(hex).slice(0, 8), 16) >>> 0;
 }
+// 部署面映射：角色 role → TTS 服务已注册音色；未映射角色省略 speaker（服务端用默认音色）
+const SPK_MAP = { "女主": "中文女" };
+
 function safeSeg(s) {
   const v = String(s == null ? "" : s)
     .replace(/[^A-Za-z0-9._-]/g, "_")
@@ -52,7 +55,21 @@ function writeOut(ctx, fileName, data) {
   return fp;
 }
 
+/** 显存互斥：卸载 ComfyUI 常驻模型（编辑模型热载 ~14.5G，不卸载则 TTS/音乐必 OOM） */
+async function freeComfy(ctx) {
+  const base = String((ctx && ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "");
+  if (!base) return;
+  try {
+    await new Promise((resolve) => {
+      const u = new URL(base + "/free");
+      const rq = require("http").request(u, { method: "POST", headers: { "content-type": "application/json" } }, (rs) => { rs.resume(); rs.on("end", resolve); rs.on("error", resolve); });
+      rq.on("error", resolve);
+      rq.end(JSON.stringify({ unload_models: true, free_memory: true }));
+    });
+  } catch (e) { /* 卸载失败不阻断主流程 */ }
+}
 async function runReal(ctx, job, p, seed) {
+  await freeComfy(ctx);
   const http = require("http");
   const url = String((ctx.cfg && ctx.cfg.tts && ctx.cfg.tts.url) || process.env.THEATER_TTS_URL || "");
   if (!url) return null;
@@ -60,13 +77,25 @@ async function runReal(ctx, job, p, seed) {
   const ep = st.episodes && st.episodes[(p.episodeId || job.episodeId || "")];
   const script = ep && ep.script;
   const lines = [];
-  (script && script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh, i) => {
-    if (sh.dialogue) lines.push({ seq: i + 1, text: sh.dialogue, cast: (sh.cast || [])[0] || "" });
-  }));
-  if (!lines.length) return null;
+  // 场景对齐：state 场景按 seq 排序 ↔ script.scenes 顺序（ensureScenesAndShots 1:1 有序创建）
+  let sceneIdx = -1;
+  if (p.sceneId) {
+    const scAll = Object.keys(st.scenes || {}).map((k) => st.scenes[k])
+      .filter((x) => x && x.episodeId === (p.episodeId || job.episodeId))
+      .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    sceneIdx = scAll.findIndex((x) => x.id === p.sceneId);
+    if (sceneIdx < 0) return { lines: [] }; // 场景对不上：诚实空结果（不落 stub 造假）
+  }
+  (script && script.scenes || []).forEach((sc, si) => {
+    if (p.sceneId && si !== sceneIdx) return; // 每场景 job 只渲染本场景台词
+    (sc.shots || []).forEach((sh, i) => {
+      if (sh.dialogue) lines.push({ sceneName: sc.name, seq: i + 1, text: sh.dialogue, cast: (sh.cast || [])[0] || "" });
+    });
+  });
+  if (!lines.length) return { lines: [] }; // 真实模式下无台词场景＝诚实空结果
   const out = [];
   for (const ln of lines) {
-    const body = JSON.stringify({ text: ln.text, speaker: ln.cast });
+    const body = JSON.stringify({ text: ln.text, speaker: SPK_MAP[ln.cast] || undefined });
     const r = await new Promise((resolve, reject) => {
       const rq = http.request(url + "/tts", { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) }, timeout: 180000 }, (rs) => {
         let s = ""; rs.on("data", (c) => s += c); rs.on("end", () => { try { resolve({ st: rs.statusCode, b: JSON.parse(s || "{}") }); } catch (e) { reject(Object.assign(new Error("TTS 响应异常"), { code: "TTS_BAD" })); } });

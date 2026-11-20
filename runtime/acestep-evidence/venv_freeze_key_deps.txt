@@ -1,0 +1,22 @@
+accelerate==1.16.0
+diffusers==0.37.1
+einops==0.8.2
+fastapi==0.165.0
+loguru==0.8.0
+modelscope==1.40.3
+numba==0.68.1
+pydantic==2.14.4
+pytorch-wavelets==1.3.0
+pywavelets==1.10.0
+safetensors==0.7.0
+scipy==1.18.1
+setuptools==80.10.2
+soundfile==0.14.0
+starlette==1.10.0
+torch @ file:///E:/Work/X-Theater/runtime/acestep/work/wheels/torch-2.7.1+cu128-cp312-cp312-win_amd64.whl
+torch-einops-utils==0.2.8
+torchao==0.16.0
+torchaudio @ file:///E:/Work/X-Theater/runtime/acestep/work/wheels/torchaudio-2.7.1+cu128-cp312-cp312-win_amd64.whl
+torchvision @ file:///E:/Work/X-Theater/runtime/acestep/work/wheels/torchvision-0.22.1+cu128-cp312-cp312-win_amd64.whl
+transformers==4.57.6
+uvicorn==0.54.0

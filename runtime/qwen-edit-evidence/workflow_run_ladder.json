@@ -1,0 +1,118 @@
+{
+ "1": {
+  "class_type": "UnetLoaderGGUF",
+  "inputs": {
+   "unet_name": "qwen-image-2.1-Q5_K_M.gguf"
+  }
+ },
+ "2": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+   "type": "qwen_image"
+  }
+ },
+ "3": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "qwen_image_2.1_vae_bf16_comfyorg.safetensors"
+  }
+ },
+ "4": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "female_ref.png"
+  }
+ },
+ "5": {
+  "class_type": "TextEncodeQwenImage21",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ],
+   "images": {
+    "image_1": [
+     "4",
+     0
+    ]
+   },
+   "prompt": "让画面中的女子站在雨夜灯塔旋梯上，手提点亮的老式马灯，裙摆被风吹动，保持面部特征与发型不变，实拍电影剧照质感，青橙影调",
+   "negative_prompt": "低质量，模糊，畸变，多余的手指，文字，水印",
+   "resolution": 1024
+  }
+ },
+ "6": {
+  "class_type": "QwenImage21Cache",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "device": "auto",
+   "dtype": "default"
+  }
+ },
+ "7": {
+  "class_type": "EmptySD3LatentImage",
+  "inputs": {
+   "batch_size": 1,
+   "height": 1280,
+   "width": 720
+  }
+ },
+ "8": {
+  "class_type": "KSampler",
+  "inputs": {
+   "cfg": 1.0,
+   "denoise": 1.0,
+   "latent_image": [
+    "7",
+    0
+   ],
+   "model": [
+    "6",
+    0
+   ],
+   "negative": [
+    "5",
+    1
+   ],
+   "positive": [
+    "5",
+    0
+   ],
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "seed": 20261121,
+   "steps": 25
+  }
+ },
+ "9": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "8",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "10": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "filename_prefix": "theater_edit",
+   "images": [
+    "9",
+    0
+   ]
+  }
+ }
+}

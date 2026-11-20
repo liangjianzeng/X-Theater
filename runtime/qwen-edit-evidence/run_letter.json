@@ -1,0 +1,17 @@
+{
+ "tag": "letter",
+ "prompt_id": "629c3e5e-bb3a-40f9-aca9-9bd76bacad0f",
+ "wall_s": 57.1,
+ "vram_peak_mib": 14480,
+ "samples": 54,
+ "seed": 20261121,
+ "size": [
+  720,
+  1280
+ ],
+ "steps": 25,
+ "cfg": 1.0,
+ "instruction": "画面中是参考图里同一位黑发年轻东亚女性（同一人），她在灯塔塔顶值班室里读一封旧信，烛光映脸，她的面部特征与黑色长直发型与参考图完全一致，实拍电影剧照质感",
+ "output": "E:\\Work\\X-Theater\\runtime\\qwen-edit-evidence\\letter_629c3e5e.png",
+ "output_bytes": 1108329
+}
