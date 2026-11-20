@@ -18,6 +18,7 @@ const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts",
 const TYPE_LANE = {
   c1plan: "img5060",
   casting: "img5060",
+  storyboard_char: "img5060",
   storyboard: "img5060",
   img_spark: "imgspark",
   music: "music",

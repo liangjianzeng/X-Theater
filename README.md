@@ -8,6 +8,7 @@ AI 短剧全链路创作 SaaS —— 一期完全自部署（5060 Ti ＋ DGX Spa
 |---|---|
 | [theater-product-master-plan.md](docs/theater-product-master-plan.md) | **总纲（评审基线）**：定位/FR/架构/合规/路线图 |
 | [theater-phase1-plan.md](docs/theater-phase1-plan.md) | 一期执行细分：WBS 280pd、双里程碑、周排程、验收 V1–V10 |
+| [theater-test-acceptance-plan.md](docs/theater-test-acceptance-plan.md) | **全业务自动化测试与验收规划**：分层模型 L0–L4、覆盖矩阵（34 端点/12 视图/FR）、韧性·安全·property 系列、UI 双 lane、执行节律与证据链治理 |
 | [theater-ux-design.md](docs/theater-ux-design.md) | 竞品 UX 拆解与体验机制 |
 | [theater-ui-interaction-design.md](docs/theater-ui-interaction-design.md) | 一期实现级 UI 交互规范 v1.5（S1–S18） |
 | [theater-infer-backend-adr.md](docs/theater-infer-backend-adr.md) | ADR-001 推理计算后端 |

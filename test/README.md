@@ -1,5 +1,9 @@
 # 剧场一期 · 自动化验收套件（test/）
 
+> 扩编总纲：[docs/theater-test-acceptance-plan.md](../docs/theater-test-acceptance-plan.md)
+> ——本套件现况＝验收总线主用例（V 系列）；端点全覆盖 E 系列、韧性 F 系列、安全 S 系列、
+> property P 系列与 UI 双 lane 按该规划路线图（T0–T5）扩编，映射表见规划 §4。
+
 对齐 `docs/theater-phase1-plan.md` §0 验收总线（V1–V10 中可软件化项）与
 `src/CONTRACT.md` §3 REST / §4 引擎注册表 / §7 验收套件纪律。
 

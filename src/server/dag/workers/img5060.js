@@ -19,7 +19,8 @@ const ENGINE_USER = "自部署·标准档";
 const WEIGHTS = "Q5_K_M";
 const TMPL_T2I = "qwen-image-turbo";
 const TMPL_I2I = "qwen-image-turbo-i2i";
-const STYLE_SUFFIX = "写实电影感人像，青橙影调，烛光夜色一致，浅景深，胶片质感";
+const TMPL_EDIT = "qwen-image-edit-cast";
+const STYLE_SUFFIX = "实拍电影剧照，真实摄影，35mm 胶片颗粒，自然皮肤纹理与真实光影，青橙影调，雨夜烛光，浅景深";
 const PNG_1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
@@ -91,7 +92,7 @@ async function genOne(ctx, job, { tmplId, prompt, negative, image, seedHex, widt
   const params = {
     SEED: numFrom(seedHex) % 4294967295,
     PROMPT: prompt,
-    NEGATIVE: negative || "低质量，模糊，变形，水印，文字，多人",
+    NEGATIVE: negative || "低质量，模糊，变形，水印，文字，多人，插画，动漫，卡通，二次元，绘画感，CG渲染，3D，磨皮过度",
     WIDTH: width || 1024,
     HEIGHT: height || 1024,
     STEPS: steps || 8,
@@ -141,13 +142,10 @@ async function runComfy(ctx, job, p, seed, cents) {
     const images = [];
     for (let i = 0; i < shots.length; i++) {
       const sh = shots[i];
-      const refName = (sh.cast || [])[0];
-      const ref = cast.find((c) => c.role === refName || c.name === refName);
-      // 人设文字锚定身份（同名同装），构图跟剧本走——i2i 锚图会把参考姿势冻进每一帧（漫画化），禁用于分镜
-      const who = ref ? "角色设定：" + ref.desc + "。" : "";
+      if ((sh.cast || []).length) continue; // 角色镜 → storyboard_char（编辑模型保脸换姿势）
       const r = await genOne(ctx, j, {
         tmplId: TMPL_T2I,
-        prompt: [who, sh.desc, STYLE_SUFFIX].filter(Boolean).join(" "),
+        prompt: ["空镜/氛围镜头：", sh.desc, STYLE_SUFFIX].filter(Boolean).join(" "),
         image: null,
         seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
         width: 720, height: 1280, steps: 8, cfgv: 1.0
@@ -163,7 +161,46 @@ async function runComfy(ctx, job, p, seed, cents) {
     return bagRes;
   }
 
-  if (type === "casting") {
+  if (type === "storyboard_char") {
+    // 角色镜：编辑模型（定妆主选图为身份输入）＋镜描述指令＝保脸换姿势
+    const st0 = ctx.store.get();
+    const cards = Object.keys(st0.cards || {}).map((k) => st0.cards[k]);
+    const c2 = cards.find((x) => x.episodeId === p.episodeId && x.type === "C2");
+    const actors = (c2 && c2.payload && c2.payload.actors) || [];
+    const script = scriptOf(ctx, p.episodeId) || { scenes: [] };
+    const shots = [];
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name }, sh))));
+    const images = [];
+    for (let i = 0; i < shots.length; i++) {
+      const sh = shots[i];
+      if (!(sh.cast || []).length) continue;
+      const refName = sh.cast[0];
+      const actor = actors.find((x) => x.role === refName || x.name === refName);
+      const castDef = castOf(ctx, p.episodeId).find((x) => x.role === refName || x.name === refName);
+      const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
+      if (!art) continue; // 定妆未就绪（编排层保证次序）
+      const local = path.join(process.cwd(), art);
+      const inputName = "cast_" + safeSeg(refName) + ".png";
+      const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
+      if (!inputDir) throw Object.assign(new Error("comfy inputDir 未配置"), { code: "NO_INPUT_DIR" });
+      try { fs.copyFileSync(local, path.join(inputDir, inputName)); } catch (e) { throw Object.assign(new Error("定妆图拷贝失败：" + e.message), { code: "CAST_COPY" }); }
+      const r = await genOne(ctx, j, {
+        tmplId: TMPL_EDIT,
+        prompt: ["让画面中的" + ((castDef && castDef.name) || refName) + "：" + sh.desc + "。保持面部特征与发型不变，全片同一人同一套服装。", STYLE_SUFFIX].filter(Boolean).join(" "),
+        image: inputName,
+        seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
+        width: 720, height: 1280, steps: 8, cfgv: 1.0
+      });
+      const fn = idSeg + "_char" + (i + 1) + ".png";
+      images.push({ shotId: null, seq: i + 1, art: "var/out/" + fn, bytes: r.bytes.length });
+      writeOut(ctx, fn, r.bytes);
+    }
+    const metaC = Object.assign({}, baseMeta, { kind: "image-comfy-storyboard-char", images, seed });
+    const bagC = { ok: true, cents, art: images.length ? images[0].art : null, meta: metaC, engine: ENGINE_USER, images };
+    j.result = bagC; j.art = bagC;
+    return bagC;
+  }
+    if (type === "casting") {
     const cast = castOf(ctx, p.episodeId);
     const actor = cast[p.castIdx] || { desc: p.prompt || "", refImage: null };
     const r = await genOne(ctx, j, {

@@ -28,7 +28,7 @@
    "evidence": "runtime/comfyui-evidence/EVIDENCE.md"
   },
   "qwen-image-turbo-i2i": {
-   "tmpl_sha16": "8d6d497cd41b80a7",
+   "tmpl_sha16": "5fcfcfb928587550",
    "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
    "cn_commits": {
     "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
@@ -50,7 +50,10 @@
      "role": "vae"
     }
    ],
-   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存；i2i：LoadImage→VAEEncode→denoise0.7（保影调变构图）"
+   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存；i2i：LoadImage→VAEEncode→denoise0.7（保影调变构图）",
+   "params": {
+    "DENOISE": "0.7（定妆默认）；人脸保真建议 0.4-0.45"
+   }
   },
   "ltx25-t2v": {
    "tmpl_sha16": "f4a3eae224cbb3e1",

@@ -405,14 +405,21 @@ function onStoryboardDone(ctx, job, episodeId) {
   const ep2 = (st.episodes || {})[episodeId];
   const cast = (ep2 && ep2.script && ep2.script.cast) || [];
   const comfyOn = !!(ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.enabled);
+  const allCards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
   let payload;
   if (comfyOn && cast.length) {
     // 真实模式：角色定义即选角卡主体；定妆图由 casting 任务异步回填
     payload = {
-      actors: cast.map((cc, i) => ({
-        id: "actor_" + i, role: cc.role, name: cc.name, desc: cc.desc, refImage: cc.refImage,
-        candidates: [{ id: "cand_" + i + "_0", name: "定妆生成中…", art: null, score: null }]
-      })),
+      actors: cast.map((cc, i) => {
+        // 继承既有定妆（按 role 匹配任意旧 C2）：脸不重掷
+        const prev = allCards.find((x) => x.episodeId === episodeId && x.type === "C2" && (x.payload && x.payload.actors || []).some((pa) => pa.role === cc.role && ((pa.candidates || [])[0] || {}).art));
+        const prevActor = prev && (prev.payload.actors || []).find((pa) => pa.role === cc.role);
+        const prevCand = prevActor && (prevActor.candidates || []).filter((x) => x.art);
+        return {
+          id: "actor_" + i, role: cc.role, name: cc.name, desc: cc.desc, refImage: cc.refImage,
+          candidates: prevCand && prevCand.length ? prevCand : [{ id: "cand_" + i + "_0", name: "定妆生成中…", art: null, score: null }]
+        };
+      }),
       images: (art.images || []).map(im => im),
       note: "角色定义 " + cast.length + " 人 · 定妆生成中（真机）"
     };
@@ -430,8 +437,8 @@ function onStoryboardDone(ctx, job, episodeId) {
   if (r.created) publishCard(ctx, "created", r.card);
   else if (r.card) publishCard(ctx, "updated", r.card);
   // 数据刷新：新分镜图刷进本集所有 C2/C4（含已拍板卡）——不改任何决策，仅产物更新
-  const allCards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
-  allCards.forEach((x) => {
+  const refreshCards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  refreshCards.forEach((x) => {
     if (x.episodeId !== episodeId) return;
     if (x.type !== "C2" && x.type !== "C4") return;
     if (x.status === "pending" && x.id === (r.card && r.card.id)) return; // pending 新卡已在 upsert 时写入
@@ -454,7 +461,38 @@ function onStoryboardDone(ctx, job, episodeId) {
       );
     });
   }
+  if (comfyOn && cast.length) {
+    const actors = (r.card && r.card.payload && r.card.payload.actors) || [];
+    const allHave = actors.length > 0 && actors.every((a) => ((a.candidates || [])[0] || {}).art);
+    if (allHave) {
+      // 定妆已齐（继承）→ 直接入队角色分镜（编辑模型）
+      ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system" });
+    }
+  }
   return true;
+}
+
+function onStoryboardCharDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
+  const art = job.art || job.result || {};
+  const images = (art.images || []);
+  const shots = shotsOf(ctx, episodeId).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const bound = images.map((im) => {
+    const sh = shots[(im.seq || 1) - 1];
+    return Object.assign({}, im, { shotId: sh ? sh.id : null });
+  });
+  const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  cards.forEach((x) => {
+    if (x.episodeId !== episodeId) return;
+    if (x.type !== "C2" && x.type !== "C4") return;
+    const old = (x.payload && x.payload.images) || [];
+    const merged = old.filter((im) => !bound.some((b) => b.seq === im.seq)).concat(bound).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    x.payload = Object.assign({}, x.payload, { images: merged });
+    x.ver += 1;
+    x.updated_at = ctx.util.now();
+    publishCard(ctx, "updated", x);
+  });
+  return bound.length > 0;
 }
 
 function onCastingDone(ctx, job, episodeId) {
@@ -478,6 +516,10 @@ function onCastingDone(ctx, job, episodeId) {
   c2.payload.note = pendingCast
     ? "角色定义 " + actors.length + " 人 · 定妆生成中（剩 " + pendingCast + " 人）"
     : "角色定义 " + actors.length + " 人 · 定妆齐（真机）";
+  if (pendingCast === 0 && ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.enabled) {
+    // 全员定妆齐 → 派生角色分镜（编辑模型保脸换姿势）
+    ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system" });
+  }
   c2.ver += 1;
   c2.updated_at = ctx.util.now();
   try { ctx.bus.publish("cards", { event: "updated", card: c2 }); } catch (e) {}
@@ -661,6 +703,9 @@ function handleJobDone(ctx, evt) {
       break;
     case "casting":
       touched = onCastingDone(ctx, job, episodeId);
+      break;
+    case "storyboard_char":
+      touched = onStoryboardCharDone(ctx, job, episodeId);
       break;
     case "video":
       touched = onVideoDone(ctx, job, episodeId);
