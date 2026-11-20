@@ -266,9 +266,11 @@
       return r;
     } catch (e) { /* 探测失败也回结构化结果 */ return { error: T.humanErr(e) }; }
   };
-  store.probeEngine = async function (engineId, endpoint) {
-    try { return await T.api.post("/admin/registry/endpoint", { engineId, endpoint, confirmed: true }); }
-    catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  store.probeEngine = async function (engineId) {
+    try {
+      const r = await T.api.post("/admin/registry/probe", { engineId });
+      return r; // {ok, code, ms, detail} —— 真探测结果
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
   store.loadAudit = async function () {
     try {

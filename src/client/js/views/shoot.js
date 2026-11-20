@@ -75,6 +75,25 @@
         const j = jobOf(shot);
         return !!j && j.status === "failed";
       };
+      /* 镜格状态色带（纯展示映射，不改任何状态）：ok 绿 / run 蓝 / queued 灰 / 复审黄 / 失败红 */
+      function cellCls(shot) {
+        const failed = jobFailed(shot);
+        const j = jobOf(shot);
+        const jst = j ? String(j.status) : "";
+        const cls = {
+          "v-shoot-warn": String(shot.status) === "pending_review",
+          "v-shoot-err": failed,
+          "v-shoot-run": !failed && !!j && ["queued", "running"].indexOf(jst) >= 0
+        };
+        let band = "v-shoot-band-q";
+        if (failed) band = "v-shoot-band-err";
+        else if (String(shot.status) === "pending_review") band = "v-shoot-band-warn";
+        else if (jst === "running") band = "v-shoot-band-run";
+        else if (jst === "failed") band = "v-shoot-band-err";
+        else if (String(shot.status) === "ok") band = "v-shoot-band-ok";
+        cls[band] = true;
+        return cls;
+      }
       /* 集级任务区：只列还在跑/排队/失败的（成功归档不打扰） */
       const queueJobs = computed(() =>
         jobRows.value.filter(j => ["queued", "pending", "running", "failed"].indexOf(String(j.status)) >= 0)
@@ -128,29 +147,20 @@
       return {
         store, opBusy, shots, loading, err, isEmpty, wallErr,
         jobRows, queueJobs, queuedN, runningN, totalN, doneN, reviewN,
-        jobOf, jobFailed, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean
+        jobOf, jobFailed, cellCls, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean
       };
     },
     template: `
       <div class="v-shoot">
-        <style>
-          .v-shoot-sum { gap: 14px; align-items: baseline; }
-          .v-shoot-sum .weak { margin-left: auto; }
-          .v-shoot-cell { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
-          .v-shoot-cell.v-shoot-warn { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
-          .v-shoot-cell.v-shoot-err { border-color: var(--err); box-shadow: 0 0 0 1px var(--err) inset; }
-          .v-shoot-cell.v-shoot-run { border-color: var(--run); }
-          .v-shoot-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-          .v-shoot-meta { flex-wrap: wrap; gap: 8px; }
-          .v-shoot-acts { margin-top: 2px; gap: 6px; }
-          .v-shoot-q { padding: 8px 10px; }
-        </style>
-
-        <div class="panel row wrap v-shoot-sum">
-          <span>完成 <b class="num">{{ doneN }}</b>/<b class="num">{{ totalN }}</b></span>
+        <div class="toolbar">
+          <span>完成 <b class="num">{{ doneN }}</b><span class="muted">/</span><b class="num">{{ totalN }}</b></span>
+          <span class="tb-sep"></span>
           <span>排队 <b class="num">{{ queuedN }}</b></span>
+          <span class="tb-sep"></span>
           <span>在拍 <b class="num">{{ runningN }}</b></span>
+          <span class="tb-sep"></span>
           <span>待复审 <b class="num">{{ reviewN }}</b></span>
+          <span class="grow"></span>
           <span class="weak">灰区镜头自动送复审台</span>
         </div>
 
@@ -163,23 +173,20 @@
 
         <template v-else>
           <div class="wall">
-            <div v-for="s in shots" :key="s.id" class="card v-shoot-cell"
-              :class="{ 'v-shoot-warn': String(s.status) === 'pending_review',
-                        'v-shoot-err': jobFailed(s),
-                        'v-shoot-run': !jobFailed(s) && jobOf(s) && ['queued','running'].indexOf(String(jobOf(s).status)) >= 0 }">
+            <div v-for="s in shots" :key="s.id" class="card v-shoot-cell" :class="cellCls(s)">
               <div class="row">
-                <b class="num">#{{ s.seq }}</b>
+                <b class="num v-shoot-seq">#{{ s.seq }}</b>
                 <span class="grow v-shoot-name" :title="clean(s.name)">{{ clean(s.name) }}</span>
-                <span class="muted">{{ s.sec }} 秒</span>
+                <span class="muted"><b class="num">{{ s.sec }}</b> 秒</span>
               </div>
               <div class="row v-shoot-meta">
                 <status-dot :status="s.status"></status-dot>
-                <span class="muted">条数 <b class="num">{{ (s.takes || []).length }}</b></span>
-                <money :cents="takeCost(s)"></money>
+                <span>条数 <b class="num">{{ (s.takes || []).length }}</b></span>
+                <span>成本 <money :cents="takeCost(s)"></money></span>
               </div>
               <div class="row v-shoot-meta" v-if="jobOf(s)">
                 <status-dot :status="jobOf(s).status"></status-dot>
-                <span class="muted" v-if="jobOf(s).attempts">第 <b class="num">{{ jobOf(s).attempts }}</b> 次尝试</span>
+                <span v-if="jobOf(s).attempts">第 <b class="num">{{ jobOf(s).attempts }}</b> 次尝试</span>
               </div>
               <div class="row v-shoot-acts" v-if="jobOf(s)">
                 <button class="btn btn-sm" v-if="['queued','running'].indexOf(String(jobOf(s).status)) >= 0"

@@ -40,12 +40,6 @@
       "loading": T.components.Loading
     },
     template: `
-      <style>
-        .v-review-item { display: flex; gap: 12px; align-items: flex-start; }
-        .v-review-thumb { width: 48px; height: 48px; border-radius: 8px; flex: none; border: 1px solid var(--line); }
-        .v-review-stale { opacity: .45; }
-        .v-review-reject { padding-top: 2px; }
-      </style>
       <div class="v-review">
         <div class="panel">
           <div class="panel-title">复审队列

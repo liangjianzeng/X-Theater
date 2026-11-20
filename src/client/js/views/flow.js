@@ -271,32 +271,12 @@
     },
     template: `
       <div class="v-flow">
-        <style>
-          .v-flow-badge { flex: none; }
-          .v-flow-t-C1 { background: #EFE9E2; color: #8A3E12; }
-          .v-flow-t-C2 { background: #E7EEF6; color: #2F6FB4; }
-          .v-flow-t-C3 { background: #EDE7F4; color: #6B4FA1; }
-          .v-flow-t-C4 { background: #E4F2E8; color: #2F7D46; }
-          .v-flow-t-C5 { background: #F7ECD7; color: #B7791F; }
-          .v-flow-t-C6 { background: #F8E3E4; color: #B4232C; }
-          .v-flow-t-C7 { background: #F3E8DC; color: #8A5A2B; }
-          .v-flow-t-C8 { background: #E4F2E8; color: #2F7D46; }
-          .v-flow-t-C9 { background: #E6F0F0; color: #2A7A72; }
-          .v-flow-pending { border-color: #D9CFBC; }
-          .v-flow-acts { margin-top: 10px; }
-          .v-flow-note { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-          .v-flow-c9-row { padding: 7px 2px; border-bottom: 1px solid #F0EEE9; gap: 8px; }
-          .v-flow-c9-row:last-of-type { border-bottom: 0; }
-          .v-flow-c7 { margin-top: 8px; }
-          .v-flow-est { margin-top: 8px; }
-          .v-flow-top { justify-content: space-between; }
-        </style>
-
-        <div class="panel">
-          <div class="row wrap v-flow-top">
-            <div>待拍板 <b class="num">{{ pendingCount }}</b> · 已拍板 <b class="num">{{ decidedCount }}</b></div>
-            <button class="btn btn-ghost btn-sm" @click="reload">刷新卡片</button>
-          </div>
+        <div class="toolbar">
+          <span>待拍板 <b class="num">{{ pendingCount }}</b></span>
+          <span class="tb-sep"></span>
+          <span>已拍板 <b class="num">{{ decidedCount }}</b></span>
+          <span class="grow"></span>
+          <button class="btn btn-ghost btn-sm" @click="reload">刷新卡片</button>
         </div>
 
         <loading v-if="loading"></loading>
@@ -306,9 +286,9 @@
           <a class="btn btn-primary btn-sm" href="#/home">去开新集</a>
         </empty-state>
 
-        <div v-else class="list">
-          <div v-for="card in ordered" :key="card.id" class="card"
-            :class="{ 'v-flow-pending': card.status === 'pending' }">
+        <div v-else class="list v-flow-list">
+          <div v-for="card in ordered" :key="card.id" class="card pcard"
+            :class="{ 'v-flow-pending': card.status === 'pending', 'decided': card.status !== 'pending' }">
             <div class="card-head">
               <span class="badge v-flow-badge" :class="'v-flow-t-' + card.type">{{ typeLabel(card.type) }}</span>
               <span class="card-title">{{ cardTitle(card) }}</span>
@@ -329,29 +309,31 @@
               </div>
             </div>
 
-            <!-- C9：候选行（标题/时长/影子成本/许可）＋试听/用这条/换一批 -->
+            <!-- C9：候选单行（标题＋时长＋影子成本＋许可），操作只给待拍板卡 -->
             <div class="v-flow-c9" v-if="card.type === 'C9'">
-              <div class="row wrap v-flow-c9-row" v-for="c in cands(card)" :key="c.id">
-                <span class="grow">
-                  {{ clean(c.title) }}
-                  <span class="muted">{{ c.mood ? clean(c.mood) + ' · ' : '' }}{{ c.sec }} 秒</span>
-                </span>
+              <div class="row v-flow-c9-row" v-for="c in cands(card)" :key="c.id">
+                <span class="grow v-flow-c9-title" :title="clean(c.title)">{{ clean(c.title) }}</span>
+                <span class="muted">{{ c.mood ? clean(c.mood) + ' · ' : '' }}<b class="num">{{ c.sec }}</b> 秒</span>
                 <money :cents="c.shadow_cents"></money>
                 <license-badge :license="c.license"></license-badge>
-                <button class="btn btn-sm" :disabled="!c.art"
-                  :title="c.art ? '试听这条候选' : '这条候选还没有可用的音频文件，暂时听不了'"
-                  @click="play(c)">{{ playingId === c.id ? '■ 停' : '▶ 试听' }}</button>
-                <button class="btn btn-sm btn-primary" :disabled="adopted[c.id] || busyId === ('mus-' + c.id)"
-                  @click="useTrack(card, c)">{{ adopted[c.id] ? '已采用 ✓' : '用这条' }}</button>
+                <template v-if="card.status === 'pending'">
+                  <button class="btn btn-sm" :disabled="!c.art"
+                    :title="c.art ? '试听这条候选' : '这条候选还没有可用的音频文件，暂时听不了'"
+                    @click="play(c)">{{ playingId === c.id ? '■ 停' : '▶ 试听' }}</button>
+                  <span class="badge" v-if="adopted[c.id]">已采用 ✓</span>
+                  <button v-else class="btn btn-sm btn-primary" :disabled="busyId === ('mus-' + c.id)"
+                    @click="useTrack(card, c)">用这条</button>
+                </template>
+                <span class="badge" v-else-if="adopted[c.id]">已采用 ✓</span>
               </div>
-              <div class="row wrap v-flow-acts">
+              <div class="row wrap v-flow-acts" v-if="card.status === 'pending'">
                 <button class="btn btn-sm btn-ghost" :disabled="!cands(card).length || busyId === ('regen-' + card.id)"
                   @click="regen(card)">换一批</button>
                 <span class="weak" v-if="audioErr">{{ audioErr }}</span>
               </div>
             </div>
 
-            <!-- C6：服务端报价明细＋开机 -->
+            <!-- C6：服务端报价明细（明细收进 kv，开机按钮在卡底部操作行） -->
             <div class="kv v-flow-est" v-if="card.type === 'C6'">
               <loading v-if="est.loading"></loading>
               <template v-else-if="est.data">
@@ -366,12 +348,12 @@
                 </div>
               </template>
               <err-state v-else-if="est.err" :err="est.err" :on-retry="loadEstimate" compact></err-state>
-              <div class="row wrap">
-                <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting"
-                  :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
-                <span class="weak" v-if="!c6Decided">先点「就这个」确认报价，才能开机。</span>
-                <span class="weak" v-else-if="!est.data && !est.loading && !est.err">报价加载中…</span>
-              </div>
+            </div>
+            <div class="row wrap v-flow-cta" v-if="card.type === 'C6'">
+              <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting"
+                :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
+              <span class="weak" v-if="!c6Decided">先点「就这个」确认报价，才能开机。</span>
+              <span class="weak" v-else-if="!est.data && !est.loading && !est.err">报价加载中…</span>
             </div>
 
             <!-- 主操作 -->

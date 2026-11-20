@@ -174,6 +174,44 @@ function register(router, ctx) {
     return router.json(res, 200, { engineId: b.engineId, entry });
   }
 
+  // POST /api/admin/registry/probe {engineId} —— 真探测：按注册表端点做 TCP/HTTP 连通测试（可观测，不假绿）
+  router.add(
+    "POST",
+    "/api/admin/registry/probe",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      if (!b.engineId) throw { code: "BAD_REQUEST", message: "engineId 必填" };
+      const reg = getRegistry();
+      const entry = reg[b.engineId];
+      if (!entry) throw { code: "NOT_FOUND", message: "引擎不存在: " + b.engineId };
+      const endpoint = String(entry.endpoint || "");
+      const portM = /:(\d{2,5})/.exec(endpoint);
+      const hostM = /\b(\d+\.\d+\.\d+\.\d+)\b/.exec(endpoint);
+      const host = hostM ? hostM[1] : "127.0.0.1";
+      const port = portM ? Number(portM[1]) : 80;
+      const t0 = Date.now();
+      const sys = require("http");
+      const reqOpts = { host, port, path: /comfy/i.test(endpoint) ? "/system_stats" : "/", method: "GET", timeout: 2500 };
+      const out = new Promise((resolve) => {
+        const rq = sys.request(reqOpts, (rs) => {
+          let buf = "";
+          rs.on("data", (c) => { if (buf.length < 400) buf += c; });
+          rs.on("end", () => resolve({ ok: rs.statusCode >= 200 && rs.statusCode < 500, code: rs.statusCode, detail: buf.slice(0, 200) }));
+        });
+        rq.on("timeout", () => { rq.destroy(); resolve({ ok: false, code: 0, detail: "超时（2.5s）" }); });
+        rq.on("error", (e) => resolve({ ok: false, code: 0, detail: String(e.message || e).slice(0, 160) }));
+        rq.end();
+      });
+      return out.then((r) => {
+        const ms = Date.now() - t0;
+        audit(auth, "registry_probe", b.engineId, { ok: r.ok, ms, endpoint });
+        return router.json(res, 200, { engineId: b.engineId, endpoint, host, port, ok: r.ok, code: r.code, ms, detail: r.detail });
+      });
+    },
+    { auth: true }
+  );
+
   // POST /api/admin/registry/endpoint {engineId,endpoint,confirmed:true}
   router.add(
     "POST",

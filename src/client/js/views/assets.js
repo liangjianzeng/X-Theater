@@ -13,7 +13,6 @@
   views.Assets = {
     props: { epId: { type: String, required: true } },
     components: {
-      "episode-bar": T.components.EpisodeBar,
       "err-state": T.components.ErrState,
       "empty-state": T.components.EmptyState,
       "loading": T.components.Loading,
@@ -108,25 +107,14 @@
     },
     template: `
       <div class="v-assets">
-        <style>
-          .v-assets-tools th, .v-assets-tools td { vertical-align: middle; }
-          .v-assets-adopt { gap: 6px; }
-          .v-assets-sel { min-width: 130px; max-width: 180px; padding: 4px 8px; font-size: 12.5px; }
-          .v-assets-gen { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
-          .v-assets-gen .v-assets-acts { display: flex; align-items: center; gap: 10px; }
-          .v-assets-gen .loading { padding: 6px; }
-          @media (max-width: 760px) { .v-assets-gen { grid-template-columns: 1fr; } }
-        </style>
-
-        <episode-bar :ep-id="epId"></episode-bar>
-
         <div class="panel">
           <div class="panel-title">曲库 <span class="weak">影子成本＝候选产出的记账，采用不另收费</span></div>
           <loading v-if="loading && !err"></loading>
           <err-state v-else-if="err" :err="err" :on-retry="loadMusic"></err-state>
           <empty-state v-else-if="!library.length" icon="🎵" text="曲库还是空的"
             sub="用下方「生成候选」给某场先来三段，出来后在这里挑。"></empty-state>
-          <table class="table v-assets-tools" v-else>
+          <div class="table-scroll" v-else>
+          <table class="table v-assets-tools">
             <thead>
               <tr>
                 <th>曲目</th><th>心情</th><th>时长</th><th>许可</th>
@@ -154,6 +142,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         <div class="panel">

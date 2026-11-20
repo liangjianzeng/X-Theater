@@ -32,7 +32,15 @@ fs.mkdirSync(outDir, { recursive: true });
 /* ---------- 装配 ---------- */
 const store = openStore(varDir);
 const bus = createBus();
-const cfg = { outDir, seed: true };
+// comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
+const cfg = {
+  outDir,
+  seed: true,
+  comfy: {
+    enabled: process.env.THEATER_COMFY === "1",
+    base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188"
+  }
+};
 const engine = createEngine({ store, bus, cfg });
 
 // rules 聚合（契约 §2：api ctx.rules＝rules/ 下各库聚合）。

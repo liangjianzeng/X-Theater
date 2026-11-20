@@ -291,45 +291,6 @@
     },
     template: `
       <div class="rail" :class="{ open: open }" ref="rootEl">
-        <style>
-          .v-copilot-sticky { display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; }
-          @media (max-width: 860px) { .v-copilot-sticky { position: static; height: 100%; } }
-          .v-copilot-head { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); }
-          .v-copilot-title { font-weight: 700; font-size: 15px; }
-          .v-copilot-close { margin-left: auto; cursor: pointer; color: var(--ink2); padding: 2px 6px; }
-          .v-copilot-off { background: #F8E3E4; color: var(--err); font-size: 12.5px; padding: 6px 14px; }
-          .v-copilot-budgetrow { padding: 8px 14px 4px; display: flex; flex-direction: column; gap: 4px; }
-          .v-copilot-budget { height: 4px; }
-          .v-copilot-budget .bar { height: 4px; }
-          .v-copilot-tabs { display: flex; gap: 2px; padding: 6px 14px; border-bottom: 1px solid var(--line); }
-          .v-copilot-tabs button { border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13.5px; color: var(--ink2); position: relative; }
-          .v-copilot-tabs button.on { background: #EFEEEA; color: var(--ink); font-weight: 600; }
-          .v-copilot-badge { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; border-radius: 999px; background: var(--err); color: #fff; font-size: 10.5px; font-style: normal; line-height: 16px; padding: 0 4px; }
-          .v-copilot-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-          .v-copilot-warn { background: #F7ECD7; color: var(--warn); font-size: 12.5px; border-radius: 8px; padding: 6px 10px; }
-          .v-copilot-msg { max-width: 88%; padding: 8px 11px; border-radius: 12px; align-self: flex-start; background: #F3F1EC; border: 1px solid var(--line); }
-          .v-copilot-msg.me { align-self: flex-end; background: var(--brand); border-color: var(--brand); color: #fff; }
-          .v-copilot-msg.me .v-copilot-meta { color: rgba(255,255,255,.75); }
-          .v-copilot-msg.denied { background: #ECEAE4; color: var(--ink2); font-style: italic; }
-          .v-copilot-txt { white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
-          .v-copilot-caret { display: inline-block; width: 6px; animation: blink 1s infinite; }
-          .v-copilot-meta { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
-          .v-copilot-meta .badge { font-size: 10.5px; padding: 0 7px; }
-          .v-copilot-connect { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px 8px; }
-          .v-copilot-foot { border-top: 1px solid var(--line); padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
-          .v-copilot-chips { gap: 6px; }
-          .v-copilot-chips .chip { font-size: 12px; padding: 3px 10px; }
-          .v-copilot-chips .chip:disabled { opacity: .5; cursor: not-allowed; }
-          .v-copilot-sending { padding: 0 6px; display: flex; gap: 4px; }
-          .v-copilot-sending i { width: 6px; height: 6px; border-radius: 50%; background: var(--q); animation: blink .9s infinite; }
-          .v-copilot-sending i:nth-child(2) { animation-delay: .15s; }
-          .v-copilot-sending i:nth-child(3) { animation-delay: .3s; }
-          .v-copilot-args { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
-          .v-copilot-expired { opacity: .55; }
-          .v-copilot-ttl { margin-left: auto; font-size: 12px; color: var(--ink2); }
-          .v-copilot-empty-tasks { align-self: center; }
-        </style>
-
         <div class="v-copilot-sticky">
           <div class="v-copilot-head">
             <div class="row">
@@ -351,10 +312,12 @@
             </div>
           </div>
 
-          <div class="v-copilot-tabs">
-            <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">对话</button>
-            <button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">任务</button>
-            <button :class="{ on: tab === 'apv' }" @click="tab = 'apv'">审批<i class="v-copilot-badge" v-if="pendingCount">{{ pendingCount }}</i></button>
+          <div class="v-copilot-tabwrap">
+            <div class="rail-tabs">
+              <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">对话</button>
+              <button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">任务</button>
+              <button :class="{ on: tab === 'apv' }" @click="tab = 'apv'">审批<i class="v-copilot-badge" v-if="pendingCount">{{ pendingCount }}</i></button>
+            </div>
           </div>
 
           <!-- 对话 -->

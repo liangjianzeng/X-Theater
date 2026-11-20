@@ -58,6 +58,16 @@
         const b = Number(e && e.budget_cents);
         return Number.isFinite(b) && b > 0 && Number(e.cost_cents) > b;
       }
+      /* 集行状态色（纯展示映射）：1 灰起步 / 2–3 蓝推进 / 4–5 黄待交付 / ≥6 绿完成 / 暂停红 */
+      function epTone(e) {
+        if (!e) return "dim";
+        if (e.paused) return "err";
+        const st = Number(e.stage) || 0;
+        if (st >= 6) return "ok";
+        if (st >= 4) return "warn";
+        if (st >= 2) return "run";
+        return "dim";
+      }
       function epHref(tab, id) {
         return "#/ep/" + encodeURIComponent(id) + "/" + tab;
       }
@@ -94,27 +104,12 @@
 
       return {
         store, state, err, bootLoading, projects, episodes,
-        epsOf, retry, costPct, costOver, epHref,
+        epsOf, retry, costPct, costOver, epTone, epHref,
         form, busy, formErr, submit
       };
     },
     template: `
       <div class="v-home">
-        <style>
-          .v-home-proj { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-          .v-home-proj .card-title { font-size: 16px; }
-          .v-home-ep { display: flex; flex-direction: column; gap: 8px; }
-          .v-home-cost { display: flex; align-items: center; gap: 8px; }
-          .v-home-cost .progress { flex: 1; min-width: 120px; }
-          .v-home-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-          .v-home-form .v-home-brief { grid-column: 1 / 3; }
-          .v-home-form .v-home-acts { grid-column: 1 / 3; display: flex; align-items: center; gap: 10px; }
-          .v-home-form .v-home-acts .loading { padding: 4px; }
-          @media (max-width: 720px) {
-            .v-home-form { grid-template-columns: 1fr; }
-            .v-home-form .v-home-brief, .v-home-form .v-home-acts { grid-column: auto; }
-          }
-        </style>
 
         <loading v-if="bootLoading && !err"></loading>
         <div class="panel" v-else-if="err">
@@ -135,8 +130,9 @@
             <div class="list" v-if="epsOf(p.id).length">
               <div class="list-item v-home-ep" v-for="e in epsOf(p.id)" :key="e.id">
                 <div class="row wrap">
+                  <span class="v-home-epdot" :class="epTone(e)"></span>
                   <b>{{ e.title }}</b>
-                  <span class="badge">阶段 {{ e.stage == null ? '—' : e.stage }}</span>
+                  <span class="badge v-home-stage" :class="epTone(e)">阶段 {{ e.stage == null ? '—' : e.stage }}</span>
                   <span class="badge badge-warn" v-if="e.paused">已暂停</span>
                   <span class="weak">人工决策 <b class="num">{{ e.decisions || 0 }}</b>/5</span>
                   <span class="grow"></span>
@@ -157,7 +153,7 @@
           </div>
 
           <div class="panel">
-            <div class="panel-title">新建集 <span class="weak">建完直接进卡流</span></div>
+            <div class="panel-title">🎬 新建集 <span class="weak">建完直接进卡流</span></div>
             <form class="v-home-form" @submit.prevent="submit">
               <label class="field">
                 <span class="field-label">项目</span>

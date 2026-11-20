@@ -27,7 +27,8 @@
   const App = {
     components: {
       "err-state": T.components.ErrState,
-      "loading": T.components.Loading
+      "loading": T.components.Loading,
+      "episode-bar": T.components.EpisodeBar
     },
     setup() {
       const route = Vue.ref(Object.assign({}, ROUTER.current));
@@ -42,6 +43,9 @@
       });
       const showNav = Vue.computed(() => viewComp.value !== "Login");
       const showRail = Vue.computed(() => viewComp.value !== "Login" && !!global.__VIEWS.Copilot);
+      /* 集工作台路由（#/ep/:id/*）：骨架统一在 main 顶部渲染 EpisodeBar，各视图不再自带 */
+      const EP_VIEWS = ["Flow", "Shoot", "Assets", "Deliver", "Costs"];
+      const isEpRoute = Vue.computed(() => EP_VIEWS.indexOf(route.value.view) >= 0);
       const isOps = Vue.computed(() => store.auth.user && store.auth.user.role === "ops");
       const navBadge = Vue.computed(() => {
         const s = store.state;
@@ -55,14 +59,14 @@
       function act(a) { if (a && a.onClick) a.onClick(closeSheet); else closeSheet(); }
       /* 键盘：Esc 关 sheet */
       global.addEventListener("keydown", e => { if (e.key === "Escape" && store.sheet) closeSheet(); });
-      return { store, route, viewComp, showNav, showRail, isOps, navBadge, act, closeSheet, epId: Vue.computed(() => route.value.epId) };
+      return { store, route, viewComp, showNav, showRail, isEpRoute, isOps, navBadge, act, closeSheet, epId: Vue.computed(() => route.value.epId) };
     },
     template: `
     <div class="app-shell" :class="{ 'no-rail': !showRail }">
       <aside class="app-nav" v-if="showNav">
         <div class="nav-brand"><span class="brand-mark">剧</span><b>剧场 Studio</b></div>
         <nav>
-          <a class="nav-item" href="#/home">🏠 项目工作区</a>
+          <a class="nav-item" :class="{on: route.view==='Home'}" href="#/home">🏠 项目工作区</a>
           <a class="nav-item" :class="{on: route.view==='Review'}" href="#/review" v-if="isOps">🧐 复审台
             <span class="nav-badge" v-if="navBadge.review">{{ navBadge.review }}</span></a>
           <a class="nav-item" :class="{on: route.view==='Admin'}" href="#/admin" v-if="isOps">🛠 运维台
@@ -78,6 +82,7 @@
         </div>
       </aside>
       <main class="app-main">
+        <episode-bar v-if="isEpRoute" :ep-id="epId"></episode-bar>
         <component :is="viewComp" :ep-id="epId" :key="route.view + (epId||'')"></component>
       </main>
       <aside class="app-rail" v-if="showRail"><component :is="'Copilot'"></component></aside>

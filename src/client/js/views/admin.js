@@ -53,12 +53,6 @@
       "time-ago": T.components.TimeAgo
     },
     template: `
-      <style>
-        .v-admin-select { width: auto; min-width: 108px; }
-        .v-admin-reason { width: auto; min-width: 150px; flex: 1; }
-        .v-admin-dot { white-space: nowrap; }
-        .v-admin-probe-cell { min-width: 64px; }
-      </style>
       <div class="v-admin">
         <div class="panel">
           <div class="panel-title">引擎段位注册表
@@ -71,7 +65,8 @@
           <err-state v-else-if="err && !data" :err="err" :on-retry="reload"></err-state>
           <empty-state v-else-if="data && !rows.length" icon="🛠" text="注册表还是空的"
             sub="引擎段位登记后会出现在这里"></empty-state>
-          <table class="table" v-else-if="rows.length">
+          <div class="table-scroll" v-else-if="rows.length">
+          <table class="table">
             <thead>
               <tr>
                 <th>段位</th><th>引擎</th><th>量化档</th><th>泳道</th><th>端点</th>
@@ -117,6 +112,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         <div class="grid2">
@@ -146,7 +142,8 @@
             <loading v-if="auditLoading && !auditRows"></loading>
             <empty-state v-else-if="auditRows && !auditRows.length" icon="📜" text="还没有审计流水"
               sub="登录、调档、导出等动作都会留痕在这里"></empty-state>
-            <table class="table" v-else-if="auditRows">
+            <div class="table-scroll" v-else-if="auditRows">
+            <table class="table">
               <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>留痕</th></tr></thead>
               <tbody>
                 <tr v-for="(r, i) in auditRows" :key="r.id || i">
@@ -162,6 +159,7 @@
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       </div>`,

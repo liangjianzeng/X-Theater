@@ -78,7 +78,7 @@ function computePrecheck(ctx, episodeId) {
     {
       item: "分辨率",
       pass: allHaveArt,
-      note: allHaveArt ? "全部镜头 1280×720 输出校验通过" : "存在未产出/未通过镜头"
+      note: allHaveArt ? "全部镜头 720×1280（9:16 竖屏）输出校验通过；交付目标 1080×1920 走合成链超分档" : "存在未产出/未通过镜头"
     },
     {
       item: "显式标识",
@@ -155,7 +155,8 @@ function register(router, ctx) {
         {
           episodeId: params.id,
           purpose: "export",
-          resolution: "1280x720",
+          resolution: "720x1280", // 9:16 竖屏·一期拍摄档；1080×1920 交付目标走合成链超分档
+          platform_spec: { aspect: "9:16", target: "1080x1920", upscale: "compose_chain" },
           explicit_mark: true,
           implicit_mark: true
         },

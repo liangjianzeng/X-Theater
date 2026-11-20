@@ -42,23 +42,13 @@
 
   views.Deliver = {
     components: {
-      "episode-bar": T.components.EpisodeBar,
       "err-state": T.components.ErrState,
       "empty-state": T.components.EmptyState,
       "loading": T.components.Loading
     },
     props: { epId: { type: String, required: true } },
     template: `
-      <style>
-        .v-deliver-item { display: flex; gap: 10px; align-items: baseline; padding: 7px 2px; border-bottom: 1px solid #F0EEE9; }
-        .v-deliver-item:last-child { border-bottom: 0; }
-        .v-deliver-mark { font-weight: 700; width: 18px; text-align: center; flex: none; }
-        .v-deliver-ok { color: var(--ok); } .v-deliver-no { color: var(--err); }
-        .v-deliver-art { display: flex; gap: 10px; align-items: center; padding: 6px 0; }
-      </style>
       <div class="v-deliver">
-        <episode-bar :ep-id="epId"></episode-bar>
-
         <div class="panel">
           <div class="panel-title">交付预检
             <span class="badge" :class="allGreen ? 'badge-ok' : 'badge-warn'" v-if="pre">

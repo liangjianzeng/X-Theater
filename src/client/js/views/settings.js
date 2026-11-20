@@ -61,13 +61,6 @@
     },
     template: `
       <div class="v-settings">
-        <style>
-          .v-settings { max-width: 720px; }
-          .v-settings-modes { align-items: stretch; }
-          .v-settings-opt { flex: 1; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
-          .v-settings-opt .row { gap: 8px; }
-          .v-settings-dots { padding: 6px !important; }
-        </style>
 
         <div class="panel">
           <div class="panel-title">当前身份</div>
