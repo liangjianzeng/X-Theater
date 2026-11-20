@@ -140,7 +140,7 @@
           const el = document.querySelector(".v-copilot-input");
           if (el) el.style.height = "";
         }
-        try { await store.l2Send(text); } catch (e) { /* store 已 toast */ }
+        try { await store.l2Send(text, ctxChips()); } catch (e) { /* store 已 toast */ }
       }
       /* Enter 发送（中文输入法组词中的 Enter 不发送）；Shift+Enter 由浏览器默认换行 */
       function onEnter(e) {
@@ -154,6 +154,89 @@
         el.style.height = "auto";
         el.style.height = Math.min(el.scrollHeight, 220) + "px";
       }
+
+      /* ---------- 上下文芯片：创作路由内自动绑定当前集（发消息随行，助手就本集办事） ---------- */
+      const ctxAuto = Vue.ref(true);
+      const boundEp = Vue.computed(() => {
+        const R = global.__ROUTER;
+        const r = R && R.current;
+        if (!ctxAuto.value || !r || !r.epId || !store.state) return null;
+        const eps = store.state.episodes || {};
+        const ep = Array.isArray(eps) ? eps.find(x => x.id === r.epId) : eps[r.epId];
+        return ep ? { id: r.epId, title: ep.title || r.epId } : { id: r.epId, title: r.epId };
+      });
+      function clearCtx() { ctxAuto.value = false; store.toast("已解除本集上下文绑定"); }
+      function ctxChips() {
+        const b = boundEp.value;
+        return b ? [{ type: "episode", id: b.id }] : [];
+      }
+
+      /* ---------- 会话管理：新会话 / 历史会话切换 ---------- */
+      const histOpen = Vue.ref(false);
+      const histList = Vue.ref([]);
+      async function openHist() {
+        histOpen.value = !histOpen.value;
+        if (!histOpen.value) return;
+        try {
+          const r = await T.api.get("/l2/sessions");
+          histList.value = T.sanitizeDeep((r.sessions || []).slice(-14).reverse());
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+      }
+      async function loadSession(id) {
+        try {
+          const r = await T.api.get("/l2/sessions/" + encodeURIComponent(id));
+          const s = r.session || {};
+          L.sid = s.id || id;
+          L.mode = s.mode || L.mode;
+          L.msgs = T.sanitizeDeep((s.msgs || []).map(m => ({ me: m.me, t: m.t, ts: m.ts, sig: m.sig, runtime: m.runtime })));
+          L.tasks = T.sanitizeDeep(s.tasks || []);
+          L.approvals = T.sanitizeDeep((s.approvals || []).map(a => ({ id: a.id, tool: a.tool, args: a.args, est: a.est, status: a.status, ttl_until: a.ttl_until, ver: a.ver })));
+          L.used_cents = s.used_cents || 0;
+          L.budget_line = s.budget_cents || 8000;
+          L.status = "ready";
+          srvBroken.value = !!s.broken;
+          histOpen.value = false;
+          store.connectSSE(); // 重挂 l2:<sid>
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+      }
+      async function newSession() {
+        try { await store.l2Create(L.mode); histOpen.value = false; store.toast("已开新会话"); }
+        catch (e) { /* store 已 toast */ }
+      }
+
+      /* ---------- 消息复制 ---------- */
+      function copyMsg(m) {
+        const txt = String((m && m.t) || "");
+        try {
+          navigator.clipboard.writeText(txt).then(
+            () => store.toast("已复制"),
+            () => store.toast("复制失败", "err")
+          );
+        } catch (e) { store.toast("复制失败", "err"); }
+      }
+
+      /* ---------- Esc 关闭（手机档）＋ 打开自动聚焦 ---------- */
+      global.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && isMobile() && open.value) closeRail();
+      });
+      Vue.watch(open, (v) => {
+        if (v && isMobile()) Vue.nextTick(() => {
+          const ta = document.querySelector(".v-copilot-input");
+          if (ta) ta.focus();
+        });
+      });
+
+      /* ---------- 移动端软键盘避让（visualViewport） ---------- */
+      Vue.onMounted(() => {
+        const vv = global.visualViewport;
+        const aside = rootEl.value && rootEl.value.closest ? rootEl.value.closest(".app-rail") : null;
+        if (!vv || !aside) return;
+        const onR = () => {
+          try { aside.style.bottom = Math.max(0, global.innerHeight - vv.height) + "px"; } catch (e) { /* 忽略 */ }
+        };
+        vv.addEventListener("resize", onR);
+        Vue.onUnmounted(() => { try { vv.removeEventListener("resize", onR); } catch (e) { /* 忽略 */ } });
+      });
 
       /* ---------- 8s 全量兜底（SSE 已增量；合并以服务端为准） ---------- */
       async function syncFull() {
@@ -303,7 +386,7 @@
       }
 
       return {
-        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow,
+        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, histOpen, histList, openHist, loadSession, newSession, copyMsg,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
@@ -319,8 +402,23 @@
             <div class="row">
               <span class="v-copilot-title">🤝 制片助手</span>
               <span class="badge" v-if="L.sid">{{ L.mode === 'B' ? 'B · 本机内置' : 'A · 云端托管' }}</span>
+              <span class="grow"></span>
+              <button class="btn btn-ghost btn-sm" :disabled="connecting || L.loading" @click="newSession" title="开一个全新会话">＋ 新会话</button>
+              <button class="btn btn-ghost btn-sm" @click="openHist" :aria-expanded="histOpen ? 'true' : 'false'">历史</button>
               <span class="v-copilot-close" v-if="isMobile()" @click="closeRail">✕</span>
             </div>
+            <div class="v-copilot-ctxrow" v-if="boundEp">
+              <span class="chip chip-sel" @click="clearCtx" title="点击解除本集上下文绑定">📌 {{ clean(boundEp.title) }} ✕</span>
+              <span class="weak">助手将默认就本集办事</span>
+            </div>
+          </div>
+          <div class="v-copilot-hist" v-if="histOpen">
+            <div class="v-copilot-hist-item" v-for="h in histList" :key="h.id" @click="loadSession(h.id)">
+              <span class="badge">{{ h.mode === 'B' ? 'B' : 'A' }}</span>
+              <span class="grow v-copilot-hist-snip">{{ h.msgs && h.msgs.length ? clean(String((h.msgs[h.msgs.length - 1] || {}).t || '').slice(0, 26)) : '空会话' }}</span>
+              <span class="weak" v-if="h.id === L.sid">当前</span>
+            </div>
+            <div class="weak v-copilot-hist-empty" v-if="!histList.length">还没有历史会话</div>
           </div>
 
           <div class="v-copilot-off" v-if="sseOff">实时断了，重连中</div>
@@ -346,6 +444,7 @@
                   <span class="badge" v-if="m.sig">{{ clean(m.sig) }}</span>
                   <span class="badge" v-if="m.runtime">{{ clean(m.runtime) }}</span>
                   <span class="weak">{{ rel(m.ts) }}</span>
+                  <button class="v-copilot-copy" @click="copyMsg(m)" title="复制全文">⧉</button>
                 </div>
               </div>
             </div>
