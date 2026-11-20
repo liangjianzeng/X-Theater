@@ -433,3 +433,5 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 860px) {
   body:has(.app-rail.open) .rail-fab { display: none; }
 }
+
+@media (max-width: 860px) { .v-copilot-hist-snip { white-space: nowrap !important; max-width: 200px; } }

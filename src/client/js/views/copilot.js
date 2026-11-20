@@ -179,25 +179,20 @@
         if (!histOpen.value) return;
         try {
           const r = await T.api.get("/l2/sessions");
-          histList.value = T.sanitizeDeep((r.sessions || []).slice(-14).reverse());
+          histList.value = T.sanitizeDeep((r.sessions || []).filter(x => (x.msgs && x.msgs.length) || x.id === L.sid).slice(-14).reverse());
         } catch (e) { store.toast(T.humanErr(e).text, "err"); }
       }
+      function histSnip(h) {
+        const ms = h.msgs || [];
+        if (!ms.length) return "空会话";
+        return T.sanitize(String((ms[ms.length - 1] || {}).t || "").slice(0, 18)) || "（空）";
+      }
+      function histTs(h) {
+        const ms = h.msgs || [];
+        return (ms.length && ms[ms.length - 1].ts) || h.created_at || null;
+      }
       async function loadSession(id) {
-        try {
-          const r = await T.api.get("/l2/sessions/" + encodeURIComponent(id));
-          const s = r.session || {};
-          L.sid = s.id || id;
-          L.mode = s.mode || L.mode;
-          L.msgs = T.sanitizeDeep((s.msgs || []).map(m => ({ me: m.me, t: m.t, ts: m.ts, sig: m.sig, runtime: m.runtime })));
-          L.tasks = T.sanitizeDeep(s.tasks || []);
-          L.approvals = T.sanitizeDeep((s.approvals || []).map(a => ({ id: a.id, tool: a.tool, args: a.args, est: a.est, status: a.status, ttl_until: a.ttl_until, ver: a.ver })));
-          L.used_cents = s.used_cents || 0;
-          L.budget_line = s.budget_cents || 8000;
-          L.status = "ready";
-          srvBroken.value = !!s.broken;
-          histOpen.value = false;
-          store.connectSSE(); // 重挂 l2:<sid>
-        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        try { await store.l2Resume(id); histOpen.value = false; } catch (e) { store.toast(T.humanErr(e).text, "err"); }
       }
       async function newSession() {
         try { await store.l2Create(L.mode); histOpen.value = false; store.toast("已开新会话"); }
@@ -386,7 +381,7 @@
       }
 
       return {
-        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, histOpen, histList, openHist, loadSession, newSession, copyMsg,
+        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, histOpen, histList, openHist, loadSession, newSession, copyMsg, histSnip, histTs,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
@@ -415,7 +410,8 @@
           <div class="v-copilot-hist" v-if="histOpen">
             <div class="v-copilot-hist-item" v-for="h in histList" :key="h.id" @click="loadSession(h.id)">
               <span class="badge">{{ h.mode === 'B' ? 'B' : 'A' }}</span>
-              <span class="grow v-copilot-hist-snip">{{ h.msgs && h.msgs.length ? clean(String((h.msgs[h.msgs.length - 1] || {}).t || '').slice(0, 26)) : '空会话' }}</span>
+              <span class="grow v-copilot-hist-snip">{{ histSnip(h) }}</span>
+              <span class="weak">{{ (h.msgs || []).length }} 条 · {{ rel(histTs(h)) }}</span>
               <span class="weak" v-if="h.id === L.sid">当前</span>
             </div>
             <div class="weak v-copilot-hist-empty" v-if="!histList.length">还没有历史会话</div>

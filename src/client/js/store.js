@@ -328,6 +328,31 @@
   };
 
   /* ---------------- L2 副驾 ---------------- */
+  /* 恢复会话：id 给定→加载指定；否则取最近一个非空会话；无非空会话→false（调用方决定是否新建）。
+     修复：此前每次 boot 无脑 l2Create()，刷新 N 次堆 N 个空会话。 */
+  store.l2Resume = async function (id) {
+    let s = null;
+    if (id) {
+      const r = await T.api.get('/l2/sessions/' + encodeURIComponent(id));
+      s = r.session || null;
+    } else {
+      const r = await T.api.get('/l2/sessions');
+      const list = (r.sessions || []).filter(x => x.msgs && x.msgs.length);
+      s = list.length ? list[list.length - 1] : null;
+    }
+    if (!s) return false;
+    const L = store.l2;
+    L.sid = s.id || null;
+    L.mode = s.mode || 'A';
+    L.msgs = T.sanitizeDeep((s.msgs || []).map(m => ({ me: m.me, t: m.t, ts: m.ts, sig: m.sig, runtime: m.runtime })));
+    L.tasks = T.sanitizeDeep(s.tasks || []);
+    L.approvals = T.sanitizeDeep((s.approvals || []).map(a => ({ id: a.id, tool: a.tool, args: a.args, est: a.est, status: a.status, ttl_until: a.ttl_until, ver: a.ver })));
+    L.used_cents = s.used_cents || 0;
+    L.budget_line = s.budget_cents || 8000;
+    L.status = 'ready';
+    store.connectSSE(); // 重挂 l2:<sid>
+    return true;
+  };
   store.l2Create = async function (mode) {
     store.l2.loading = true; store.l2.error = null;
     try {

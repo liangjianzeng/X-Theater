@@ -13,7 +13,7 @@
         await store.refreshState();
         store.auth.ready = true;
         store.connectSSE();
-        if (!store.l2.sid) store.l2Create().catch(() => { /* 副驾显示连接按钮 */ });
+        if (!store.l2.sid) store.l2Resume().then(ok => { if (!ok) return store.l2Create().catch(() => { /* 副驾显示连接按钮 */ }); }).catch(() => { });
       } catch (e) {
         if (e.status === 401 || e.code === "UNAUTHORIZED") store.logout();
         store.auth.ready = true;
