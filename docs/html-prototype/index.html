@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>剧场 · 一期 UI 交互原型（视觉确认版）</title>
+<link rel="stylesheet" href="tokens.css">
+</head>
+<body class="dev-desktop">
+  <header id="topbar">
+    <div class="tb-brand"><span class="tb-logo">剧</span> 剧场 · 一期交互原型
+      <span class="tb-tag">离线原型 · 非真实产品</span>
+    </div>
+    <div class="tb-right">
+      <span class="tb-hint" title="按 theater-ui-interaction-design.md v1.5 实现；界面文案遵守语言表 §12">token §2 · 语言表 §12 · H5 三形态 §1 · 副驾常驻 §5.2</span>
+      <button id="railtoggle" class="btn btn-ghost" style="font-size:12px;padding:5px 12px" title="副驾驾驶栏：桌面右侧常驻（§5.2）">🤖 副驾</button>
+      <div class="seg" id="devseg">
+        <button data-dev="desktop" class="on">桌面</button>
+        <button data-dev="h5">手机 H5</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="layout">
+    <aside id="nav"><!-- 界面清单由 app.js 按注册表生成 --></aside>
+    <main id="stage">
+      <div id="phone" aria-hidden="true">
+        <div id="phone-notch"></div>
+        <div id="view-wrap"><div id="view"></div></div>
+        <nav id="tabs"></nav>
+      </div>
+      <div id="phone-caption">375 × 720 · 移动壳 §3.7（底 tab · 拇指热区 · safe-area）</div>
+    </main>
+    <aside id="ai-rail" aria-label="副驾驾驶栏"><!-- §5.2 对话/任务/审批 三视图，由 app.js renderRail 驱动；默认可见，折叠状态不丢 --></aside>
+  </div>
+
+  <div id="overlay" class="hidden"></div>
+  <div id="toastbar" class="hidden"></div>
+  <div id="capsule" class="hidden"></div>
+
+  <script src="app.js"></script>
+  <script src="screens-1.js"></script>
+  <script src="screens-2.js"></script>
+  <script src="screens-3.js"></script>
+  <script>boot();</script>
+</body>
+</html>
