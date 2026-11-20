@@ -172,6 +172,7 @@
       }
 
       /* ---------- 会话管理：新会话 / 历史会话切换 ---------- */
+      const menuOpen = Vue.ref(false);
       const histOpen = Vue.ref(false);
       const histList = Vue.ref([]);
       async function openHist() {
@@ -212,7 +213,7 @@
 
       /* ---------- Esc 关闭（手机档）＋ 打开自动聚焦 ---------- */
       global.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && isMobile() && open.value) closeRail();
+        if (e.key === "Escape") { menuOpen.value = false; if (isMobile() && open.value) closeRail(); }
       });
       Vue.watch(open, (v) => {
         if (v && isMobile()) Vue.nextTick(() => {
@@ -381,7 +382,7 @@
       }
 
       return {
-        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, histOpen, histList, openHist, loadSession, newSession, copyMsg, histSnip, histTs,
+        store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, menuOpen, histOpen, histList, openHist, loadSession, newSession, copyMsg, histSnip, histTs,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
@@ -397,26 +398,25 @@
             <div class="row">
               <span class="v-copilot-title">🤝 制片助手</span>
               <span class="badge" v-if="L.sid">{{ L.mode === 'B' ? 'B · 本机内置' : 'A · 云端托管' }}</span>
+              <span class="chip chip-sel v-copilot-bind" v-if="boundEp" @click="clearCtx" title="点击解除本集绑定">📌 {{ clean(boundEp.title) }} ✕</span>
               <span class="grow"></span>
-              <button class="btn btn-ghost btn-sm" :disabled="connecting || L.loading" @click="newSession" title="开一个全新会话">＋ 新会话</button>
-              <button class="btn btn-ghost btn-sm" @click="openHist" :aria-expanded="histOpen ? 'true' : 'false'">历史</button>
+              <button class="v-copilot-kebab" @click="menuOpen = !menuOpen" aria-label="会话操作" :aria-expanded="menuOpen ? 'true' : 'false'">⋯</button>
               <span class="v-copilot-close" v-if="isMobile()" @click="closeRail">✕</span>
             </div>
-            <div class="v-copilot-ctxrow" v-if="boundEp">
-              <span class="chip chip-sel" @click="clearCtx" title="点击解除本集上下文绑定">📌 {{ clean(boundEp.title) }} ✕</span>
-              <span class="weak">助手将默认就本集办事</span>
-            </div>
+          </div>
+          <div class="v-copilot-menu" v-if="menuOpen">
+            <button class="v-copilot-menu-item" @click="newSession">＋ 新会话</button>
+            <button class="v-copilot-menu-item" @click="openHist">{{ histOpen ? '收起历史' : '历史会话' }}</button>
+            <button class="v-copilot-menu-item" v-if="boundEp" @click="clearCtx">解除本集绑定</button>
           </div>
           <div class="v-copilot-hist" v-if="histOpen">
             <div class="v-copilot-hist-item" v-for="h in histList" :key="h.id" @click="loadSession(h.id)">
               <span class="badge">{{ h.mode === 'B' ? 'B' : 'A' }}</span>
               <span class="grow v-copilot-hist-snip">{{ histSnip(h) }}</span>
               <span class="weak">{{ (h.msgs || []).length }} 条 · {{ rel(histTs(h)) }}</span>
-              <span class="weak" v-if="h.id === L.sid">当前</span>
             </div>
             <div class="weak v-copilot-hist-empty" v-if="!histList.length">还没有历史会话</div>
           </div>
-
           <div class="v-copilot-off" v-if="sseOff">实时断了，重连中</div>
 
           <div class="v-copilot-tabwrap">

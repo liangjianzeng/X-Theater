@@ -28,22 +28,28 @@
   }
 
   const listeners = [];
+  // 路由状态响应化：同一 reactive 对象就地更新，依赖它的 computed（如副驾上下文芯片）随路由重算
+  const Vue = global.Vue;
   const ROUTER = {
-    current: parse(global.location.hash),
+    current: (Vue && Vue.reactive ? Vue.reactive(parse(global.location.hash)) : parse(global.location.hash)),
     start() {
       global.addEventListener("hashchange", () => {
-        ROUTER.current = parse(global.location.hash);
+        apply(parse(global.location.hash));
         listeners.forEach(fn => fn(ROUTER.current));
       });
     },
     onChange(fn) { listeners.push(fn); },
     go(hash) {
       if (global.location.hash === hash) {
-        ROUTER.current = parse(hash);
+        apply(parse(hash));
         listeners.forEach(fn => fn(ROUTER.current));
       } else global.location.hash = hash;
     },
     ep(tab, id) { return "#/ep/" + encodeURIComponent(id || ROUTER.current.epId || "") + "/" + tab; }
   };
+  function apply(next) {
+    Object.keys(ROUTER.current).forEach(k => { if (!(k in next)) ROUTER.current[k] = undefined; });
+    Object.keys(next).forEach(k => { ROUTER.current[k] = next[k]; });
+  }
   global.__ROUTER = ROUTER;
 })(window);

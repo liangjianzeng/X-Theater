@@ -435,3 +435,26 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (max-width: 860px) { .v-copilot-hist-snip { white-space: nowrap !important; max-width: 200px; } }
+
+/* ==========================================================================
+   设计系统 v1 —— 层级先于功能：每个元素必须回答「它属于哪一层」
+   L1 主内容（对话/卡片/表格）  L2 结构（头部/tabs/分区）  L3 辅助（状态/操作）
+   规则：头部只放 L2；一切操作入口进「⋯」菜单；说明性文字永远不单独成行；
+   间距走 4 的倍数；同类控件同一尺寸；一层只有一个强调色。
+   ========================================================================== */
+:root {
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+  --h-ctl: 32px;            /* 标准（辅助）控件高 */
+  --h-ctl-lg: 40px;         /* 主操作控件高 */
+  --fs-title: 15px; --fs-body: 13.5px; --fs-sub: 12.5px; --fs-micro: 11px;
+}
+
+/* 头部菜单（L3 操作全部收进 ⋯；头部只留 L2 结构） */
+.v-copilot-head { padding: 10px 12px 8px; }
+.v-copilot-kebab { width: 28px; height: 28px; border: 0; background: transparent; border-radius: 8px; font-size: 16px; color: var(--ink2); cursor: pointer; line-height: 1; }
+.v-copilot-kebab:hover { background: #EFEEEA; color: var(--ink); }
+.v-copilot-bind { font-size: 11.5px; padding: 1px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-copilot-menu { position: absolute; right: 10px; top: 46px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; min-width: 132px; }
+.v-copilot-menu-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 12px; font: inherit; font-size: 13px; border-radius: 7px; cursor: pointer; }
+.v-copilot-menu-item:hover { background: #F3F1EA; }
+.v-copilot-hist { position: relative; }
