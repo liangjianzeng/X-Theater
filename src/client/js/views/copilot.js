@@ -325,16 +325,6 @@
 
           <div class="v-copilot-off" v-if="sseOff">实时断了，重连中</div>
 
-          <div class="v-copilot-budgetrow" v-if="L.sid">
-            <div class="row">
-              <span class="weak">本会话已用</span><money :cents="L.used_cents"></money>
-              <span class="weak">/ 预算</span><money :cents="L.budget_line"></money>
-            </div>
-            <div class="progress v-copilot-budget" :class="{ over: budgetOver }">
-              <div class="bar"><span :style="{ width: budgetPct + '%' }"></span></div>
-            </div>
-          </div>
-
           <div class="v-copilot-tabwrap">
             <div class="rail-tabs">
               <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">对话</button>
@@ -430,7 +420,7 @@
         </div>
 
         <teleport to="body">
-          <button class="rail-fab" @click="toggleFab" aria-label="打开制片助手">🤖</button>
+          <button v-show="!open" class="rail-fab" @click="toggleFab" aria-label="打开制片助手">🤖</button>
         </teleport>
       </div>`
   };
