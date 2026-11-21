@@ -36,6 +36,10 @@ function stateSummary(ctx, session) {
   lines.push("镜头：" + (shots.map(function (s) {
     return "seq" + s.seq + (s.status === "ok" ? "✓" : s.status === "pending_review" ? "⚠" : "");
   }).join("、") || "无"));
+  const pendingCards = Object.keys(st.cards || {}).map(function (k) { return st.cards[k]; })
+    .filter(function (c) { return c.status === "pending" && String(c.episodeId) === String(epId); });
+  lines.push("待拍板卡：" + (pendingCards.map(function (c) { return c.type + "(" + c.id + ")"; }).join("、") || "无"));
+  lines.push("本集驱动：" + ((ep.driver === "dgx") ? "DGX 节点（生图/视频走远程，不占本机显存，LLM 可常驻）" : "本机 5060 Ti（与本机 LLM 互斥；可在运维台切 DGX）"));
   const chips = [];
   return lines.join("\n");
 }

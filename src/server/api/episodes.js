@@ -120,6 +120,7 @@ function register(router, ctx) {
         stage: 1,
         decisions: 0,
         budget_cents: typeof b.budget_cents === "number" ? b.budget_cents : DEFAULT_BUDGET_CENTS,
+        driver: b.driver === "dgx" ? "dgx" : "local", // 节点驱动：local=本机 5060 Ti｜dgx=DGX H3 全家桶
         cost_cents: 0,
         paused: false,
         estimate_ver: null,

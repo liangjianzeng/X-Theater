@@ -50,10 +50,14 @@ const cfg = {
     llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
     llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
   },
-  // llm-gw：本机 llama-server（OpenAI 兼容 /v1）——L2 助手/aireview/建议片的真脑；空＝全链回退规则模式
-  llm: {
-    base: process.env.THEATER_LLM_URL || "",
-    model: process.env.THEATER_LLM_MODEL || "default"
+  // llm-gw：LLM 档案挂节点（state.nodes[state.llm_node].llm，运维设置热切换）；env 作首启种子
+  get llm() {
+    try {
+      const st = store.get();
+      const node = st && st.nodes && st.nodes[st.llm_node || "local"];
+      if (node && node.llm && node.llm.base) return { base: node.llm.base, model: node.llm.model || "default" };
+    } catch (e) { /* store 未就绪走 env */ }
+    return { base: process.env.THEATER_LLM_URL || "", model: process.env.THEATER_LLM_MODEL || "default" };
   },
   music: { url: process.env.THEATER_MUSIC_URL || "" },
   tts: { url: process.env.THEATER_TTS_URL || "" }
@@ -166,11 +170,13 @@ function serveStatic(req, res) {
   }
   if (!pathname || pathname === "/") pathname = "/index.html";
 
-  // /var/out/* → 产物静态面（试听/导出文件；仅 out 目录，防穿越）
-  if (pathname.startsWith("/var/out/")) {
-    const outRoot = path.join(varDir, "out");
-    const fp = path.normalize(path.join(outRoot, pathname.slice("/var/out/".length)));
-    const rootN = path.resolve(outRoot).toLowerCase();
+  // /var/out/* 与 /var/assets/* → 产物/定妆资产静态面（仅这两个目录，防穿越）
+  const varRoots = ["/var/out/", "/var/assets/"];
+  const vr = varRoots.find((p) => pathname.startsWith(p));
+  if (vr) {
+    const root = path.join(varDir, vr.slice("/var/".length).replace(/\/+$/, ""));
+    const fp = path.normalize(path.join(root, pathname.slice(vr.length)));
+    const rootN = path.resolve(root).toLowerCase();
     const fpN = path.resolve(fp).toLowerCase();
     if (fpN !== rootN && !fpN.startsWith(rootN + path.sep)) {
       return router.json(res, 403, { error: { code: "FORBIDDEN", message: "路径非法" } });

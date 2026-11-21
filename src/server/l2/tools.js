@@ -61,16 +61,8 @@ async function execute(tool, args, ctx, session, auth, opts) {
   }
   const trace = (opts && opts.trace) || governance.newTrace(ctx, session, tool);
 
-  // 自动让路（2026-11-21）：确认票已批准＝授权动作及其必要资源——
-  // 生图类流程工具（建集/拍板/改剧本/重拍/开机）执行前若本机 LLM 在线，代停 LLM 释放独显（审计+告警留痕，不自动重启）。
-  const GPU_FLOW_TOOLS = ["reroll_shot", "create_episode", "decide_card", "revise_scenes", "shoot_episode", "export_episode"];
-  if (GPU_FLOW_TOOLS.indexOf(tool) >= 0 && ctx.llm && typeof ctx.llm.blockedByLocalLLM === "function" && ctx.llm.enabled() && ctx.llm.blockedByLocalLLM()) {
-    const stop = await ctx.llm.stop();
-    ctx.store.log("audit", { operator: (auth && auth.id) || session.uid, action: "l2_gpu_yield", audit_id: util2uid(ctx), reason: tool + " 让路：" + (stop && stop.message || "") });
-    try {
-      ctx.bus.publish("alerts", { id: ctx.util.uid("al"), kind: "llm_stop", msg: "助手执行 " + tool + " 需要独显，已代停本机 LLM 让路（重启请运行 E:/MyLLM/8090_huihui35b_q4k_cpu19.bat）", ts: ctx.util.now(), acked: false });
-    } catch (e0) {}
-  }
+  // 2026-11-21 用户裁决：助手不代停 LLM（曾为出海报停 LLM=职责颠倒）。
+  // 生图类流程撞 GPU_BUSY → 引擎拒绝 → 助手如实转告，由用户自行决定让路时机。
 
   // —— 昂贵动作必答门（服务端终裁；红队②）——
   let approval = null;
@@ -264,8 +256,17 @@ async function execute(tool, args, ctx, session, auth, opts) {
       result = { episode_id: epId, adopted: lib.map((m) => ({ sceneId: m.sceneId, title: m.title })), candidates: pend.map((c) => ({ id: c.id, title: c.title, mood: c.mood, sceneId: c.sceneId, license: c.license })) };
       break;
     }
-    case "query_gpu":
-      result = (ctx.llm && ctx.llm.enabled()) ? (ctx.llm.cached() || {}) : { configured: false, llmOnline: false };
+    case "query_gpu": {
+      const cachedGpu = (ctx.llm && ctx.llm.enabled()) ? (ctx.llm.cached() || {}) : { configured: false, llmOnline: false };
+      const epIdGpu = args.episode_id || governance.defaultEpisodeId(ctx, session);
+      const epG = st.episodes[epIdGpu] || {};
+      result = Object.assign({}, cachedGpu, {
+        episode_driver: epG.driver === "dgx" ? "dgx" : "local",
+        nodes: Object.keys(st.nodes || {}).map(function (id) { return { id: id, label: st.nodes[id].label, is_llm_host: (st.llm_node || "local") === id }; }),
+        llm_node: st.llm_node || "local"
+      });
+      break;
+    }
       break;
     // ---- 全流程动作 ----
     case "create_project": {

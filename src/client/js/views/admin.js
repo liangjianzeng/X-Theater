@@ -38,6 +38,7 @@
     export: "导出成片", shoot: "开机拍摄",
     alerts_simulate: "告警巡检触发",
     music_adopt: "配乐挂接", music_candidates: "配乐候选生成", music_regenerate: "配乐重出",
+    episode_driver_switch: "剧集驱动切换", llm_config_update: "LLM 档案更新", llm_node_switch: "LLM 承载节点切换", l2_gpu_yield: "助手 GPU 让路", llm_stop: "停止 LLM 让路",
     job_retry: "任务重试", job_stop: "任务叫停"
   };
   function actionCn(a) {
@@ -55,6 +56,38 @@
     template: `
       <div class="v-admin">
         <div class="panel">
+        <div class="panel-title">🖥 节点驱动 <span class="weak">每部剧选渲染节点＋LLM 模型档案</span></div>
+        <div class="kv" v-if="nodesState.data">
+          <div class="kv-row"><span>LLM 大脑</span>
+            <span class="grow">{{ nodesState.data.llm.online ? ("在线 · " + (nodesState.data.llm.model || "已配置")) : (nodesState.data.llm.base ? "离线（配置了但没连上）" : "未配置") }}</span>
+            <span class="badge" :class="nodesState.data.llm.online ? 'badge-ok' : 'badge-warn'">{{ nodesState.data.llm.online ? "在线" : "离线" }}</span></div>
+          <div class="kv-row" v-for="nd in nodesState.data.nodes" :key="nd.id">
+            <span class="grow"><b>{{ nd.label }}</b>
+              <span class="weak" v-if="nd.comfy && nd.comfy.base">· 渲染 {{ nd.comfy.base }}</span>
+              <span class="badge badge-ok" v-if="nd.is_llm_host">LLM 承载</span></span>
+            <span class="weak" v-if="nd.llm && nd.llm.base">LLM {{ nd.llm.model || "—" }}</span>
+            <button class="btn btn-sm" v-if="!nd.is_llm_host" @click="switchLlmNode(nd.id)">让 LLM 落在这个节点</button>
+          </div>
+          <div class="kv-row" v-for="(nd, ni) in nodesState.data.nodes" :key="'llmform' + ni" v-if="nd.is_llm_host || nd.id === 'dgx'">
+            <span class="grow weak">「{{ nd.label }}」LLM 档案</span>
+            <input class="input" style="max-width:220px" v-model.trim="nd.llm.base" placeholder="http://127.0.0.1:8090" />
+            <input class="input" style="max-width:160px" v-model.trim="nd.llm.model" placeholder="模型别名" />
+            <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlm" @click="saveLlm(nd)">保存</button>
+          </div>
+          <hr class="sep" />
+          <div class="kv-row" v-for="ep in (nodesState.data.episodes || [])" :key="ep.id">
+            <span class="grow"><b>{{ ep.title }}</b> <span class="weak">{{ ep.id }}</span></span>
+            <select class="select" style="max-width:150px" :value="ep.driver" :disabled="nodesState.savingEp === ep.id" @change="switchDriver(ep, $event.target.value)">
+              <option value="local">本机 5060 Ti</option>
+              <option value="dgx">DGX H3 全家桶</option>
+            </select>
+          </div>
+        </div>
+        <loading v-else-if="nodesState.loading"></loading>
+        <err-state v-else-if="nodesState.err" :err="nodesState.err" :on-retry="loadNodes" compact></err-state>
+      </div>
+
+      <div class="panel">
           <div class="panel-title">引擎段位注册表
             <span class="badge" v-if="data && data.langlint_exempt">语言表豁免面</span>
             <button class="btn btn-ghost btn-sm" @click="probeAll" :disabled="probing" :aria-busy="probing">
@@ -262,6 +295,41 @@
         if (!store.registry.audit) loadAuditRows();
       });
 
+      /* ---- 节点驱动配置（llm-gw 配套） ---- */
+      const nodesState = Vue.reactive({ data: null, loading: false, err: null, savingEp: "", savingLlm: false });
+      async function loadNodes() {
+        nodesState.loading = true; nodesState.err = null;
+        try { nodesState.data = await T.api.get("/nodes"); } catch (e) { nodesState.err = e; }
+        finally { nodesState.loading = false; }
+      }
+      async function switchDriver(ep, driver) {
+        nodesState.savingEp = ep.id;
+        try {
+          await T.api.put("/nodes/episodes/" + encodeURIComponent(ep.id) + "/driver", { driver });
+          store.toast("「" + ep.title + "」驱动已切到 " + (driver === "dgx" ? "DGX 节点" : "本机节点"));
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { nodesState.savingEp = ""; }
+      }
+      async function saveLlm(node) {
+        nodesState.savingLlm = true;
+        try {
+          await T.api.put("/nodes/llm", { base: node.llm.base, model: node.llm.model });
+          store.toast("LLM 档案已保存（热生效）");
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { nodesState.savingLlm = false; }
+      }
+      async function switchLlmNode(id) {
+        try {
+          await T.api.put("/nodes/llm-node", { node: id });
+          store.toast("LLM 承载节点已切到 " + id);
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+      }
+      Vue.onMounted(() => { loadNodes().catch(() => {}); });
+
+
       return {
         data: Vue.computed(() => store.registry.data),
         loading: Vue.computed(() => store.registry.loading),
@@ -273,6 +341,7 @@
           return Array.isArray(a) ? a.slice(-50).slice().reverse() : null;
         }),
         reload, applyQuant, probeAll, loadAlerts, loadAuditRows, tierOptions,
+        nodesState, loadNodes, switchDriver, saveLlm, switchLlmNode,
         tierLabel, actionCn,
         hs: s => T.sanitize(s),
         // 运维台注册表＝语言表豁免面：段位/引擎/泳道/端点显原值

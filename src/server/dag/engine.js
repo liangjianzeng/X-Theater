@@ -285,7 +285,15 @@ function createEngine({ store, bus, cfg }) {
 
     enqueue(type, payload, opts) {
       opts = opts || {};
-      const lane = laneFor(type, opts);
+      // 剧集驱动配置（2026-11-21）：episode.driver="dgx" → 生图/视频走远程 DGX 节点（H3 全家桶），
+      // 本机 5060 Ti 显存让给 LLM 常驻；缺省 "local" 走本机 Comfy。
+      const epForDriver = epOf(opts.episodeId) || (payload && payload.episodeId ? epOf(payload.episodeId) : null);
+      const driver = (epForDriver && epForDriver.driver) === "dgx" ? "dgx" : "local";
+      let lane = laneFor(type, opts);
+      if (driver === "dgx") {
+        if (type === "video") lane = "vidspark";
+        else if (type !== "compose" && type !== "moderate" && type !== "aireview" && type !== "voice" && type !== "music") lane = "imgspark";
+      }
       // 显存互斥硬闸（2026-11-21）：本机 LLM 在线＝16G 卡装不下两家——**本机渲染车道**（img5060/vid5060）
       // 拒绝入队（Huihui35B attention 占 ~14.4GB）。Spark 远程车道（imgspark/vidspark）渲染在 DGX 上，
       // 与本机显存无关，不受此闸（2026-11-21 修正：原按类型一刀切误伤 H3 线）。
