@@ -492,6 +492,49 @@
     "REF": "ComfyUI/input 内参考图文件名（该镜主角色的定妆原片）",
     "PROMPT": "角色 anchor 块前置＋镜动作/镜头描述（保脸功课结论：runtime/ltx-face-evidence/RESEARCH.md）"
    }
+  },
+  "h3-image-edit": {
+   "tmpl_sha16": "541fb049d78292ed",
+   "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+   "cn_commits": {},
+   "family": "h3image",
+   "endpoint": "spark",
+   "weights": [
+    {
+     "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
+     "sha16": "83eb140f1ff95c06",
+     "role": "diffusion_model",
+     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+     "bytes": 20979314802
+    },
+    {
+     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+     "sha16": "35a88d51044231fe",
+     "role": "text_encoder",
+     "source": "modelscope:Comfy-Org/MiniMax-H3",
+     "bytes": 15687142551
+    },
+    {
+     "file": "minimax_h3_image_vae_fp16.safetensors",
+     "sha16": "d80e9c2e5cfc9844",
+     "role": "vae",
+     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+     "bytes": 1168505312
+    }
+   ],
+   "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；edit=img2img（latent←输入图编码）",
+   "params": {
+    "PROMPT": "edit 指令（引用 <Picture 1>，保持人物）",
+    "IMAGE": "Spark /upload/image 的原图文件名",
+    "WIDTH": "原图 /16 对齐宽",
+    "HEIGHT": "原图 /16 对齐高",
+    "SEED": "int"
+   },
+   "notes": "H3-Image edit 模式（官方 image_edit 工作流）：KSampler latent←MiniMaxH3ImageConditioning.1（输入图编码）——身份像素级保真；分镜站主模板",
+   "verified": {
+    "prompt_id": "pending"
+   },
+   "evidence": "runtime/spark-evidence/EVIDENCE.md"
   }
  }
 }

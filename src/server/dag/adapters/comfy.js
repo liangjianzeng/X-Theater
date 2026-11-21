@@ -181,6 +181,7 @@ async function runTemplate(ctx, job, spec) {
   const entry = loadManifest(spec.tmplId);
   const raw = loadTemplate(spec.tmplId, entry);
   const wf = applyParams(raw, spec.params || {});
+  if (typeof spec.transform === "function") spec.transform(wf); // 调用方结构变换（删节点/改连线），先于提交
 
   await unloadIfSwitched(base, spec.tmplId, entry);
 

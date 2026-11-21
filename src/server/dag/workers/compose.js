@@ -114,13 +114,17 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", cardMp4], 120000);
   parts.push(cardMp4);
   const partShots = [null]; // parts[i] ↔ 镜对象（0=片头卡）
+  const speechBySeq = {}; // 镜 seq → take 自带原生说话声（compose 不再叠 TTS）
   // 2) 逐镜 take（best 条）——音轨统一重编码（aac 48k stereo；video copy）
   for (const s of shotsSorted) {
     const takes = (s.takes || []).filter((t) => t && t.art);
     if (!takes.length) continue;
-    const best = takes.find((t) => t.best) || takes[0];
+    // 选条：优先显式 best 标志（取最后一条——新拍覆盖旧拍）；否则最新一条
+    const bests = takes.filter((t) => t.best);
+    const best = bests[bests.length - 1] || takes[takes.length - 1];
     const src = resolveArt(ctx, best.art);
     if (!fs.existsSync(src)) throw Object.assign(new Error("镜 take 文件缺失：" + src), { code: "TAKE_MISSING" });
+    if (best.native_speech) speechBySeq[Number(s.seq)] = true; // take 自带说话声
     const info = await probeMedia(src);
     const norm = path.join(tmp, "norm_" + path.basename(src));
     if (info.hasAudio) {
@@ -168,6 +172,7 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
       const expectedSeq = (f.si + 1) * 100 + f.i + 1;
       const partIdx = partShots.findIndex((ps) => ps && Number(ps.seq) === expectedSeq);
       if (partIdx < 0) continue; // 该镜无 take，不混
+      if (speechBySeq[expectedSeq]) continue; // take 已含原生说话声，不再叠 TTS
       const wavAbs = resolveArt(ctx, ln.art);
       if (!fs.existsSync(wavAbs)) continue;
       usedArts[ln.art] = true;

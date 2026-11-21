@@ -97,30 +97,45 @@ function castRefForShot(ctx, episodeId, shot) {
     const script = ((st.episodes || {})[episodeId] || {}).script;
     if (!script) return null;
     const flat = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(sh)));
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name }, sh))));
     // state 镜 seq 是全局编号（场×100+序），须按 seq 排序后取位，不能直接当下标
     const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
       .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
     const pos = sorted.findIndex((x) => x.id === (shot && shot.id));
     const sh = (pos >= 0 ? flat[pos] : null) || flat[(shot.seq || 1) - 1] || {};
-    const refName = (sh.cast || [])[0];
-    if (!refName) return null;
-    // 双人及以上镜不挂单人 overlap 参考（参考会把第二人拽向参考形象——实测 tk_92624377）；
-    // 多人镜靠首帧（编辑模型已保证双人正确）＋文字形象块锚定
-    if ((sh.cast || []).length > 1) return null;
+    // 所有镜统一挂「该镜分镜首帧」作 overlap 参考：首帧已含正确场景＋人物＋构图，
+    // 人物与场景双重锁定（编辑模型已在分镜阶段保证身份与双人正确性）
     const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
-    const c2 = cards.find((x) => x.episodeId === episodeId && x.type === "C2" && (x.payload || {}).actors);
-    const actor = c2 && (c2.payload.actors || []).find((a) => a.role === refName || a.name === refName);
-    const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
+    const c2 = cards.filter((x) => x.episodeId === episodeId && x.type === "C2" && (x.payload || {}).images)
+      .sort((x, y) => String(y.updated_at || "").localeCompare(String(x.updated_at || "")))[0]; // 最新 C2（驳回重出会产生多张）
+    const im = c2 && (c2.payload.images || []).find((x) => x.shotId === (shot && shot.id) && x.art);
+    const art = im ? im.art : null;
     if (!art) return null;
     const local = resolveArt(ctx, art);
     if (!fs.existsSync(local)) return null;
     const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
     if (!inputDir) return null;
-    const name = "ref_" + safeSeg((actor && actor.id) || refName) + ".png";
+    const name = "ref_" + safeSeg((shot && shot.id) || "x") + ".png";
     fs.copyFileSync(local, path.join(inputDir, name));
     return name;
   } catch (e) { return null; }
+}
+
+/** 该镜是否有台词（native speech 生成标记用） */
+function hasNativeSpeech(ctx, episodeId, shot) {
+  try {
+    const st = ctx.store.get();
+    const ep = st.episodes && st.episodes[episodeId];
+    const script = ep && ep.script;
+    if (!script) return false;
+    const flat = [];
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(sh)));
+    const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
+      .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    const pos = sorted.findIndex((x) => x.id === (shot && shot.id));
+    const sh = (pos >= 0 ? flat[pos] : null) || {};
+    return !!(sh.dialogue);
+  } catch (e) { return false; }
 }
 
 /** 提示词锚定：角色 anchor 块前置（功课结论 V1/V2），只变动作与镜头 */
@@ -131,7 +146,7 @@ function shotDesc(ctx, episodeId, shot) {
     const script = ep && ep.script;
     if (!script) return shot.name || "";
     const flat = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(sh)));
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name }, sh))));
     // state 镜 seq 是全局编号（场×100+序），须按 seq 排序后取位，不能直接当下标
     const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
       .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
@@ -159,9 +174,21 @@ function shotDesc(ctx, episodeId, shot) {
       const cc = (script.cast || []).find((x) => x.role === role || x.name === role);
       return cc ? cc.desc + "。" : "";
     }).join("");
+    // 场景光照统一块（场内视觉连续性——实测成片空镜乱入电线塔/桥的根因之一）
+    const sceneLight = {
+      "场1": "雨夜，青蓝冷调与暖烛光对比，窗上雨痕",
+      "场2": "暮色，暖黄烛光笼罩，雾气弥漫",
+      "场3": "深夜，冷蓝压抑调，暴雨",
+      "场4": "黎明前，金色光束刺破雨幕，青灰转金"
+    };
+    const lightKey = Object.keys(sceneLight).find((k) => String((sh && sh.scene) || "").indexOf(k) === 0 || String(sh.desc || "").indexOf(k) >= 0 || (shot && shot.name || "").indexOf(k) >= 0);
+    // 台词直接写进提示词：LTX-2.5 音视频联合生成说话口型＋同期声（实测 SP_speech 口型与语音同步）
+    const speech = sh.dialogue ? "她面向镜头开口说话，语音清晰说出：「" + sh.dialogue + "」。她说话时嘴唇随台词自然开合，口型与台词对应，同期声收录她的说话声。" : "";
     return [
       whoBlocks.length ? whoBlocks : legacyWho,
       sh.desc || shot.name || "",
+      lightKey ? sceneLight[lightKey] : "",
+      speech,
       STYLE
     ].filter(Boolean).join(" ");
   } catch (e) { return (shot && shot.name) || ""; }
@@ -183,7 +210,8 @@ async function runComfy(ctx, job, p, seed, cents) {
   const img = sbFileForShot(ctx, episodeId, shotId);
   if (!img) throw (() => { const e = new Error("该镜没有可用的分镜首帧（storyboard 真图缺失）: " + shotId); e.code = "NO_STORYBOARD_ART"; return e; })();
   await freeComfy(ctx); // 显存互斥：卸掉生图/其它家族再加载 LTX
-  const ref = castRefForShot(ctx, episodeId, shot);
+  const ref = castRefForShot(ctx, episodeId, shot); // 该镜分镜首帧 overlap 参考
+  const hasNS = hasNativeSpeech(ctx, episodeId, shot);
   const r = await comfy.runTemplate(ctx, j, {
     tmplId: ref ? TMPL_I2V_REF : TMPL_I2V,
     params: Object.assign({
@@ -213,7 +241,7 @@ async function runComfy(ctx, job, p, seed, cents) {
     const abs = writeOut(ctx, fileName, r.bytes);
     writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
     meta.art_abs = abs;
-    const take = { id: takeId, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MIT", usage: "ok" }, best: true };
+    const take = { id: takeId, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MIT", usage: "ok" }, best: true, native_speech: hasNS };
     const bag = { ok: true, cents, art, path: art, meta, take, engine: ENGINE_USER, cost_cents: cents, license: take.license, sec: 5, tier: TIER };
     j.result = bag; j.art = bag;
     return { ok: true, cents, art, meta };

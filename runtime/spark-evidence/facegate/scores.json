@@ -1,0 +1,46 @@
+{
+ "reference": "E:\\Work\\X-Theater\\runtime\\spark-evidence\\facegate\\ref_user.png",
+ "scale_note": "ArcFace 余弦: >0.65 强同 persons; 0.45-0.65 弱同/亲属级; <0.35 不同人",
+ "rank": [
+  {
+   "score": 0.2522,
+   "tag": "旧锚点版(用户判负)",
+   "file": "E:\\Work\\X-Theater\\var\\out\\job_2029e6ca1767_cast.png"
+  },
+  {
+   "score": 0.2058,
+   "tag": "v1冒烟(似参考构图)",
+   "file": "cand_v1.png"
+  },
+  {
+   "score": 0.1921,
+   "tag": "seed202611124",
+   "file": "cand_12.png"
+  },
+  {
+   "score": 0.1891,
+   "tag": "seed202611123",
+   "file": "cand_11.png"
+  },
+  {
+   "score": 0.1847,
+   "tag": "seed202611122",
+   "file": "cand_10.png"
+  },
+  {
+   "score": 0.1424,
+   "tag": "seed202611121",
+   "file": "cand_9.png"
+  },
+  {
+   "score": 0.1241,
+   "tag": "seed202611125",
+   "file": "cand_13.png"
+  },
+  {
+   "score": 0.0758,
+   "tag": "seed202611126",
+   "file": "cand_14.png"
+  }
+ ]
+}

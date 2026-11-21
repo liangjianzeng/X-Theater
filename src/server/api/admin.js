@@ -90,6 +90,28 @@ function register(router, ctx) {
     { auth: true }
   );
 
+  // POST /api/admin/episodes/:id/purge {confirmed:true} —— 删除剧集及其全部派生数据（调试清场用，ops 专用）
+  router.add(
+    "POST",
+    "/api/admin/episodes/:id/purge",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      if (b.confirmed !== true) throw { code: "CONFIRM_REQUIRED", message: "purge 需要 {confirmed:true}" };
+      const st = store.get();
+      const epId = params.id;
+      if (!(st.episodes || {})[epId]) throw { code: "NOT_FOUND", message: "剧集不存在: " + epId };
+      const drop = (obj) => { Object.keys(obj || {}).forEach((k) => { if ((obj[k] || {}).episodeId === epId) delete obj[k]; }); };
+      drop(st.cards); drop(st.jobs); drop(st.scenes); drop(st.shots); drop(st.review_q); drop(st.alerts);
+      (st.music_library || []).forEach((m) => { if ((m || {}).episodeId === epId) m.episodeId = null; });
+      delete st.episodes[epId];
+      store.commit();
+      audit(auth, "episode_purge", epId, { confirmed: true });
+      return router.json(res, 200, { purged: epId });
+    },
+    { auth: true }
+  );
+
   // POST /api/admin/registry/quant {engineId,tier,reason?}
   router.add(
     "POST",
