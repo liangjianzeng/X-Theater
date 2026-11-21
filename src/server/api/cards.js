@@ -72,6 +72,7 @@ function upsertCard(ctx, spec) {
       c.payload = spec.payload;
       c.ver += 1;
       c.updated_at = ctx.util.now();
+      enqueueAiReview(ctx, c); // 内容变更 → 重审
       return { card: c, created: false };
     }
   }
@@ -93,6 +94,7 @@ function upsertCard(ctx, spec) {
     created_at: ctx.util.now()
   };
   st.cards[card.id] = card;
+  enqueueAiReview(ctx, card); // 新 pending 卡 → 进审
   return { card, created: true };
 }
 
@@ -103,6 +105,40 @@ function publishCard(ctx, event, card) {
   } catch (e) {
     /* bus 未就绪 */
   }
+}
+
+/* ---------------- 节点 AI 审查（拍板点自动机检，2026-11-21） ---------------- */
+
+const AI_REVIEW_TYPES = ["C1", "C2", "C4", "C6"];
+
+/** pending 卡进审：免重派（有在途 aireview 即跳过）；审查结果由 onAiReviewDone 回写 payload.ai_review */
+function enqueueAiReview(ctx, card) {
+  if (!card || card.status !== "pending" || AI_REVIEW_TYPES.indexOf(card.type) < 0) return null;
+  if ((card.payload || {}).ai_review) return null; // 已带审查（edit 合并保留旧审）
+  const jobs = typeof ctx.engine.listJobs === "function" ? ctx.engine.listJobs({}) : []; // listJobs 只认 episodeId/status，cardId 自行过滤
+  const inFlight = jobs.some((jb) => jb && (jb.payload || {}).cardId === card.id && (jb.status === "queued" || jb.status === "running"));
+  if (inFlight) return null;
+  return ctx.engine.enqueue(
+    "aireview",
+    { cardId: card.id, episodeId: card.episodeId },
+    { episodeId: card.episodeId, initiated_by: "system", free: true }
+  );
+}
+
+function onAiReviewDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
+  const cardId = (job.payload || {}).cardId;
+  const card = (st.cards || {})[cardId];
+  if (!card || card.status !== "pending") return false;
+  const art = job.art || job.result || {};
+  if (!Array.isArray(art.personas) || !art.personas.length) return false;
+  card.payload = Object.assign({}, card.payload, {
+    ai_review: { verdict: art.verdict || "pass", engine: art.engine || "规则机检", personas: art.personas, ts: ctx.util.now() }
+  });
+  card.ver += 1; // 卡内容变更必 ver++
+  card.updated_at = ctx.util.now();
+  publishCard(ctx, "updated", card);
+  return true;
 }
 
 /* ---------------- 素材合成（stub 假数据，确定性） ---------------- */
@@ -265,7 +301,8 @@ function advanceOnAccept(ctx, card, episode, operator) {
     const job = ctx.engine.enqueue(
       "storyboard",
       { episodeId: epId },
-      { episodeId: epId, initiated_by: "user" }
+      // Spark 通道启用 → storyboard 走 imgspark（结构化 no-op，分镜首帧由 storyboard_char 在试妆后产出）
+      { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
     );
     derived.push({ kind: "job", job });
   } else if (t === "C2") {
@@ -352,6 +389,41 @@ function advanceOnAccept(ctx, card, episode, operator) {
       publishCard(ctx, "created", r.card);
       derived.push({ kind: "card", card: r.card });
     }
+  } else if (t === "C2S") {
+    // 试妆试镜拍板 → 固化多角度抽帧参考（viewRefs＝分镜「换背景壳」的身份输入源）→ 派角色分镜
+    const st = ctx.store.get();
+    const p2 = card.payload || {};
+    const role = p2.role || "主角色";
+    const roleSeg = String(role).replace(/[^A-Za-z0-9._-]/g, "_") || "role";
+    st.viewRefs = st.viewRefs || {};
+    st.viewRefs[epId] = st.viewRefs[epId] || {};
+    const fs = require("fs");
+    const path = require("path");
+    const vdir = path.join(process.cwd(), "var", "assets", "cast", roleSeg, "views");
+    fs.mkdirSync(vdir, { recursive: true });
+    const refs = [];
+    (p2.views || []).forEach((v) => {
+      if (!v || !v.art) return;
+      if (v.selected === false) return; // 用户可取消勾选（默认全收）
+      if (v.score != null && v.score < 0.6) return; // 身份门控硬线
+      const name = String(v.art).replace(/^.*[\\/]/, "");
+      const src = [path.join(process.cwd(), "var", "out", name), path.join(process.cwd(), "var", "assets", "cast", name)]
+        .find((x) => fs.existsSync(x));
+      if (!src) return;
+      if (path.resolve(path.dirname(src)).toLowerCase() !== path.resolve(vdir).toLowerCase()) {
+        fs.copyFileSync(src, path.join(vdir, name));
+      }
+      refs.push({ art: "var/assets/cast/" + roleSeg + "/views/" + name, t: v.t, score: v.score, angle: v.angle });
+    });
+    st.viewRefs[epId][role] = refs;
+    if (refs.length) {
+      const job = ctx.engine.enqueue(
+        "storyboard_char",
+        { episodeId: epId },
+        { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+      );
+      derived.push({ kind: "job", job });
+    }
   } else if (t === "C9") {
     const st = ctx.store.get();
     const p = card.payload || {};
@@ -370,7 +442,7 @@ function advanceOnAccept(ctx, card, episode, operator) {
   return derived;
 }
 
-function reEnqueueOnReject(ctx, card) {
+function reEnqueueOnReject(ctx, card, body) {
   const epId = card.episodeId;
   const opts = { episodeId: epId, initiated_by: "user" };
   switch (card.type) {
@@ -380,6 +452,16 @@ function reEnqueueOnReject(ctx, card) {
       return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
     case "C3":
       return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
+    case "C2S": {
+      // 试妆重出：驳回意见（edit 留的 note / 本次 reject 附言）→ 试妆动作提示
+      const p = card.payload || {};
+      const note = ((body && body.payload && body.payload.note) || p.note || "").trim() || undefined;
+      return ctx.engine.enqueue(
+        "screen_test",
+        { episodeId: epId, role: p.role || undefined, note },
+        opts
+      );
+    }
     case "C4": {
       // 配音重出：重派全场景 voice（真 TTS 重渲染，产物落盘并持久化）
       const scenes2 = scenesOf(ctx, epId);
@@ -408,11 +490,34 @@ function reEnqueueOnReject(ctx, card) {
 /* ---------------- jobs-done 监听（链式推进的心脏） ---------------- */
 
 function onPlanDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
+  const ep = (st.episodes || {})[episodeId] || {};
+  // 剧本是结构化源头（契约：POST /episodes script）：C1 卡必须呈现真实内容——
+  // 梗概＋人物表＋分场分镜表（画面描述＋台词）。job.art.plan 只作无剧本兜底。
+  const script = ep.script && Array.isArray(ep.script.scenes) && ep.script.scenes.length ? ep.script : null;
   const art = job.art || job.result || {};
-  const plan = art.plan;
-  const payload = plan && typeof plan === "object"
-    ? Object.assign({}, plan, { scenes: Array.isArray(plan.scenes) && plan.scenes.length ? plan.scenes : DEFAULT_SCENES.map((s) => Object.assign({}, s)) })
-    : { summary: "故事策划已就位", scenes: DEFAULT_SCENES.map((s) => Object.assign({}, s)) };
+  const plan = art.plan || null;
+  let payload;
+  if (script) {
+    payload = {
+      summary: ep.brief || (plan && plan.summary) || "故事策划已就位",
+      scenes: script.scenes.map((sc) => ({
+        name: sc.name,
+        mood: sc.mood,
+        shots: (sc.shots || []).map((sh) => ({
+          desc: sh.desc || "",
+          sec: sh.sec || 5,
+          cast: sh.cast || [],
+          dialogue: sh.dialogue || ""
+        }))
+      })),
+      cast: (script.cast || []).map((c) => ({ role: c.role, name: c.name, desc: c.desc || "" }))
+    };
+  } else {
+    payload = plan && typeof plan === "object"
+      ? Object.assign({}, plan, { summary: ep.brief || plan.summary || "故事策划已就位", scenes: Array.isArray(plan.scenes) && plan.scenes.length ? plan.scenes : DEFAULT_SCENES.map((s) => Object.assign({}, s)) })
+      : { summary: ep.brief || "故事策划已就位", scenes: DEFAULT_SCENES.map((s) => Object.assign({}, s)) };
+  }
   const r = upsertCard(ctx, { episodeId, type: "C1", payload, skipIfDecided: true });
   if (r.created) publishCard(ctx, "created", r.card);
   else if (r.card) publishCard(ctx, "updated", r.card);
@@ -446,20 +551,27 @@ function onStoryboardDone(ctx, job, episodeId) {
   const allCards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
   let payload;
   if (comfyOn && cast.length) {
-    // 真实模式：角色定义即选角卡主体；定妆图由 casting 任务异步回填
+    // 真实模式：角色定义即选角卡主体；初始定妆＝用户确认的 refImage（上传/生成后确认），
+    // 未确认的角色等待用户在卡上操作——不再自动派 casting 生成定妆
     payload = {
       actors: cast.map((cc, i) => {
         // 继承既有定妆（按 role 匹配任意旧 C2）：脸不重掷
         const prev = allCards.find((x) => x.episodeId === episodeId && x.type === "C2" && (x.payload && x.payload.actors || []).some((pa) => pa.role === cc.role && ((pa.candidates || [])[0] || {}).art));
         const prevActor = prev && (prev.payload.actors || []).find((pa) => pa.role === cc.role);
         const prevCand = prevActor && (prevActor.candidates || []).filter((x) => x.art);
+        let candidates;
+        if (prevCand && prevCand.length) candidates = prevCand;
+        else if (cc.refImage) candidates = [{ id: "cand_ref_" + i, name: "初始定妆（已确认）", art: String(cc.refImage).indexOf("var/") === 0 ? cc.refImage : "var/assets/cast/" + cc.refImage, score: null }];
+        else candidates = [{ id: "cand_" + i + "_0", name: "等待初始定妆（上传或生成）", art: null, score: null }];
         return {
           id: "actor_" + i, role: cc.role, name: cc.name, desc: cc.desc, refImage: cc.refImage,
-          candidates: prevCand && prevCand.length ? prevCand : [{ id: "cand_" + i + "_0", name: "定妆生成中…", art: null, score: null }]
+          candidates
         };
       }),
       images: (art.images || []).map(im => im),
-      note: "角色定义 " + cast.length + " 人 · 定妆生成中（真机）"
+      note: cast.every((cc) => cc.refImage)
+        ? "角色定义 " + cast.length + " 人 · 初始定妆已确认 · 试妆试镜进行中"
+        : "角色定义 " + cast.length + " 人 · 请上传或生成初始定妆图"
     };
   } else {
     payload = art.casting || synthesizeCasting(ctx, episodeId);
@@ -485,27 +597,13 @@ function onStoryboardDone(ctx, job, episodeId) {
     x.updated_at = ctx.util.now();
     publishCard(ctx, "updated", x);
   });
-    // 真实模式：为缺真定妆的角色派生 casting 任务（onCastingDone 回填 C2）
-  if (comfyOn && cast.length) {
-    const actors = (r.card && r.card.payload && r.card.payload.actors) || [];
-    actors.forEach((a) => {
-      if (((a.candidates || [])[0] || {}).art) return;
-      const idx = cast.findIndex((cc) => cc.role === a.role);
-      if (idx < 0) return;
-      ctx.engine.enqueue(
-        "casting",
-        { episodeId: episodeId, castIdx: idx },
-        // Spark 通道启用 → casting 走 imgspark（H3-Image 真定妆，engine.laneFor tier:"high" 路由）
-        { episodeId: episodeId, initiated_by: "system", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
-      );
-    });
-  }
-  if (comfyOn && cast.length) {
-    const actors = (r.card && r.card.payload && r.card.payload.actors) || [];
-    const allHave = actors.length > 0 && actors.every((a) => ((a.candidates || [])[0] || {}).art);
-    if (allHave) {
-      // 定妆已齐（继承）→ 直接入队角色分镜（编辑模型）
-      ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined });
+  // 试妆试镜流程（2026-11-21）：初始定妆齐 → 派试妆试镜（C2S 拍板后才进分镜）；
+  // 初始图只能「上传」或「cast_init 生成后确认」，不再自动派 casting 生成定妆
+  if (comfyOn && cast.length && cast.every((cc) => cc.refImage)) {
+    if (ctx.engine.activeOf && ctx.engine.activeOf("screen_test", episodeId).length === 0) {
+      cast.forEach((cc) => {
+        ctx.engine.enqueue("screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
+      });
     }
   }
   return true;
@@ -534,6 +632,55 @@ function onStoryboardCharDone(ctx, job, episodeId) {
   return bound.length > 0;
 }
 
+/** cast_init done：AI 生成的初始定妆图追加为该角色候选（用户卡上确认后才固化 refImage） */
+function onCastInitDone(ctx, job, episodeId) {
+  const st = ctx.store.get();
+  const art = job.art || job.result || {};
+  const role = art.role || (job.payload || {}).role;
+  if (!art.art || !role) return false;
+  const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+  const c2 = cards.find((x) => x.episodeId === episodeId && x.type === "C2" && x.status === "pending");
+  if (!c2) return false;
+  const actors = (c2.payload || {}).actors || [];
+  const target = actors.find((a) => a.role === role);
+  if (!target) return false;
+  const cands = (target.candidates || []).filter((c) => c && c.art);
+  cands.push({ id: "cand_init_" + cands.length + "_" + String(job.id).slice(-4), name: "AI 初始图（提示词生成）", art: art.art, score: null });
+  target.candidates = cands;
+  c2.ver += 1;
+  c2.updated_at = ctx.util.now();
+  try { ctx.bus.publish("cards", { event: "updated", card: c2 }); } catch (e) {}
+  return true;
+}
+
+/** screen_test done：出 C2S 试妆试镜卡（试妆视频＋抽帧网格＋多角度候选＋确认清单） */
+function onScreenTestDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  if (!art.art) return false;
+  const r = upsertCard(ctx, {
+    episodeId,
+    type: "C2S",
+    payload: {
+      role: art.role || (job.payload || {}).role || "主角色",
+      video: {
+        art: art.art,
+        sec: art.sec || 10.13,
+        frames: art.frames || 243,
+        width: (art.meta && art.meta.width) || 736,
+        height: (art.meta && art.meta.height) || 1312
+      },
+      grid: art.grid || null,
+      refImage: art.refImage || null,
+      views: (art.views || []),
+      checklist: art.checklist || ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按分镜需求）"],
+      note: "试妆试镜：看视频确认五官/身材/服装与多角度人脸；拍板后抽帧固化为分镜参考（分镜只换背景）"
+    }
+  });
+  if (r.created) publishCard(ctx, "created", r.card);
+  else if (r.card) publishCard(ctx, "updated", r.card);
+  return true;
+}
+
 function onCastingDone(ctx, job, episodeId) {
   const st = ctx.store.get();
   const art = job.art || job.result || {};
@@ -556,8 +703,16 @@ function onCastingDone(ctx, job, episodeId) {
     ? "角色定义 " + actors.length + " 人 · 定妆生成中（剩 " + pendingCast + " 人）"
     : "角色定义 " + actors.length + " 人 · 定妆齐（真机）";
   if (pendingCast === 0 && ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.enabled) {
-    // 全员定妆齐 → 派生角色分镜（编辑模型保脸换姿势）
-    ctx.engine.enqueue("storyboard_char", { episodeId: episodeId }, { episodeId: episodeId, initiated_by: "system" });
+    // 全员定妆齐 → 派试妆试镜（C2S 拍板后才进分镜；试妆试镜流程 2026-11-21）
+    const st2 = ctx.store.get();
+    const ep2 = (st2.episodes || {})[episodeId] || {};
+    const cast2 = (ep2.script && ep2.script.cast) || [];
+    const castList = cast2.length ? cast2 : [{ role: (art.actor || {}).role || "主角色" }];
+    if (ctx.engine.activeOf && ctx.engine.activeOf("screen_test", episodeId).length === 0) {
+      castList.forEach((cc) => {
+        ctx.engine.enqueue("screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
+      });
+    }
   }
   c2.ver += 1;
   c2.updated_at = ctx.util.now();
@@ -743,6 +898,12 @@ function handleJobDone(ctx, evt) {
     case "casting":
       touched = onCastingDone(ctx, job, episodeId);
       break;
+    case "cast_init":
+      touched = onCastInitDone(ctx, job, episodeId);
+      break;
+    case "screen_test":
+      touched = onScreenTestDone(ctx, job, episodeId);
+      break;
     case "storyboard_char":
       touched = onStoryboardCharDone(ctx, job, episodeId);
       break;
@@ -754,6 +915,9 @@ function handleJobDone(ctx, evt) {
       break;
     case "compose":
       touched = onComposeDone(ctx, job, episodeId);
+      break;
+    case "aireview":
+      touched = onAiReviewDone(ctx, job, episodeId);
       break;
     case "music":
       touched = onMusicDone(ctx, job, episodeId);
@@ -885,7 +1049,7 @@ function register(router, ctx) {
       }
 
       if (action === "reject") {
-        const reJob = reEnqueueOnReject(ctx, card);
+        const reJob = reEnqueueOnReject(ctx, card, b);
         card.ver += 1;
         if (card.type === "C4" && reJob) card.status = "pending"; // 配音卡重出＝回待确认（新产物到位后重新拍板）
         card.payload = Object.assign({}, card.payload, {
@@ -928,6 +1092,13 @@ function register(router, ctx) {
   );
 
   attachJobDoneListener(ctx);
+
+  // 启动自愈：pending 卡缺审查 → 补派（幂等，审查 free 不计影子成本）
+  const st0 = store.get();
+  Object.keys(st0.cards || {}).forEach((k) => {
+    const cd = st0.cards[k];
+    if (cd && cd.status === "pending") enqueueAiReview(ctx, cd);
+  });
 }
 
 module.exports.register = register;

@@ -318,6 +318,14 @@
   };
 
   /* ---------------- 项目 / 集 ---------------- */
+  store.createProject = async function (spec) {
+    try {
+      const r = await T.api.post("/projects", spec);
+      store.toast("新项目已建，可以在下面开集了");
+      refreshStateSoon();
+      return r.project || r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
   store.createEpisode = async function (spec) {
     try {
       const r = await T.api.post("/episodes", spec);

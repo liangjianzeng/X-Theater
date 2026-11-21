@@ -480,7 +480,31 @@ a { color: inherit; text-decoration: none; }
 .v-flow-sb-tag { position: absolute; left: 4px; top: 4px; background: rgba(23,24,28,.72); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 6px; }
 .v-flow-sb-used { position: absolute; right: 4px; bottom: 4px; background: rgba(47,125,70,.85); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 6px; }
 
+/* C1 故事策划（梗概＋人物表＋分场分镜表） */
+.v-flow-c1 { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.v-flow-c1-sec { display: flex; flex-direction: column; gap: 6px; }
+.v-flow-c1-title { font-size: 12px; color: var(--ink2); display: flex; gap: 8px; align-items: center; }
+.v-flow-c1-brief { font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; }
+.v-flow-c1-person { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.v-flow-c1-scene { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: #FBFAF7; }
+.v-flow-c1-scene-head { display: flex; gap: 8px; align-items: center; }
+.v-flow-c1-shot { display: flex; gap: 8px; align-items: baseline; font-size: 13px; line-height: 1.6; }
+.v-flow-c1-no { flex: none; font-size: 11px; }
+.v-flow-c1-desc { min-width: 0; }
+.v-flow-c1-sec2 { flex: none; font-size: 12px; }
+.v-flow-c1-dlg { flex: none; color: #2F7D46; font-weight: 600; }
+
 /* 灯箱（看大图） */
 .lightbox { position: fixed; inset: 0; background: rgba(12,13,15,.92); z-index: 90; display: grid; place-items: center; padding: 20px; cursor: zoom-out; }
 .lightbox img { max-width: min(92vw, 760px); max-height: 86vh; border-radius: 10px; box-shadow: 0 12px 48px rgba(0,0,0,.5); object-fit: contain; }
 .lb-cap { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); color: #CFCDC6; font-size: 12.5px; background: rgba(23,24,28,.7); padding: 6px 14px; border-radius: 999px; }
+
+/* AI 节点审查（多人格机检意见） */
+.v-flow-ai { margin-top: 10px; border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: #F7F8FA; }
+.v-flow-ai-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.v-flow-ai-p { display: flex; flex-direction: column; gap: 4px; }
+.v-flow-ai-p-head { display: flex; gap: 8px; align-items: center; }
+.v-flow-ai-f { font-size: 12.5px; line-height: 1.6; color: var(--ink2); padding-left: 12px; }
+.badge.v-flow-ai-pass { background: #E7F3EB; color: #2F7D46; }
+.badge.v-flow-ai-warn { background: #FBF3DF; color: #9A6B08; }
+.badge.v-flow-ai-fail { background: #FBE7E7; color: #B3261E; }

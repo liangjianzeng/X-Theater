@@ -102,10 +102,35 @@
         }
       }
 
+      /* ---------- 新建项目 ---------- */
+      const formP = Vue.reactive({ title: "", look: "写实电影感" });
+      const busyP = Vue.ref(false);
+      const formErrP = Vue.ref(null);
+      async function submitProject() {
+        if (busyP.value) return;
+        if (!String(formP.title || "").trim()) { store.toast("给项目起个名字", "warn"); return; }
+        busyP.value = true;
+        formErrP.value = null;
+        try {
+          const pj = await store.createProject({
+            title: String(formP.title).trim(),
+            style_pkg: { look: formP.look, palette: "青橙", ratio: "9:16" }
+          });
+          formP.title = "";
+          const id = pj && pj.id;
+          if (id) form.projectId = String(id); // 新项目直接进「新建集」的默认选中
+        } catch (e) {
+          formErrP.value = e;
+        } finally {
+          busyP.value = false;
+        }
+      }
+
       return {
         store, state, err, bootLoading, projects, episodes,
         epsOf, retry, costPct, costOver, epTone, epHref,
-        form, busy, formErr, submit
+        form, busy, formErr, submit,
+        formP, busyP, formErrP, submitProject
       };
     },
     template: `
@@ -117,7 +142,8 @@
         </div>
 
         <template v-else-if="state">
-          <project-empty v-if="!projects.length"></project-empty>
+          <empty-state v-if="!projects.length" icon="📁" text="还没有项目"
+            sub="先用下方「新建项目」建一个，再开集。"></empty-state>
 
           <div class="panel" v-for="p in projects" :key="p.id">
             <div class="v-home-proj">
@@ -150,6 +176,31 @@
               </div>
             </div>
             <div class="weak" v-else>这个项目还没有集，用下方表单开一集。</div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">📁 新建项目 <span class="weak">短剧项目容器，建完直接开集</span></div>
+            <form class="v-home-form" @submit.prevent="submitProject">
+              <label class="field">
+                <span class="field-label">项目名称</span>
+                <input class="input" v-model.trim="formP.title" placeholder="例：古风甜宠频道 / 都市逆袭系列" />
+              </label>
+              <label class="field">
+                <span class="field-label">画面影调</span>
+                <select class="select" v-model="formP.look">
+                  <option>写实电影感</option>
+                  <option>柔光唯美</option>
+                  <option>冷冽悬疑</option>
+                </select>
+              </label>
+              <div class="v-home-acts">
+                <button class="btn" type="submit" :disabled="busyP" :aria-busy="busyP">
+                  {{ busyP ? '创建中…' : '创建项目' }}
+                </button>
+                <loading v-if="busyP"></loading>
+                <err-state v-if="formErrP" :err="formErrP" :on-retry="submitProject" compact></err-state>
+              </div>
+            </form>
           </div>
 
           <div class="panel">

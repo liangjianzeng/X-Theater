@@ -101,7 +101,11 @@
           case "C1": {
             const bits = [];
             if (p.summary) bits.push(clean(p.summary));
-            if (Array.isArray(p.scenes)) bits.push("共 " + p.scenes.length + " 场");
+            if (Array.isArray(p.cast) && p.cast.length) bits.push(p.cast.length + " 位角色");
+            if (Array.isArray(p.scenes)) {
+              const shotN = p.scenes.reduce((a, s) => a + (((s && s.shots) || []).length), 0);
+              bits.push("共 " + p.scenes.length + " 场" + (shotN ? " " + shotN + " 镜" : ""));
+            }
             return bits.join(" · ");
           }
           case "C2": {
@@ -245,6 +249,9 @@
       }
 
       function p(card) { return (card && card.payload) || {}; }
+      function aiVerdictLabel(v) {
+        return v === "fail" ? "有硬伤" : v === "warn" ? "有提醒" : "通过";
+      }
       function altArts(a) {
         const cs = ((a && a.candidates) || []).slice(1);
         return cs.filter(c => c && c.art).map(c => '/' + c.art);
@@ -282,7 +289,7 @@
         playingId, playingSrc, audioErr, audioEl,
         list, loading, err, isEmpty, pendingCount, decidedCount, ordered, c6Decided,
         typeLabel, cardTitle, summary, c7Items, cands,
-        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, firstArt, altArts, lightbox, openLb, closeLb,
+        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, closeLb,
         accept, reject, openNote, editSubmit,
         loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio
       };
@@ -318,6 +325,54 @@
             </div>
 
             <div class="card-sub" v-if="summary(card)">{{ summary(card) }}</div>
+
+            <!-- AI 节点审查：多人格机检意见（拍板前必读） -->
+            <div class="v-flow-ai" v-if="(p(card).ai_review || {}).personas">
+              <div class="v-flow-ai-head">
+                <b>🤖 AI 审查</b>
+                <span class="badge" :class="'v-flow-ai-' + (p(card).ai_review.verdict || 'pass')">{{ aiVerdictLabel(p(card).ai_review.verdict) }}</span>
+                <span class="weak">{{ clean(p(card).ai_review.engine || '规则机检') }} · 供拍板参考，不替代你的决定</span>
+              </div>
+              <div class="v-flow-ai-p" v-for="(ps, pi) in (p(card).ai_review.personas || [])" :key="pi">
+                <div class="v-flow-ai-p-head">
+                  <b>{{ clean(ps.persona) }}</b>
+                  <span class="badge" :class="'v-flow-ai-' + (ps.verdict || 'pass')">{{ aiVerdictLabel(ps.verdict) }}</span>
+                </div>
+                <div class="v-flow-ai-f" v-for="(f2, fi) in (ps.findings || [])" :key="fi">{{ clean(f2) }}</div>
+              </div>
+            </div>
+
+            <!-- C1：故事策划（梗概＋人物表＋分场分镜表） -->
+            <div class="v-flow-c1" v-if="card.type === 'C1'">
+              <div class="v-flow-c1-sec" v-if="p(card).summary">
+                <div class="v-flow-c1-title"><b>故事梗概</b></div>
+                <div class="v-flow-c1-brief">{{ clean(p(card).summary) }}</div>
+              </div>
+              <div class="v-flow-c1-sec" v-if="(p(card).cast || []).length">
+                <div class="v-flow-c1-title"><b>人物表</b><span class="weak">{{ (p(card).cast || []).length }} 位角色</span></div>
+                <div class="v-flow-c1-person" v-for="(c, i) in (p(card).cast || [])" :key="'c' + i">
+                  <span class="badge">{{ clean(c.role) }}</span>
+                  <b>{{ clean(c.name || c.role) }}</b>
+                  <span class="weak">{{ clean(c.desc || '') }}</span>
+                </div>
+              </div>
+              <div class="v-flow-c1-sec" v-if="(p(card).scenes || []).length">
+                <div class="v-flow-c1-title"><b>分场分镜</b><span class="weak">每镜的画面与台词，接受后进入定妆与拍摄</span></div>
+                <div class="v-flow-c1-scene" v-for="(sc, si) in (p(card).scenes || [])" :key="'s' + si">
+                  <div class="v-flow-c1-scene-head">
+                    <b>{{ clean(sc.name) }}</b>
+                    <span class="badge" v-if="sc.mood">{{ clean(sc.mood) }}</span>
+                    <span class="weak">{{ ((sc.shots || []).length) }} 镜</span>
+                  </div>
+                  <div class="v-flow-c1-shot" v-for="(sh, i) in (sc.shots || [])" :key="'h' + i">
+                    <span class="badge v-flow-c1-no">镜 {{ i + 1 }}</span>
+                    <span class="grow v-flow-c1-desc">{{ clean(sh.desc) }}</span>
+                    <span class="muted v-flow-c1-sec2">{{ sh.sec }}s</span>
+                    <span class="v-flow-c1-dlg" v-if="sh.dialogue">「{{ clean(sh.dialogue) }}」</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <!-- C2：角色定义（定妆确认）＋分镜首帧（拍摄输入） -->
             <div class="v-flow-cast" v-if="card.type === 'C2'">

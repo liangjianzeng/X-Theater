@@ -128,7 +128,8 @@ function bag(ctx, job, { bytes, fileName, meta, cents }) {
   const bag = { ok: true, cents, art, meta, engine: ENGINE_USER, path: art };
   job.result = bag;
   job.art = bag;
-  return { ok: true, cents, art, meta };
+  // 返回值与 job.art 同一对象：c1plan 在返回值上挂的 plan 才能进 job.art → 卡流（onPlanDone）
+  return bag;
 }
 
 async function runComfy(ctx, job, p, seed, cents) {
@@ -187,7 +188,9 @@ async function runComfy(ctx, job, p, seed, cents) {
       const castDef = castOf(ctx, p.episodeId).find((x) => x.role === refName || x.name === refName);
       const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
       if (!art) continue; // 定妆未就绪（编排层保证次序）
-      const local = resolveArt(ctx, art);
+      // 编辑输入优先剧本 refImage（用户原图=定妆终稿），退化用 casting 候选产物
+      const refOrig = castDef.refImage ? path.join(process.cwd(), 'var', 'assets', 'cast', safeSeg(String(castDef.refImage).replace(/^.*[\/]/, ''))) : null;
+      const local = (refOrig && fs.existsSync(refOrig)) ? refOrig : resolveArt(ctx, art);
       const inputName = "cast_" + safeSeg(refName) + ".png";
       const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
       if (!inputDir) throw Object.assign(new Error("comfy inputDir 未配置"), { code: "NO_INPUT_DIR" });
