@@ -100,7 +100,7 @@ function createModeARuntime(session, ctx) {
         ctx: ctx,
         input: input,
         auth: auth,
-        interpret: { detect: modeB.detectInjection, parse: modeB.parseIntent }
+        interpret: require("./llmintent.js").buildInterpret(ctx, { detect: modeB.detectInjection, parse: modeB.parseIntent })
       });
     },
     terminate: function () {

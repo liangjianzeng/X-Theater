@@ -28,7 +28,8 @@ const CODE_STATUS = {
   PAYLOAD_TOO_LARGE: 413,
   BAD_JSON: 400,
   BAD_TYPE: 400,
-  NO_WORKER: 400
+  NO_WORKER: 400,
+  GPU_BUSY: 409
 };
 
 function statusOf(err) {
@@ -79,7 +80,10 @@ function createRouter() {
     authFn = typeof fn === "function" ? fn : null;
   }
 
-  function readBody(req) {
+  // opts.raw=true → body 为原始 Buffer（图片上传等二进制面）；opts.limit 覆盖 1MB JSON 上限
+  function readBody(req, opts) {
+    const raw = !!(opts && opts.raw);
+    const limit = (opts && typeof opts.limit === "number" && opts.limit > 0) ? opts.limit : MAX_BODY;
     return new Promise((resolve, reject) => {
       const chunks = [];
       let size = 0;
@@ -87,19 +91,20 @@ function createRouter() {
       req.on("data", (c) => {
         if (tooBig) return; // 溢出后丢弃剩余分片，等 413 应答
         size += c.length;
-        if (size > MAX_BODY) {
+        if (size > limit) {
           tooBig = true;
-          reject({ code: "PAYLOAD_TOO_LARGE", message: "请求体超过 1MB 上限" });
+          reject({ code: "PAYLOAD_TOO_LARGE", message: "请求体超过 " + Math.round(limit / 1024 / 1024) + "MB 上限" });
           return;
         }
         chunks.push(c);
       });
       req.on("end", () => {
         if (tooBig) return;
-        const raw = Buffer.concat(chunks).toString("utf8").trim();
-        if (!raw) return resolve({});
+        if (raw) return resolve(Buffer.concat(chunks));
+        const s = Buffer.concat(chunks).toString("utf8").trim();
+        if (!s) return resolve({});
         try {
-          resolve(JSON.parse(raw));
+          resolve(JSON.parse(s));
         } catch (e) {
           reject({ code: "BAD_JSON", message: "JSON 解析失败" });
         }
@@ -168,7 +173,7 @@ function createRouter() {
     let body = {};
     if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
       try {
-        body = await readBody(req);
+        body = await readBody(req, r.opts);
       } catch (err) {
         const code = err && err.code ? err.code : "BAD_JSON";
         json(res, statusOf(err), { error: { code, message: (err && err.message) || "请求体错误" } });

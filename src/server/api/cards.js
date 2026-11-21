@@ -136,6 +136,16 @@ function onAiReviewDone(ctx, job, episodeId) {
     ai_review: { verdict: art.verdict || "pass", engine: art.engine || "规则机检", personas: art.personas, ts: ctx.util.now() }
   });
   card.ver += 1; // 卡内容变更必 ver++
+  try {
+    const w = card.payload.ai_review.verdict;
+    ctx.bus.publish("alerts", {
+      id: ctx.util.uid("al"),
+      kind: "ai_review",
+      msg: "AI 审查完成：" + card.type + " 卡 " + (w === "pass" ? "通过" : w === "warn" ? "有提醒" : "有硬伤") + "，等你拍板。",
+      ts: ctx.util.now(),
+      acked: false
+    });
+  } catch (e2) { /* 提示失败不阻断 */ }
   card.updated_at = ctx.util.now();
   publishCard(ctx, "updated", card);
   return true;
@@ -449,9 +459,10 @@ function reEnqueueOnReject(ctx, card, body) {
     case "C1":
       return ctx.engine.enqueue("c1plan", { episodeId: epId }, opts);
     case "C2":
-      return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
+      // 分镜图由 storyboard_char 产出（试妆抽帧换背景壳）——驳回重出＝重跑角色分镜
+      return ctx.engine.enqueue("storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }));
     case "C3":
-      return ctx.engine.enqueue("storyboard", { episodeId: epId }, opts);
+      return ctx.engine.enqueue("storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }));
     case "C2S": {
       // 试妆重出：驳回意见（edit 留的 note / 本次 reject 附言）→ 试妆动作提示
       const p = card.payload || {};
@@ -1011,6 +1022,58 @@ function register(router, ctx) {
     { auth: true }
   );
 
+  router.add(
+    "POST",
+    "/api/cards/:id/suggest",
+    async (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const card = (st.cards || {})[params.id];
+      if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
+      if (card.type !== "C1") throw { code: "BAD_REQUEST", message: "建议片一期只支持 C1 故事方向卡" };
+      if (card.status !== "pending") throw { code: "ALREADY_DECIDED", message: "卡片已决策" };
+      const note = String((body || {}).note || "").trim();
+      if (!note) throw { code: "BAD_REQUEST", message: "note（修改意见）必填" };
+      if (!ctx.llm || !ctx.llm.enabled()) throw { code: "NOT_READY", message: "LLM 未在线（本机 8090 未起或未配置），建议片不可用" };
+      const p = card.payload || {};
+      const sys = [
+        "你是剧场 Studio 的剧本策划顾问。依据修改意见修订分场分镜表，输出 JSON。",
+        "硬约束：scenes 数组长度必须与输入一致；每场 shots 长度必须与输入一致；只改 name/mood/desc/dialogue/sec 的内容，不改结构；台词 ≤40 字；sec 取 3–15 整数；cast 只能用输入里出现的角色名。",
+        "只输出：{\"reply\":\"给制片人的一句话说明（≤120字）\",\"scenes\":[…完整新数组…]}"
+      ].join("\n");
+      const usr = "当前卡内容：" + JSON.stringify({ summary: p.summary, cast: p.cast, scenes: p.scenes }).slice(0, 4000) + "\n修改意见：" + note.slice(0, 300);
+      const r = await ctx.llm.chat([{ role: "system", content: sys }, { role: "user", content: usr }], { temperature: 0.4, maxTokens: 1600, timeoutMs: 60000 });
+      if (!r.ok) throw { code: "NOT_READY", message: "LLM 未给出建议（" + (r.error || "超时") + "），请稍后再试" };
+      const m = String(r.content).match(/\{[\s\S]*\}/);
+      let reply = "", scenes = null;
+      if (m) {
+        try {
+          const j = JSON.parse(m[0]);
+          reply = String(j.reply || "").slice(0, 200);
+          if (Array.isArray(j.scenes) && Array.isArray(p.scenes) && j.scenes.length === p.scenes.length) {
+            const castRoles = (p.cast || []).map((c) => c.role);
+            const ok = j.scenes.every((sc, i) => Array.isArray(sc.shots) && sc.shots.length === (p.scenes[i].shots || []).length);
+            if (ok) {
+              scenes = j.scenes.map((sc, i) => ({
+                name: String(sc.name || p.scenes[i].name).slice(0, 40),
+                mood: String(sc.mood || p.scenes[i].mood).slice(0, 20),
+                shots: sc.shots.map((sh) => ({
+                  desc: String(sh.desc || "").slice(0, 300),
+                  sec: Number(sh.sec) > 0 ? Math.min(15, Math.round(Number(sh.sec))) : 5,
+                  cast: (Array.isArray(sh.cast) ? sh.cast.map(String) : []).filter((x) => castRoles.indexOf(x) >= 0),
+                  dialogue: String(sh.dialogue || "").slice(0, 200)
+                }))
+              }));
+            }
+          }
+        } catch (e) { /* 解析失败 → scenes=null */ }
+      }
+      if (!reply && !scenes) throw { code: "NOT_READY", message: "LLM 输出无法解析为结构化修订，请换个说法再试" };
+      store.log("audit", { operator: (auth && (auth.uid || auth.id)) || null, action: "card_suggest", target: card.id, note_digest: String(util.hash12({ note })) });
+      return router.json(res, 200, { reply: reply || "已按你的意见修订（见下方分镜表）", scenes: scenes });
+    },
+    { auth: true }
+  );
   // POST /api/cards/:id/decide {action:"accept|edit|reject",payload?,ver}
   router.add(
     "POST",
@@ -1033,6 +1096,7 @@ function register(router, ctx) {
         card.payload = Object.assign({}, card.payload, b.payload || {});
         card.ver += 1; // 改卡必 ver++
         card.updated_at = util.now();
+        enqueueAiReview(ctx, card); // 改卡后若审查缺失（如清旧审）→ 重派（幂等）
         store.commit();
         audit(auth, "card_edit", card.id, { type: card.type });
         publishCard(ctx, "updated", card);
@@ -1101,7 +1165,32 @@ function register(router, ctx) {
   });
 }
 
+/** 剧本源头变更（script-scenes）后：pending C1 重导出（与 onPlanDone 同口径）＋清旧审＋重派审 */
+function refreshPendingC1(ctx, episodeId) {
+  const st = ctx.store.get();
+  const ep = (st.episodes || {})[episodeId];
+  if (!ep || !ep.script) return false;
+  const card = Object.keys(st.cards || {}).map((k) => st.cards[k])
+    .find((c) => c.episodeId === episodeId && c.type === "C1" && c.status === "pending");
+  if (!card) return false;
+  const payload = {
+    summary: ep.brief || "故事策划已就位",
+    scenes: ep.script.scenes.map((sc) => ({
+      name: sc.name, mood: sc.mood,
+      shots: (sc.shots || []).map((sh) => ({ desc: sh.desc || "", sec: sh.sec || 5, cast: sh.cast || [], dialogue: sh.dialogue || "" }))
+    })),
+    cast: (ep.script.cast || []).map((c) => ({ role: c.role, name: c.name, desc: c.desc || "" }))
+  };
+  delete payload.ai_review; // 内容已变，旧审作废（enqueueAiReview 会重派）
+  card.payload = payload;
+  card.ver += 1;
+  card.updated_at = ctx.util.now();
+  publishCard(ctx, "updated", card);
+  enqueueAiReview(ctx, card);
+  return true;
+}
 module.exports.register = register;
+module.exports.refreshPendingC1 = refreshPendingC1;
 module.exports.upsertCard = upsertCard;
 module.exports.maybeFinishShoot = maybeFinishShoot;
 module.exports.handleJobDone = handleJobDone;

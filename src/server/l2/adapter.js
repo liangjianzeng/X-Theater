@@ -144,12 +144,16 @@ async function runTurn(opts) {
     return { ok: true, injected: true, events: events, trace_id: trace0 };
   }
 
-  const intent = interpret.parse(text, chips, ctx, session);
+  const intent = await interpret.parse(text, chips, ctx, session);
   if (!intent) {
     await say(REPLY.fallback);
     return { ok: true, intent: null, events: events, trace_id: trace0 };
   }
-  if (intent.refusal) {
+  if (intent.say) {
+    await say(intent.say);
+    return { ok: true, said: true, intent: intent.name || 'say', events: events, trace_id: trace0 };
+  }
+    if (intent.refusal) {
     await say(intent.refusal);
     return { ok: true, refused: true, intent: intent.name || null, events: events, trace_id: trace0 };
   }
@@ -207,7 +211,14 @@ async function runTurn(opts) {
     trace_id: r.trace_id || trace,
     code: r.code
   });
-  await say(r.ok ? replyFor(tool, args, r, ctx, session) : (r.code === "FORBIDDEN" ? REPLY.forbidden : REPLY.failed));
+  {
+    const fallback = r.ok ? replyFor(tool, args, r, ctx, session) : (r.code === "FORBIDDEN" ? REPLY.forbidden : REPLY.failed);
+    let rep = fallback;
+    if (r.ok && ctx.llm && typeof ctx.llm.chat === "function" && ctx.llm.enabled()) {
+      try { rep = await require("./llmintent.js").llmReply(tool, args, r, ctx, session, fallback); } catch (e) { rep = fallback; }
+    }
+    await say(rep);
+  }
   return {
     ok: !!r.ok,
     code: r.code,

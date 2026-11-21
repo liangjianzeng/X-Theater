@@ -7,6 +7,13 @@
   const Vue = global.Vue;
 
   /* 启动：有 token 先验活（401→登出），无 token 去登录 */
+  let gpuTimer = null;
+  function startGpuPoll() {
+    if (gpuTimer) return;
+    store.loadGpu().catch(() => {});
+    gpuTimer = setInterval(() => { if (store.auth.token) store.loadGpu().catch(() => {}); }, 5000);
+  }
+
   async function boot() {
     if (store.auth.token) {
       try {
@@ -56,10 +63,38 @@
         };
       });
       function closeSheet() { store.closeSheet(); }
+      /* GPU/LLM 徽章：LLM 在线＝独显被占（生图/拍摄被挡），点开可「让路」 */
+      const gpu = Vue.computed(() => store.gpu.data || null);
+      const gpuText = Vue.computed(() => {
+        const g = gpu.value;
+        if (!g || !g.llm) return 'GPU 状态…';
+        if (!g.llm.configured) return 'LLM 未配置';
+        return g.llm.online ? '🧠 LLM 在线 · 拍摄被挡' : (g.comfy && g.comfy.online ? 'GPU 空闲 · LLM 离线' : 'GPU/LLM 离线');
+      });
+      const gpuCls = Vue.computed(() => {
+        const g = gpu.value;
+        return g && g.llm && g.llm.online ? 'gpu-on' : 'gpu-off';
+      });
+      function openGpu() {
+        const g = gpu.value || { llm: {} };
+        store.openSheet({
+          title: 'GPU / 本机 LLM',
+          rows: [
+            'LLM：' + (g.llm && g.llm.online ? ('在线（' + (g.llm.model || '本机') + '）') : (g.llm && g.llm.configured ? '离线' : '未配置')),
+            (g.comfy && g.comfy.online ? ('ComfyUI：在线 · 显存空闲 ' + (g.comfy.vram_free_mib || '?') + ' MiB / ' + (g.comfy.vram_total_mib || '?') + ' MiB') : 'ComfyUI：离线'),
+            g.gpu_busy ? '16G 独显被 LLM 占用：生图/拍摄已挡，先让路。' : '生图/拍摄可用。'
+          ].filter(Boolean),
+          html: null,
+          actions: [
+            g.llm && g.llm.online ? { label: '停止 LLM 让路', kind: 'btn-danger', onClick: (close) => { store.stopLlm().catch(() => {}); close(); } } : null,
+            { label: '知道了', kind: 'btn-ghost', onClick: (close) => close() }
+          ].filter(Boolean)
+        });
+      }
       function act(a) { if (a && a.onClick) a.onClick(closeSheet); else closeSheet(); }
       /* 键盘：Esc 关 sheet */
       global.addEventListener("keydown", e => { if (e.key === "Escape" && store.sheet) closeSheet(); });
-      return { store, route, viewComp, showNav, showRail, isEpRoute, isOps, navBadge, act, closeSheet, epId: Vue.computed(() => route.value.epId) };
+      return { store, route, viewComp, showNav, showRail, isEpRoute, isOps, navBadge, act, closeSheet, epId: Vue.computed(() => route.value.epId), gpu, gpuText, gpuCls, openGpu };
     },
     template: `
     <div class="app-shell" :class="{ 'no-rail': !showRail }">
@@ -74,6 +109,9 @@
           <a class="nav-item" :class="{on: route.view==='Settings'}" href="#/settings">⚙️ 设置</a>
         </nav>
         <div class="nav-foot">
+          <div class="conn gpu-badge" :class="gpuCls" role="button" tabindex="0" @click="openGpu" @keydown.enter="openGpu" title="点击看 GPU/LLM 状态">
+            <i></i>{{ gpuText }}
+          </div>
           <div class="conn" :class="'conn-'+store.conn.sse">
             <i></i>{{ store.conn.sse==='on' ? '实时连接正常' : store.conn.sse==='connecting' ? '连接中…' : (store.conn.err || '实时连接已断') }}
           </div>
@@ -117,5 +155,5 @@
     console.error("[studio]", err);
     try { store.toast("界面出了个异常（" + T.sanitize(err && err.message ? err.message : "未知") + "），已继续运行", "err"); } catch (e) {}
   };
-  boot().finally(() => { app.mount("#app"); ROUTER.start(); });
+  boot().finally(() => { app.mount("#app"); ROUTER.start(); startGpuPoll(); });
 })(window);

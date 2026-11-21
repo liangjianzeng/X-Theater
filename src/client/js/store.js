@@ -20,6 +20,7 @@
     review: { queue: null, pending: 0, loading: false, error: null },
     music: { library: null, loading: false, error: null },
     costs: { data: null, loading: false, error: null, epId: null },
+    gpu: { data: null, loading: false, error: null },
     billing: { rows: null, total: 0, cents: 0, loading: false, error: null },
     registry: { data: null, probes: null, alerts: null, audit: null, loading: false, error: null },
     l2: {
@@ -317,7 +318,36 @@
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
 
-  /* ---------------- 项目 / 集 ---------------- */
+  /* ---------------- AI 建议片 / 剧本修订 ---------------- */
+  store.suggestCard = async function (cardId, note) {
+    const r = await T.api.post('/cards/' + encodeURIComponent(cardId) + '/suggest', { note });
+    return T.sanitizeDeep(r || {});
+  };
+  store.reviseScenes = async function (epId, scenes) {
+    const r = await T.api.post('/episodes/' + encodeURIComponent(epId) + '/script-scenes', { scenes });
+    store.toast('剧本分镜表已修订，C1 卡同步刷新');
+    refreshStateSoon();
+    return r;
+  };
+
+    /* ---------------- GPU/LLM（llm-gw 状态面） ---------------- */
+  store.loadGpu = async function () {
+    store.gpu.loading = true; store.gpu.error = null;
+    try { store.gpu.data = await T.api.get('/gpu'); }
+    catch (e) { store.gpu.error = e; }
+    finally { store.gpu.loading = false; }
+    return store.gpu.data;
+  };
+  store.stopLlm = async function () {
+    try {
+      const r = await T.api.post('/gpu/llm/stop', {});
+      store.toast(r && r.message ? r.message : 'LLM 已停，显存已释放');
+      store.loadGpu().catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, 'err'); throw e; }
+  };
+
+    /* ---------------- 项目 / 集 ---------------- */
   store.createProject = async function (spec) {
     try {
       const r = await T.api.post("/projects", spec);

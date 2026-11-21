@@ -132,7 +132,8 @@ function register(router, ctx) {
       const job = engine.enqueue(
         "c1plan",
         { episodeId: ep.id, title: ep.title, brief: ep.brief, kind },
-        { episodeId: ep.id, initiated_by: "user" }
+        // Spark 通道启用 → c1plan 走 imgspark（H3-Image 海报，全套 H3）
+        { episodeId: ep.id, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
       );
       audit(auth, "episode_create", ep.id, { job_id: job && job.id, kind });
       try { bus.publish("cards", { event: "episode_created", episode: ep }); } catch (e) {}
@@ -235,6 +236,144 @@ function register(router, ctx) {
       { auth: true }
     );
 
+  // ---------- 初始定妆入口（试妆试镜流程 2026-11-21） ----------
+  // 用户上传原图 或 提示词生成初始图 → confirm 固化为角色 refImage → 全员确认后自动派试妆试镜
+  function parseQ(req) {
+    const i = (req.url || "").indexOf("?");
+    const out = {};
+    if (i >= 0) new URLSearchParams(req.url.slice(i + 1)).forEach((v, k) => { out[k] = v; });
+    return out;
+  }
+  function castDir() { return require("path").join(process.cwd(), "var", "assets", "cast"); }
+
+  // POST /api/episodes/:id/castref/upload?role=X — raw bytes（PNG/JPEG ≤16MB）→ var/assets/cast/
+  router.add(
+    "POST",
+    "/api/episodes/:id/castref/upload",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const ep = requireEpisode(ctx, params.id);
+      const q = parseQ(req);
+      const role = String(q.role || "").trim();
+      if (!role) throw { code: "BAD_REQUEST", message: "role 必填（query ?role=）" };
+      const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
+      if (!cur) throw { code: "NOT_FOUND", message: "角色不存在: " + role };
+      const buf = Buffer.isBuffer(body) ? body : null;
+      if (!buf || buf.length < 100) throw { code: "BAD_REQUEST", message: "请求体须为图片原始字节" };
+      const isPng = buf.length > 24 && buf.toString("latin1", 1, 4) === "PNG";
+      const isJpg = buf.length > 3 && buf.toString("latin1", 0, 3) === "\xff\xd8\xff";
+      if (!isPng && !isJpg) throw { code: "BAD_REQUEST", message: "仅支持 PNG/JPEG" };
+      const fs = require("fs");
+      const path = require("path");
+      const dir = castDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const fn = "upload_" + role.replace(/[^A-Za-z0-9._-]/g, "_") + "_" + Date.now() + (isPng ? ".png" : ".jpg");
+      fs.writeFileSync(path.join(dir, fn), buf);
+      audit(auth, "castref_upload", ep.id, { role, file: fn, bytes: buf.length });
+      return router.json(res, 200, { file: fn, bytes: buf.length, role });
+    },
+    { auth: true, raw: true, limit: 16 * 1024 * 1024 }
+  );
+
+  // POST /api/episodes/:id/castref/generate {role, prompt} — 提示词生成初始图（cast_init job，异步）
+  router.add(
+    "POST",
+    "/api/episodes/:id/castref/generate",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      const b = body || {};
+      const role = String(b.role || "").trim();
+      const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
+      if (!cur) throw { code: "NOT_FOUND", message: "角色不存在: " + role };
+      const job = engine.enqueue(
+        "cast_init",
+        { episodeId: ep.id, role, prompt: String(b.prompt || "").slice(0, 400) },
+        { episodeId: ep.id, initiated_by: "user" }
+      );
+      audit(auth, "castref_generate", ep.id, { role, job_id: job && job.id });
+      return router.json(res, 202, { job, role });
+    },
+    { auth: true }
+  );
+
+  // POST /api/episodes/:id/castref/confirm {role, file} — 确认初始定妆（人脸存在性机检）；
+  // 全员确认 → 自动派试妆试镜（screen_test）
+  router.add(
+    "POST",
+    "/api/episodes/:id/castref/confirm",
+    async (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      const b = body || {};
+      const role = String(b.role || "").trim();
+      const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
+      if (!cur) throw { code: "NOT_FOUND", message: "角色不存在: " + role };
+      const rel = String(b.file || "");
+      const name = require("path").basename(rel).replace(/[^A-Za-z0-9._-]/g, "_");
+      const fs = require("fs");
+      const path = require("path");
+      const src = [path.join(castDir(), name), path.join(process.cwd(), "var", "out", name)]
+        .find((p) => fs.existsSync(p));
+      if (!src) throw { code: "NOT_FOUND", message: "文件不存在: " + rel };
+      // 人脸存在性机检（facegate :8195；无 face 时拒绝确认）
+      try {
+        const r = await fetch("http://127.0.0.1:8195/score", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ img_b64: fs.readFileSync(src).toString("base64") })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d && d.reason === "no_face") throw { code: "NOT_A_FACE", message: "图中未检出人脸，不能作为初始定妆" };
+      } catch (e) {
+        if (e && e.code) throw e; // facegate 不可达不阻断确认（离线兜底）
+      }
+      const dir = castDir();
+      fs.mkdirSync(dir, { recursive: true });
+      if (path.dirname(src) !== dir) fs.copyFileSync(src, path.join(dir, name));
+      cur.refImage = name;
+      store.commit();
+      audit(auth, "castref_confirm", ep.id, { role, file: name });
+      // 回填 pending C2 卡：该角色候选清为「已确认初始定妆」（覆盖旧生成垃圾），refImage 同步
+      const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+      const c2 = cards.find((x) => x.episodeId === ep.id && x.type === "C2" && x.status === "pending");
+      if (c2) {
+        const actors = (c2.payload || {}).actors || [];
+        const target = actors.find((a) => a.role === role);
+        if (target) {
+          target.refImage = name;
+          target.candidates = [{ id: "cand_ref_" + actors.indexOf(target), name: "初始定妆（已确认）", art: "var/assets/cast/" + name, score: null }];
+          const pendingCast = actors.filter((a) => !((a.candidates || [])[0] || {}).art).length;
+          c2.payload.note = pendingCast
+            ? "角色定义 " + actors.length + " 人 · 等待初始定妆（剩 " + pendingCast + " 人）"
+            : "角色定义 " + actors.length + " 人 · 初始定妆已确认 · 试妆试镜进行中";
+          c2.ver += 1;
+          c2.updated_at = util.now();
+          try { ctx.bus.publish("cards", { event: "updated", card: c2 }); } catch (e) {}
+        }
+      }
+      // 全员初始定妆齐 → 自动派试妆试镜（每角色一条；已有在队/在跑的不重派）
+      const jobs = [];
+      const allCast = ep.script.cast || [];
+      const dupScreenTest = engine.activeOf("screen_test", ep.id).length > 0;
+      if (!dupScreenTest && allCast.every((c) => c.refImage)) {
+        allCast.forEach((c) => {
+          const job = engine.enqueue(
+            "screen_test",
+            { episodeId: ep.id, role: c.role },
+            { episodeId: ep.id, initiated_by: "system" }
+          );
+          jobs.push(job);
+        });
+      }
+      try { ctx.bus.publish("episodes", { event: "castref_confirm", episodeId: ep.id, role }); } catch (e) {}
+      return router.json(res, 200, { cast: ep.script.cast, confirmed: role, screen_tests: jobs });
+    },
+    { auth: true }
+  );
+
   // POST /api/episodes/:id/script-scenes — 剧本场景修订（拍摄前；与 state 场景按 seq 1:1 对齐）
   router.add(
     "POST",
@@ -269,6 +408,8 @@ function register(router, ctx) {
       });
       store.commit();
       audit(auth, "script_scenes_revise", e.id, { scenes: e.script.scenes.length });
+      // 剧本源头变更 → pending C1 重导出＋重审（AI 建议片采纳链的落地点）
+      try { require("./cards.js").refreshPendingC1(ctx, e.id); } catch (err2) { /* 刷新失败不阻断 */ }
       try { ctx.bus.publish("episodes", { event: "script_scenes_revise", episodeId: e.id }); } catch (err) {}
       return router.json(res, 200, { scenes: e.script.scenes });
     },

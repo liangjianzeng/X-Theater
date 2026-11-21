@@ -222,7 +222,7 @@ function createModeBRuntime(session, ctx) {
         ctx: ctx,
         input: input,
         auth: auth,
-        interpret: { detect: detectInjection, parse: parseIntent }
+        interpret: require("./llmintent.js").buildInterpret(ctx, { detect: detectInjection, parse: parseIntent })
       });
     },
     terminate: function () {

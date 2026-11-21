@@ -15,10 +15,11 @@
   const store = T.store;
   const views = (global.__VIEWS = global.__VIEWS || {});
 
-  /* 卡片类型徽标（契约 §6 A：C1 方向/C2 选角/C3 美术/C4 样片/C5 节奏/C6 开机报价/C7 复审批复/C9 配乐提案/C8 交付确认） */
+  /* 卡片类型徽标（契约 §6 A：C1 方向/C2 选角/C2S 试妆试镜/C3 美术/C4 样片/C5 节奏/C6 开机报价/C7 复审批复/C9 配乐提案/C8 交付确认） */
   const TYPE_META = {
     C1: { name: "方向", title: "故事方向" },
     C2: { name: "选角", title: "演员定妆" },
+    C2S: { name: "试妆试镜", title: "试妆试镜确认" },
     C3: { name: "美术", title: "演员表锁定" },
     C4: { name: "样片", title: "分镜画面" },
     C5: { name: "节奏", title: "样片审看" },
@@ -85,6 +86,8 @@
       /* C6 开机的前提：本集 C6 卡已拍板（后端 shoot 也强制校验） */
       const c6Decided = computed(() => (list.value || []).some(c => c.type === "C6" && c.status !== "pending"));
       const hasC6 = computed(() => (list.value || []).some(c => c.type === "C6"));
+      /* GPU 互斥：本机 LLM 在线＝独显被占，开机被服务端闸挡（此处前置提示） */
+      const gpuBusy = computed(() => !!(store.gpu && store.gpu.data && store.gpu.data.gpu_busy));
 
       function typeLabel(t) {
         const m = TYPE_META[t];
@@ -112,6 +115,11 @@
             const a = Array.isArray(p.actors) ? p.actors : [];
             if (!a.length) return clean(p.note || "");
             return "共 " + a.length + " 位角色 · 每位 " + ((a[0].candidates || []).length || 4) + " 个定妆候选";
+          }
+          case "C2S": {
+            const v = p.video || {};
+            const vs = Array.isArray(p.views) ? p.views.length : 0;
+            return (p.role ? clean(p.role) + " · " : "") + "试妆视频 " + (v.sec || "?") + " 秒 · 抽帧 " + vs + " 帧待确认";
           }
           case "C3": {
             const c = Array.isArray(p.cast) ? p.cast : [];
@@ -177,18 +185,50 @@
         catch (e) { /* 人话提示由 store 统一 toast（含 STALE→模态） */ }
         finally { busyId.value = ""; }
       }
-      const accept = card => decide(card, "accept");
+      const accept = card => decide(card, "accept", card.type === "C2S" ? { views: viewsOf(card) } : undefined);
       const reject = card => decide(card, "reject");
       function openNote(card) {
         if (editing.value === card.id) { editing.value = ""; return; }
         editing.value = card.id;
         noteText.value = "";
       }
-      function editSubmit(card) {
+      async function editSubmit(card) {
         const note = noteText.value.trim();
         if (!note) return;
-        editing.value = "";
-        decide(card, "edit", { note });
+        if (busyId.value) return;
+        busyId.value = "suggest-" + card.id;
+        try {
+          if (card.type === "C1") {
+            /* AI 建议片：LLM 依据意见出结构化修订 → 用户确认后走剧本修订源头（C1 重导出＋重审） */
+            const sug = await store.suggestCard(card.id, note);
+            editing.value = "";
+            store.openSheet({
+              title: "🤖 AI 建议片",
+              rows: [String(sug.reply || "已生成修订").slice(0, 200)],
+              html: null,
+              actions: [
+                sug.scenes ? { label: "采纳（改剧本源头）", kind: "btn-primary", onClick: async (close) => {
+                  try {
+                    await store.reviseScenes(props.epId, sug.scenes);
+                    store.loadCards(props.epId).catch(() => {});
+                  } catch (e) { /* store 已 toast */ }
+                  close();
+                } } : null,
+                { label: "只递意见不改表", kind: "btn-ghost", onClick: (close) => { decide(card, "edit", { note }); close(); } },
+                { label: "先不了", kind: "btn-ghost", onClick: (close) => close() }
+              ].filter(Boolean)
+            });
+          } else {
+            editing.value = "";
+            await decide(card, "edit", { note });
+          }
+        } catch (e) {
+          /* suggest 失败已 toast（LLM 不在线等）；退回普通递意见 */
+          editing.value = "";
+          decide(card, "edit", { note });
+        } finally {
+          busyId.value = "";
+        }
       }
 
       /* ---- C6：服务端报价 + 开机 ---- */
@@ -248,6 +288,81 @@
         finally { busyId.value = ""; }
       }
 
+      /* ---- C2 定妆入口：上传 / AI 生成 / 确认（试妆试镜流程 2026-11-21） ---- */
+      const uploaded = reactive({});   // key → 刚上传的文件名（待确认）
+      const genPrompt = reactive({});  // key → 辅助提示词
+      const selCand = reactive({});    // key → 选定的候选 art（默认最新一张）
+      function castKey(card, a) { return card.id + "|" + (a.role || ""); }
+      function uploadedFile(card, a) { return uploaded[castKey(card, a)] || null; }
+      function pickCastFile(card, a) {
+        const inp = document.createElement("input"); // 动态建 file input（v-for 里模板 ref 会变数组，不可靠）
+        inp.type = "file";
+        inp.accept = "image/png,image/jpeg";
+        inp.onchange = (ev) => onCastFile(card, a, ev);
+        inp.click();
+      }
+      async function onCastFile(card, a, ev) {
+        const f = ev.target.files && ev.target.files[0];
+        if (!f) return;
+        const key = castKey(card, a);
+        busyId.value = "up-" + key;
+        try {
+          const tok = (store.auth && store.auth.token) || "";
+          const buf = await f.arrayBuffer();
+          const r = await fetch("/api/episodes/" + props.epId + "/castref/upload?role=" + encodeURIComponent(a.role || ""), {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream", "authorization": "Bearer " + tok },
+            body: buf
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error((d.error && d.error.message) || ("HTTP " + r.status));
+          uploaded[key] = d.file;
+          store.toast("初始图已上传，点「就用这张 → 开始试妆」确认");
+        } catch (e) { store.toast(e && e.message ? e.message : "上传失败", "err"); }
+        finally { busyId.value = ""; }
+      }
+      async function castRefGenerate(card, a) {
+        const key = castKey(card, a);
+        busyId.value = "gen-" + key;
+        try {
+          await T.api.post("/episodes/" + props.epId + "/castref/generate", { role: a.role, prompt: genPrompt[key] || "" });
+          store.toast("初始图生成中（Spark 出图十几秒），完成后这张卡会出现候选");
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { busyId.value = ""; }
+      }
+      function lastCandArt(a) {
+        const cs = (a.candidates || []).filter(c => c && c.art);
+        return cs.length ? cs[cs.length - 1].art : null;
+      }
+      function selCandArt(card, a) { return selCand[castKey(card, a)] || lastCandArt(a); }
+      function pickCand(card, a, art) {
+        selCand[castKey(card, a)] = art;
+        store.toast("已选定这张候选，点「就用这张 → 开始试妆」确认");
+      }
+      async function castRefConfirm(card, a) {
+        const key = castKey(card, a);
+        const file = uploadedFile(card, a) || selCandArt(card, a);
+        if (!file) return;
+        busyId.value = "cf-" + key;
+        try {
+          await T.api.post("/episodes/" + props.epId + "/castref/confirm", { role: a.role, file: String(file).replace(/^.*[\\/]/, "") });
+          store.toast("初始定妆已确认 · 试妆试镜生成中（约 8-12 分钟，出片后 C2S 卡会流进来）");
+          await store.loadCards(props.epId);
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { busyId.value = ""; }
+      }
+
+      /* ---- C2S 试妆试镜卡：角度帧勾选 ---- */
+      function angleCn(a) {
+        return { front: "正面", left: "左侧脸", right: "右侧脸", up: "仰头", down: "低头" }[a] || "角度?";
+      }
+      function viewsOf(card) {
+        return ((card.payload || {}).views || []).filter(v => v && v.art);
+      }
+      function toggleView(card, v) {
+        v.selected = v.selected === false; // 默认勾选；点一次取消，再点恢复
+      }
+
       function p(card) { return (card && card.payload) || {}; }
       function aiVerdictLabel(v) {
         return v === "fail" ? "有硬伤" : v === "warn" ? "有提醒" : "通过";
@@ -291,7 +406,9 @@
         typeLabel, cardTitle, summary, c7Items, cands,
         clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, closeLb,
         accept, reject, openNote, editSubmit,
-        loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio
+        gpuBusy, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
+        uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
+        castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView
       };
     },
     template: `
@@ -339,6 +456,7 @@
                   <span class="badge" :class="'v-flow-ai-' + (ps.verdict || 'pass')">{{ aiVerdictLabel(ps.verdict) }}</span>
                 </div>
                 <div class="v-flow-ai-f" v-for="(f2, fi) in (ps.findings || [])" :key="fi">{{ clean(f2) }}</div>
+                <div class="v-flow-ai-f v-flow-ai-llm" v-for="(f2, fi) in (ps.llm_findings || [])" :key="'l' + fi">🧠 {{ clean(f2) }}</div>
               </div>
             </div>
 
@@ -374,20 +492,48 @@
               </div>
             </div>
 
-            <!-- C2：角色定义（定妆确认）＋分镜首帧（拍摄输入） -->
+            <!-- C2：角色定义（初始定妆入口：上传/AI 生成/确认）＋分镜首帧（拍摄输入） -->
             <div class="v-flow-cast" v-if="card.type === 'C2'">
-              <div class="v-flow-cast-title"><b>角色定妆</b><span class="badge badge-ok">主选形象 → 进入分镜锚定</span><span class="weak">备选不进视频</span></div>
+              <div class="v-flow-cast-title"><b>角色定妆</b><span class="badge badge-ok">初始图 → 试妆试镜 → 分镜锚定</span><span class="weak">点击候选图可换选</span></div>
               <div class="v-flow-actor" v-for="(a, ai) in (p(card).actors || [])" :key="ai">
                 <div class="v-flow-actor-art">
-                  <img v-if="firstArt(a)" :src="firstArt(a)" alt="主选定妆" loading="lazy" :title="'点击看大图 · ' + (a.name || a.role)" @click="openLb(firstArt(a), (a.name || a.role) + ' · 主选定妆')" style="cursor:zoom-in" />
-                  <span class="v-flow-art-pending" v-else>⏳<br/>定妆生成中</span>
+                  <img v-if="firstArt(a)" :src="firstArt(a)" alt="主选定妆" loading="lazy" :title="'点击选定这张候选 · ' + (a.name || a.role)" @click="pickCand(card, a, firstArt(a))" style="cursor:pointer" :style="selCandArt(card, a) === firstArt(a) ? 'outline:3px solid #f5a623' : ''" />
+                  <span class="v-flow-art-pending" v-else>⏳<br/>等待初始定妆<br/>（右侧上传或生成）</span>
                 </div>
                 <div class="v-flow-actor-meta">
                   <b>{{ clean(a.name || a.role) }}</b>
                   <span class="badge">{{ clean(a.role) }}</span>
                   <div class="weak">{{ clean(a.desc || '') }}</div>
-                  <div class="v-flow-actor-alts" v-if="altArts(a).length">
-                    <img v-for="(src, k) in altArts(a)" :key="k" :src="src" :title="'备选 · 不进视频'" loading="lazy" alt="备选" />
+                  <div class="v-flow-actor-alts" v-if="(a.candidates || []).filter(c => c && c.art).length > 1">
+                    <template v-for="(c, k) in (a.candidates || []).filter(c => c && c.art)" :key="k">
+                      <img v-if="k > 0"
+                        :src="'/' + c.art" :title="'点击选定 · 候选 ' + (k + 1)" loading="lazy" alt="候选"
+                        :style="selCandArt(card, a) === c.art ? 'cursor:pointer;outline:3px solid #f5a623' : 'cursor:pointer'"
+                        @click="pickCand(card, a, c.art)" />
+                    </template>
+                  </div>
+                  <div class="v-flow-cast-entry" v-if="card.status === 'pending'">
+                    <template v-if="!firstArt(a) && !uploadedFile(card, a)">
+                      <button class="btn btn-sm" @click="pickCastFile(card, a)">上传初始图</button>
+                      <span class="weak">或</span>
+                      <input class="input" v-model="genPrompt[castKey(card, a)]" placeholder="辅助提示词（可空，默认用角色人设）" style="max-width:240px" />
+                      <button class="btn btn-sm" :disabled="busyId === ('gen-' + castKey(card, a))" @click="castRefGenerate(card, a)">AI 生成初始图</button>
+                    </template>
+                    <template v-else-if="uploadedFile(card, a)">
+                      <span class="badge badge-ok">已上传 · 待确认</span>
+                      <button class="btn btn-sm btn-primary" :disabled="busyId === ('cf-' + castKey(card, a))" @click="castRefConfirm(card, a)">就用这张 → 开始试妆</button>
+                      <button class="btn btn-sm" @click="pickCastFile(card, a)">换一张</button>
+                    </template>
+                    <template v-else-if="!a.refImage">
+                      <button class="btn btn-sm btn-primary" :disabled="busyId === ('cf-' + castKey(card, a))" @click="castRefConfirm(card, a)">就用这张 → 开始试妆</button>
+                      <span class="weak">点候选图可换选</span>
+                      <button class="btn btn-sm" @click="pickCastFile(card, a)">改上传</button>
+                      <button class="btn btn-sm" :disabled="busyId === ('gen-' + castKey(card, a))" @click="castRefGenerate(card, a)">再生成</button>
+                    </template>
+                    <template v-else>
+                      <span class="badge badge-ok">初始定妆已确认</span>
+                      <span class="weak">试妆试镜（C2S 卡）生成中/已出卡</span>
+                    </template>
                   </div>
                 </div>
               </div>
@@ -401,6 +547,34 @@
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- C2S：试妆试镜确认（试妆视频＋抽帧网格＋角度参考帧勾选） -->
+            <div class="v-flow-c2s" v-if="card.type === 'C2S'">
+              <div v-if="(p(card).video || {}).art" class="v-flow-c2s-video">
+                <video :src="'/' + p(card).video.art" controls preload="metadata" style="max-width:100%;max-height:460px;border-radius:8px;background:#000"></video>
+                <div class="weak">试妆视频 · {{ p(card).video.sec }}s · {{ p(card).video.width }}×{{ p(card).video.height }} · {{ p(card).video.frames }} 帧 · 首帧＝初始定妆图</div>
+              </div>
+              <div v-if="p(card).grid" class="v-flow-c2s-grid">
+                <img :src="'/' + p(card).grid" loading="lazy" style="max-width:100%;cursor:zoom-in" alt="抽帧网格" @click="openLb('/' + p(card).grid, '试妆抽帧网格')" />
+                <div class="weak">抽帧网格 · 约 0.4 秒一帧 · 点开看大图</div>
+              </div>
+              <div v-if="viewsOf(card).length" class="v-flow-sb-wrap">
+                <div class="v-flow-cast-title"><b>角度参考帧</b><span class="badge badge-ok">点图取消/恢复勾选</span><span class="weak">拍板后固化为分镜身份参考（分镜只换背景）</span></div>
+                <div class="v-flow-sb">
+                  <div class="v-flow-sb-cell" v-for="(v, i) in viewsOf(card)" :key="i" :style="v.selected === false ? 'opacity:.3' : ''">
+                    <img :src="'/' + v.art" loading="lazy" style="cursor:pointer" :title="'t=' + v.t + 's · ' + angleCn(v.angle) + ' · ArcFace ' + v.score" @click="toggleView(card, v)" />
+                    <span class="v-flow-sb-tag">{{ angleCn(v.angle) }} · {{ v.t }}s</span>
+                  </div>
+                </div>
+              </div>
+              <div class="kv" v-if="(p(card).checklist || []).length">
+                <div class="kv-row" v-for="(c, i) in p(card).checklist" :key="'ck' + i">
+                  <span>确认项 {{ i + 1 }}</span>
+                  <span class="weak">{{ clean(c) }}</span>
+                </div>
+              </div>
+              <div class="weak" v-if="card.status === 'pending'">确认无误点「就这个」——拍板后勾选帧固化为分镜参考，开始生成分镜；不满意点「重出一版」（可先在「让它改改」写调整意见）。</div>
             </div>
 
             <!-- C7：复审清单（镜号＋理由） -->
@@ -452,9 +626,10 @@
               <err-state v-else-if="est.err" :err="est.err" :on-retry="loadEstimate" compact></err-state>
             </div>
             <div class="row wrap v-flow-cta" v-if="card.type === 'C6'">
-              <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting"
+              <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting || gpuBusy"
                 :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
               <span class="weak" v-if="!c6Decided">先点「就这个」确认报价，才能开机。</span>
+              <span class="weak" v-if="gpuBusy" style="color:#B3261E">本机 LLM 正占独显，装不下拍摄——点左下角 GPU 徽章「让路」停 LLM 后再开机。</span>
               <span class="weak" v-else-if="!est.data && !est.loading && !est.err">报价加载中…</span>
             </div>
 
@@ -473,7 +648,7 @@
                 placeholder="写下你想改的地方，比如：把结尾改成开放式收场"></textarea>
               <div class="row">
                 <button class="btn btn-primary btn-sm" :disabled="!noteText.trim() || busyId === card.id"
-                  @click="editSubmit(card)">递修改意见</button>
+                  @click="editSubmit(card)">{{ card.type === 'C1' ? 'AI 改一版' : '递修改意见' }}</button>
                 <button class="btn btn-sm btn-ghost" @click="editing = ''">先不了</button>
               </div>
             </div>

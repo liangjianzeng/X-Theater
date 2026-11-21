@@ -13,6 +13,12 @@
 const fs = require("fs");
 const path = require("path");
 const util = require("../core/util");
+const llmMod = require("../llm/llm");
+// 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥
+const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video"];
+function llmBlocked(cfg) {
+  try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
+}
 
 const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate", "aireview"];
 const TYPE_LANE = {
@@ -48,6 +54,7 @@ function laneFor(type, opts) {
 function createEngine({ store, bus, cfg }) {
   cfg = cfg || {};
   const workersDir = cfg.workersDir || path.join(__dirname, "workers");
+  const llmApi = llmMod.create(cfg); // worker ctx.llm（aireview LLM 叠加等用；未配置时 enabled()=false）
 
   /* ---------- worker 装载 ---------- */
   const workersByLane = {};
@@ -234,7 +241,7 @@ function createEngine({ store, bus, cfg }) {
     logJob(job, "running");
     bus.publish("jobs", jobEvent(job, "running"));
 
-    const ctx = { store, bus, engine, rules: engine.rules || {}, util, cfg };
+    const ctx = { store, bus, engine, rules: engine.rules || {}, util, cfg, llm: llmApi };
     let result = null;
     try {
       result = await w.run(job, ctx);
@@ -279,6 +286,12 @@ function createEngine({ store, bus, cfg }) {
     enqueue(type, payload, opts) {
       opts = opts || {};
       const lane = laneFor(type, opts);
+      // 显存互斥硬闸（2026-11-21）：本机 LLM 在线＝16G 卡装不下两家——**本机渲染车道**（img5060/vid5060）
+      // 拒绝入队（Huihui35B attention 占 ~14.4GB）。Spark 远程车道（imgspark/vidspark）渲染在 DGX 上，
+      // 与本机显存无关，不受此闸（2026-11-21 修正：原按类型一刀切误伤 H3 线）。
+      if ((lane === "img5060" || lane === "vid5060") && LOCAL_GPU_TYPES.indexOf(type) >= 0 && llmBlocked(cfg)) {
+        throw { code: "GPU_BUSY", message: "本机 LLM 正占用独显（约 14.4GB），本机生图/拍摄装不下——请在左下角 GPU 徽章「让路」停掉 LLM 后重试，或改走 Spark 高价值档。" };
+      }
       const ep = epOf(opts.episodeId);
       if (ep && ep.paused) {
         const err = { code: "BUDGET", message: "预算护栏已触发，该集任务暂停（需运营处理）" };

@@ -508,3 +508,12 @@ a { color: inherit; text-decoration: none; }
 .badge.v-flow-ai-pass { background: #E7F3EB; color: #2F7D46; }
 .badge.v-flow-ai-warn { background: #FBF3DF; color: #9A6B08; }
 .badge.v-flow-ai-fail { background: #FBE7E7; color: #B3261E; }
+
+/* GPU/LLM 徽章（nav-foot，可点击开让路面板） */
+.conn.gpu-badge { cursor: pointer; }
+.conn.gpu-badge i { background: #9AA0A6; }
+.conn.gpu-badge.gpu-on i { background: #C77E2B; }
+.conn.gpu-badge.gpu-off i { background: #2F7D46; }
+.conn.gpu-badge:hover { text-decoration: underline; }
+
+.v-flow-ai-llm { color: #1F6E8C; }

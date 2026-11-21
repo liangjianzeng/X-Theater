@@ -78,7 +78,18 @@ function reviewC1(ctx, card, episodeId) {
     if (shots.length && dlgShots === 0) f.push("warn：全片没有一句台词（无声剧？确认是否有意）");
     else if (ratio < 25) f.push("info：台词镜占比 " + ratio + "%，台词偏少——短剧习惯高密度对白");
     else f.push("pass：台词镜占比 " + ratio + "%");
-    const last = shots[shots.length - 1];
+    const fast = shots.filter((x) => {
+      const d = String(x.sh.dialogue || "").replace(/[^一-龥A-Za-z0-9，。！？、：；"'s]/g, "");
+      const chars = d.replace(/[s，。！？、：；"']/g, "").length;
+      const sec = Number(x.sh.sec) || 5;
+      return chars > 0 && chars > sec * 5;
+    });
+    if (fast.length) {
+      f.push("warn：" + fast.length + " 镜台词超出语速容量（中文≈5字/秒）——口型/speech 生成会截断，建议加秒数或删词");
+    } else if (shots.some((x) => String(x.sh.dialogue || "").trim())) {
+      f.push("pass：台词量均在语速容量内");
+    }
+        const last = shots[shots.length - 1];
     if (last && !String(last.sh.dialogue || "").trim()) f.push("info：结尾镜无台词——靠画面收束，确认是否留得住悬念");
     out.push(mk("编剧视角", verdictOf(f), f));
   }
@@ -239,6 +250,51 @@ function reviewC6(ctx, card, episodeId) {
   return out;
 }
 
+/* ---------------- LLM 人格叠加（fail-open：LLM 离线/超时 → 只出规则结果） ---------------- */
+
+const LLM_PERSONA_NAMES = {
+  C1: ["编剧视角", "观众视角", "制片视角"],
+  C2: ["选角导演视角", "造型师视角", "统筹视角"],
+  C4: ["摄影师视角", "配音导演视角"],
+  C6: ["制片视角", "统筹视角"]
+};
+
+async function llmReviewPersonas(ctx, card, rulePersonas) {
+  if (!ctx.llm || typeof ctx.llm.chat !== "function" || !ctx.llm.enabled()) return null;
+  const names = LLM_PERSONA_NAMES[card.type] || [];
+  if (!names.length) return null;
+  const sys = [
+    "你是剧场 Studio 的卡流节点审片组。对当前提交的卡内容，以指定人格视角各给审查意见。",
+    "卡类型：" + card.type + "。要求审查的人格：" + names.join("、") + "。",
+    "规则：意见必须来自对输入内容的真实检查（指出具体问题或确认通过），每条一句话；不许编造数据； verdict 只能 pass|warn|fail。",
+    "只输出 JSON 数组：[{\"persona\":\"编剧视角\",\"verdict\":\"warn\",\"findings\":[\"…\"]},…]，人格名必须与要求完全一致。"
+  ].join("\n");
+  const usr = "当前卡 payload：" + JSON.stringify(card.payload || {}).slice(0, 3000);
+  const r = await ctx.llm.chat(
+    [{ role: "system", content: sys }, { role: "user", content: usr }],
+    { temperature: 0.3, maxTokens: 900, timeoutMs: 30000 }
+  );
+  if (!r.ok || !r.content) return null;
+  const m = String(r.content).match(/\[[\s\S]*\]/);
+  if (!m) return null;
+  let arr;
+  try { arr = JSON.parse(m[0]); } catch (e) { return null; }
+  if (!Array.isArray(arr)) return null;
+  const out = [];
+  arr.forEach(function (x) {
+    if (!x || typeof x !== "object") return;
+    const name = String(x.persona || "");
+    if (names.indexOf(name) < 0) return;
+    const verdict = ["pass", "warn", "fail"].indexOf(x.verdict) >= 0 ? x.verdict : "warn";
+    const findings = Array.isArray(x.findings) ? x.findings
+      .filter(function (f) { return typeof f === "string" && f.trim(); })
+      .map(function (f) { return String(f).trim().slice(0, 160); })
+      .slice(0, 5) : [];
+    if (findings.length) out.push({ persona: name, verdict: verdict, findings: findings, llm: true });
+  });
+  return out.length ? out : null;
+}
+
 /* ---------------- worker 入口 ---------------- */
 
 const REVIEWERS = {
@@ -258,14 +314,28 @@ async function run(job, ctx) {
   if (!card || !episodeId) throw Object.assign(new Error("aireview 缺 card/episode"), { code: "BAD_JOB" });
 
   const spec = REVIEWERS[card.type];
-  const personas = spec ? spec.flatMap((s) => s.fn(ctx, card, episodeId)) : [];
+  let personas = spec ? spec.flatMap((s) => s.fn(ctx, card, episodeId)) : [];
+  // LLM 叠加：同人格追加 llm_findings/llm_verdict；不可达 → 只出规则结果（诚实标注跟随实际引擎）
+  let engineLabel = ENGINE;
+  let llmUsed = false;
+  try {
+    const llmP = await llmReviewPersonas(ctx, card, personas);
+    if (llmP && llmP.length) {
+      personas = personas.map((rule) => {
+        const m = llmP.find((x) => x.persona === rule.persona);
+        return m ? Object.assign({}, rule, { llm_verdict: m.verdict, llm_findings: m.findings }) : rule;
+      });
+      engineLabel = "LLM 审查＋规则机检·" + (ctx.llm.label ? ctx.llm.label() : "");
+      llmUsed = true;
+    }
+  } catch (e) { /* fail-open */ }
   const verdict = combine(personas.map((x) => x.verdict));
   const meta = {
-    kind: "ai-review-rules", // 诚实标注：规则机检，非 LLM
-    lane: NAME, engine: ENGINE, episodeId, cardId, cardType: card.type,
+    kind: "ai-review", // 诚实标注：ai-review-rules（纯规则）| ai-review（含 LLM 叠加）
+    lane: NAME, engine: engineLabel, llm_used: llmUsed, episodeId, cardId, cardType: card.type,
     personas: personas.length, verdict
   };
-  const result = { ok: true, cents: 0, engine: ENGINE, cardId, cardType: card.type, verdict, personas, meta };
+  const result = { ok: true, cents: 0, engine: engineLabel, llm_used: llmUsed, cardId, cardType: card.type, verdict, personas, meta };
   j.result = result;
   j.art = result;
   return result;

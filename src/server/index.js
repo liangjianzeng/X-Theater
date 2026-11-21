@@ -50,6 +50,11 @@ const cfg = {
     llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
     llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
   },
+  // llm-gw：本机 llama-server（OpenAI 兼容 /v1）——L2 助手/aireview/建议片的真脑；空＝全链回退规则模式
+  llm: {
+    base: process.env.THEATER_LLM_URL || "",
+    model: process.env.THEATER_LLM_MODEL || "default"
+  },
   music: { url: process.env.THEATER_MUSIC_URL || "" },
   tts: { url: process.env.THEATER_TTS_URL || "" }
 };
@@ -74,7 +79,16 @@ const rules = {
 };
 engine.rules = rules; // worker ctx.rules 由此注入
 
-const ctx = { store, bus, engine, rules, l2: null, util, cfg };
+const ctx = { store, bus, engine, rules, l2: null, util, cfg, llm: null };
+
+// llm-gw：真脑通道＋显存互斥监视（LLM 在线＝本机 Comfy 生图/拍摄被闸；engine 同步读缓存）
+try {
+  const llmMod = require("./llm/llm");
+  ctx.llm = llmMod.create(cfg);
+  llmMod.startMonitor(cfg);
+} catch (e) {
+  console.warn("[index] llm-gw 装配失败（LLM 相关能力回退规则模式）:", e.message);
+}
 
 const l2Facade = tryRequire("./l2/facade", "l2/facade");
 if (l2Facade && typeof l2Facade.createL2 === "function") {
