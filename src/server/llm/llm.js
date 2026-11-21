@@ -16,6 +16,9 @@ const { execFile } = require("child_process");
 
 /* ---------- 状态监视（模块级单例，进程内共享） ---------- */
 const monitor = { base: null, llmOnline: false, llmModel: "", ts: 0, comfy: null, timer: null };
+/* 看护（2026-11-21）：LLM 说断就断的结构根因＝16G 显存满负荷（15.3GB LLM），任何显存竞争都挤崩 llama-server。
+   monitor 探测离线连续 3 次 → 自动拉起用户 bat（detached）；45s 冷却（等模型加载）；10 分钟内 ≤3 次，超限熔断转人工（alert）。 */
+const watchdog = { fails: 0, lastStart: 0, starts: [] };
 
 async function fetchJson(url, opts, timeoutMs) {
   const ctrl = new AbortController();
@@ -37,6 +40,7 @@ function cfgOf(cfg) {
   return {
     base,
     model: (cfg && cfg.llm && cfg.llm.model) || "default",
+    bat: (cfg && cfg.llm && cfg.llm.bat) || "",
     enabled: !!base,
     comfyBase: String((cfg && cfg.comfy && cfg.comfy.base) || "").replace(/\/+$/, "")
   };
@@ -160,7 +164,9 @@ function stopServer(cfg) {
 }
 
 /* ---------- monitor：3s 轮询缓存 ---------- */
-function startMonitor(cfg) {
+let busRef = null;
+function startMonitor(cfg, bus) {
+  busRef = bus || null;
   const c = cfgOf(cfg);
   if (!c.enabled || monitor.timer) return false;
   monitor.base = c.base;
@@ -172,6 +178,24 @@ function startMonitor(cfg) {
       monitor.ts = Date.now();
     } catch (e) {
       monitor.llmOnline = false;
+    }
+    if (!monitor.llmOnline) console.log("[watchdog] offline fails=" + watchdog.fails + " bat=" + (c.bat ? "set" : "EMPTY") + " starts=" + watchdog.starts.length);
+    if (!monitor.llmOnline && c.bat) {
+      watchdog.fails += 1;
+      const now = Date.now();
+      watchdog.starts = watchdog.starts.filter(function (t) { return now - t < 600000; });
+      if (watchdog.fails >= 3 && now - watchdog.lastStart > 45000 && watchdog.starts.length < 3) {
+        watchdog.lastStart = now;
+        watchdog.starts.push(now);
+        watchdog.fails = 0;
+        try {
+          const { spawn } = require("child_process");
+          spawn("cmd.exe", ["/c", c.bat], { cwd: require("path").dirname(c.bat), detached: true, stdio: "ignore" }).unref();
+          if (busRef) busRef.publish("alerts", { id: "al_" + Date.now(), kind: "llm_watchdog", msg: "本机 LLM 掉线，已自动拉起（" + c.bat + "）。约 30–60 秒恢复；若反复掉线请检查显存冲突（生图/拍摄与 LLM 同卡）。", ts: now, acked: false });
+        } catch (eW) { /* 拉起失败下轮再试 */ }
+      }
+    } else if (monitor.llmOnline) {
+      watchdog.fails = 0;
     }
     if (c.comfyBase) {
       const r = await fetchJson(c.comfyBase + "/system_stats", {}, 1500);

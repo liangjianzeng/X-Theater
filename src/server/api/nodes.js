@@ -16,7 +16,7 @@ function ensureNodes(st) {
     local: {
       id: "local", label: NODE_LABELS.local,
       comfy: { base: "http://127.0.0.1:8188" },
-      llm: { base: "http://127.0.0.1:8090", model: "Huihui35B:vision" }
+      llm: { base: "http://127.0.0.1:8090", model: "Huihui35B:vision", bat: "E:/MyLLM/8090_huihui35b_q4k_cpu19.bat" }
     },
     dgx: {
       id: "dgx", label: NODE_LABELS.dgx,
@@ -25,6 +25,16 @@ function ensureNodes(st) {
     }
   };
   st.llm_node = st.llm_node === "dgx" ? "dgx" : "local";
+  // 早期档案缺字段（如 llm.bat）→ 从默认种子补齐（不覆盖用户已改值）
+  const SEED = {
+    local: { llm: { bat: "E:/MyLLM/8090_huihui35b_q4k_cpu19.bat" } },
+    dgx: { llm: { bat: "" } }
+  };
+  Object.keys(SEED).forEach(function (id) {
+    if (st.nodes[id] && st.nodes[id].llm && st.nodes[id].llm.bat == null && SEED[id].llm.bat) {
+      st.nodes[id].llm.bat = SEED[id].llm.bat;
+    }
+  });
   return st.nodes;
 }
 
@@ -103,6 +113,7 @@ function register(router, ctx) {
       const b = body || {};
       if (b.base != null) node.llm.base = String(b.base).trim().slice(0, 120);
       if (b.model != null) node.llm.model = String(b.model).trim().slice(0, 60);
+      if (b.bat != null) node.llm.bat = String(b.bat).trim().slice(0, 160);
       store.commit();
       store.log("audit", {
         operator: (auth && (auth.uid || auth.id)) || null,

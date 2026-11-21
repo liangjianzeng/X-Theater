@@ -42,7 +42,7 @@ a { color: inherit; text-decoration: none; }
 .app-main { padding: 22px 26px 60px; min-width: 0; }
 /* 大屏限宽：内容区最大 1560px 居中（约束子级而非 grid item，避免 fit-content 收缩） */
 .app-main > * { max-width: 1560px; margin-left: auto; margin-right: auto; }
-.app-rail { border-left: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.app-rail { border-left: 1px solid var(--line); background: var(--panel); min-width: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; align-self: start; } /* 独立功能区：不随主页面滚动，自身可滚 */
 
 /* 面板/卡片 */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 16px; }

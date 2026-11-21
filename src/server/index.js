@@ -55,9 +55,9 @@ const cfg = {
     try {
       const st = store.get();
       const node = st && st.nodes && st.nodes[st.llm_node || "local"];
-      if (node && node.llm && node.llm.base) return { base: node.llm.base, model: node.llm.model || "default" };
+      if (node && node.llm && node.llm.base) return { base: node.llm.base, model: node.llm.model || "default", bat: node.llm.bat || process.env.THEATER_LLM_BAT || "" };
     } catch (e) { /* store 未就绪走 env */ }
-    return { base: process.env.THEATER_LLM_URL || "", model: process.env.THEATER_LLM_MODEL || "default" };
+    return { base: process.env.THEATER_LLM_URL || "", model: process.env.THEATER_LLM_MODEL || "default", bat: process.env.THEATER_LLM_BAT || "" };
   },
   music: { url: process.env.THEATER_MUSIC_URL || "" },
   tts: { url: process.env.THEATER_TTS_URL || "" }
@@ -89,7 +89,7 @@ const ctx = { store, bus, engine, rules, l2: null, util, cfg, llm: null };
 try {
   const llmMod = require("./llm/llm");
   ctx.llm = llmMod.create(cfg);
-  llmMod.startMonitor(cfg);
+  llmMod.startMonitor(cfg, bus); // 看护掉线自动拉起＋alerts 通知
 } catch (e) {
   console.warn("[index] llm-gw 装配失败（LLM 相关能力回退规则模式）:", e.message);
 }
