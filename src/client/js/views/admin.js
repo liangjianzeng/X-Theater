@@ -68,7 +68,7 @@
             <span class="weak" v-if="nd.llm && nd.llm.base">LLM {{ nd.llm.model || "—" }}</span>
             <button class="btn btn-sm" v-if="!nd.is_llm_host" @click="switchLlmNode(nd.id)">让 LLM 落在这个节点</button>
           </div>
-          <div class="kv-row" v-for="(nd, ni) in nodesState.data.nodes" :key="'llmform' + ni" v-if="nd.is_llm_host || nd.id === 'dgx'">
+          <div class="kv-row" v-for="(nd, ni) in (nodesState.data.nodes || []).filter(n => n.is_llm_host || n.id === 'dgx')" :key="'llmform' + ni">
             <span class="grow weak">「{{ nd.label }}」LLM 档案</span>
             <input class="input" style="max-width:220px" v-model.trim="nd.llm.base" placeholder="http://127.0.0.1:8090" />
             <input class="input" style="max-width:160px" v-model.trim="nd.llm.model" placeholder="模型别名" />

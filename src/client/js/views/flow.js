@@ -87,7 +87,12 @@
       const c6Decided = computed(() => (list.value || []).some(c => c.type === "C6" && c.status !== "pending"));
       const hasC6 = computed(() => (list.value || []).some(c => c.type === "C6"));
       /* GPU 互斥：本机 LLM 在线＝独显被占，开机被服务端闸挡（此处前置提示） */
-      const gpuBusy = computed(() => !!(store.gpu && store.gpu.data && store.gpu.data.gpu_busy));
+      const epDriver = computed(() => {
+        const eps = (store.state && store.state.episodes) || [];
+        const ep = eps.find(e => e.id === props.epId);
+        return ep && ep.driver === "dgx" ? "dgx" : "local";
+      });
+      const gpuBusy = computed(() => epDriver.value === "local" && !!(store.gpu && store.gpu.data && store.gpu.data.gpu_busy));
 
       function typeLabel(t) {
         const m = TYPE_META[t];
@@ -130,6 +135,7 @@
             return "分镜画面 " + im.length + " 张" + (p.note ? " · " + clean(p.note) : "");
           }
           case "C5": {
+            if (p.h3_direct) return "H3 全家桶：台词/歌声随视频音画直出，无独立配音配乐 · 确认预算后开机";
             const a = p.art || {};
             const bits = ["样片已出"];
             if (a.resolution) bits.push(clean(a.resolution) + " 画幅");
@@ -406,7 +412,7 @@
         typeLabel, cardTitle, summary, c7Items, cands,
         clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, closeLb,
         accept, reject, openNote, editSubmit,
-        gpuBusy, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
+        gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
         uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
         castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView
       };
@@ -629,7 +635,7 @@
               <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting || gpuBusy"
                 :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
               <span class="weak" v-if="!c6Decided">先点「就这个」确认报价，才能开机。</span>
-              <span class="weak" v-if="gpuBusy" style="color:#B3261E">本机 LLM 正占独显，装不下拍摄——点左下角 GPU 徽章「让路」停 LLM 后再开机。</span>
+              <span class="weak" v-if="gpuBusy" style="color:#B3261E">本集走本机节点，与本机 LLM 抢独显——运维台把本集驱动切到 DGX，或左下角停 LLM 让路。</span>
               <span class="weak" v-else-if="!est.data && !est.loading && !est.err">报价加载中…</span>
             </div>
 

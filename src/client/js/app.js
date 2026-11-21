@@ -69,7 +69,7 @@
         const g = gpu.value;
         if (!g || !g.llm) return 'GPU 状态…';
         if (!g.llm.configured) return 'LLM 未配置';
-        return g.llm.online ? '🧠 LLM 在线 · 拍摄被挡' : (g.comfy && g.comfy.online ? 'GPU 空闲 · LLM 离线' : 'GPU/LLM 离线');
+        return g.llm.online ? '🧠 LLM 在线' : (g.comfy && g.comfy.online ? 'GPU 空闲 · LLM 离线' : 'GPU/LLM 离线');
       });
       const gpuCls = Vue.computed(() => {
         const g = gpu.value;
