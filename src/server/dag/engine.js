@@ -14,13 +14,19 @@ const fs = require("fs");
 const path = require("path");
 const util = require("../core/util");
 
-const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate"];
+const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate", "aireview"];
 const TYPE_LANE = {
   c1plan: "img5060",
   casting: "img5060",
   storyboard_char: "img5060",
   storyboard: "img5060",
   img_spark: "imgspark",
+  // H3 线（试妆试镜流程 2026-11-21）：初始定妆图生成与试妆试镜视频固定走 imgspark
+  //（comfySpark 启用＝真引擎；stub 模式下 imgspark 自带确定性占位分支）
+  cast_init: "imgspark",
+  screen_test: "imgspark",
+  // 卡流节点审查（2026-11-21）：拍板点自动多人格机检；真 LLM 到位后换 lane 承载，人格骨架不变
+  aireview: "aireview",
   music: "music",
   voice: "tts",
   compose: "compose",
@@ -29,10 +35,8 @@ const TYPE_LANE = {
 
 function laneFor(type, opts) {
   if (type === "video") return opts && opts.tier === "high" ? "vidspark" : "vid5060";
-  // H3 线（2026-11-21）：Spark 通道启用时 casting 走 imgspark（MiniMax-H3-Image 真定妆）
-  if (type === "casting" && opts && opts.tier === "high") return "imgspark";
-  // H3 线：Spark 通道启用时角色分镜也走 imgspark（MiniMax-H3-Image 保脸分镜）
-  if (type === "storyboard_char" && opts && opts.tier === "high") return "imgspark";
+  // H3 线（2026-11-21）：Spark 通道启用（tier:"high"）→ 生图全族走 imgspark，5060 不再接 H3 任务
+  if (opts && opts.tier === "high" && ["casting", "storyboard_char", "c1plan", "storyboard"].indexOf(type) >= 0) return "imgspark";
   const l = TYPE_LANE[type];
   if (!l) {
     const err = { code: "BAD_TYPE", message: "未知任务类型: " + type };
@@ -352,6 +356,17 @@ function createEngine({ store, bus, cfg }) {
       const out = {};
       for (const l of Object.keys(lanes)) {
         out[l] = { queued: lanes[l].queue.length, running: lanes[l].busy ? 1 : 0 };
+      }
+      return out;
+    },
+
+    // 在队/在跑任务查询（试妆试镜流程防重派；重启后 Map 清空＝无在跑，语义安全）
+    activeOf(type, episodeId) {
+      const out = [];
+      for (const job of jobs.values()) {
+        if (job.type !== type) continue;
+        if (episodeId && job.episodeId !== episodeId) continue;
+        if (["queued", "running"].indexOf(job.status) >= 0) out.push(job);
       }
       return out;
     },
