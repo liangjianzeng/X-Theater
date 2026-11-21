@@ -79,6 +79,7 @@ function systemPrompt(ctx, session, chips) {
     '- shoot_episode {"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）',
     '- export_episode {"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）',
     "",
+    "绑定纪律：你只服务上下文里的绑定剧集；对话历史若涉及其它剧集，一律以本次绑定为准，不要延续旧剧的语境、数字或进度。",
     "上下文：",
     stateSummary(ctx, session),
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),

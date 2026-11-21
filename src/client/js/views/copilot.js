@@ -166,6 +166,13 @@
         return ep ? { id: r.epId, title: ep.title || r.epId } : { id: r.epId, title: r.epId };
       });
       function clearCtx() { ctxAuto.value = false; store.toast("已解除本集上下文绑定"); }
+      /* 切集自动换会话：会话历史是单集语境的——跨集继续聊会被旧剧上下文带跑（2026-11-21 用户实测） */
+      Vue.watch(() => (boundEp.value && boundEp.value.id) || "", (nv, ov) => {
+        if (nv && ov && nv !== ov && store.l2.status === "ready") {
+          newSession().then(() => store.toast("已切换到本集上下文，开了新会话"));
+        }
+      });
+
       function ctxChips() {
         const b = boundEp.value;
         return b ? [{ type: "episode", id: b.id }] : [];
