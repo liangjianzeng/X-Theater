@@ -106,7 +106,10 @@ function createEngine({ store, bus, cfg }) {
           episodeId: job.episodeId,
           initiated_by: job.initiated_by,
           free: !!job.free,
-          attempts: job.attempts
+          attempts: job.attempts,
+          // 可读化（2026-11-21）：账本行带镜号与时长——拍摄页队列/时间线能显示「镜 N」与进度
+          shotId: (job.payload && job.payload.shotId) || null,
+          sec: (job.payload && job.payload.sec) || null
         },
         extra || {}
       )

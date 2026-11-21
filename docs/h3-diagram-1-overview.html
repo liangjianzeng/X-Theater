@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>图1/4 · MINIMAX H3 线 · 全景与立项策划</title>
+<style>
+  :root{
+    --biz:#7c3aed; --biz-bg:#f5f3ff; --biz-bd:#ddd6fe;
+    --orch:#2563eb; --orch-bg:#eff6ff; --orch-bd:#bfdbfe;
+    --tmpl:#0d9488; --tmpl-bg:#f0fdfa; --tmpl-bd:#99f6e4;
+    --model:#ea580c; --model-bg:#fff7ed; --model-bd:#fed7aa;
+    --art:#475569;  --art-bg:#f8fafc;  --art-bd:#e2e8f0;
+    --ink:#1e293b; --weak:#64748b; --gold:#b45309;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; background:#eef1f6; color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{width:1280px; margin:0 auto; background:#fff; box-shadow:0 0 24px rgba(15,23,42,.12);}
+  .head{background:linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4338ca 100%); color:#fff; padding:40px 56px 34px;}
+  .head .series{font-size:13px; color:#a5b4fc; letter-spacing:2px; margin-bottom:10px;}
+  .head h1{font-size:30px; letter-spacing:1px;}
+  .head h1 .hl{color:#fbbf24;}
+  .head .sub{margin-top:10px; font-size:15px; color:#c7d2fe; line-height:1.7;}
+  .head .sub b{color:#fbbf24;}
+  .head .meta{margin-top:16px; display:flex; flex-wrap:wrap; gap:8px;}
+  .head .meta span{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); border-radius:999px; padding:4px 14px; font-size:12.5px; color:#e0e7ff;}
+  .crumbs{display:flex; gap:8px; padding:16px 56px 0;}
+  .crumbs .c{flex:1; text-align:center; font-size:13px; padding:8px 6px; border-radius:10px; border:1.5px solid var(--art-bd); color:var(--weak); background:#f8fafc;}
+  .crumbs .c b{display:block; font-size:14px;}
+  .crumbs .c.on{border-color:var(--biz); color:var(--biz); background:var(--biz-bg); box-shadow:0 2px 10px rgba(124,58,237,.15);}
+  .stepper{padding:22px 56px 4px;}
+  .stepper .st-title{font-size:15px; color:var(--weak); margin-bottom:12px; font-weight:700;}
+  .steps{display:flex; align-items:stretch; gap:0;}
+  .step{flex:1; text-align:center; padding:10px 4px 12px; border-radius:10px; background:var(--biz-bg); border:1.5px solid var(--biz-bd); margin:0 3px;}
+  .step b{display:block; font-size:14.5px; color:var(--biz);}
+  .step span{display:block; font-size:11.5px; color:var(--weak); margin-top:3px;}
+  .step.new{background:#fffbeb; border-color:#fcd34d; box-shadow:0 2px 10px rgba(245,158,11,.18);}
+  .step.new b{color:#b45309;}
+  .step.final{background:#ecfdf5; border-color:#6ee7b7;}
+  .step.final b{color:#047857;}
+  .legend{padding:16px 56px 6px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .legend .lg{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--ink); border:1.5px solid var(--art-bd); border-radius:999px; padding:5px 14px 5px 8px; background:#fff;}
+  .legend .dot{width:14px; height:14px; border-radius:4px;}
+  .legend .hint{font-size:12.5px; color:var(--weak); margin-left:6px;}
+  .acts{padding:8px 56px 8px;}
+  .act{border:1.5px solid #e2e8f0; border-radius:16px; background:#fff; padding:20px 24px 16px;}
+  .act-title{display:flex; align-items:baseline; gap:12px; margin-bottom:4px;}
+  .act-title .no{background:var(--ink); color:#fff; border-radius:8px; padding:3px 10px; font-size:13px; font-weight:700; letter-spacing:1px;}
+  .act-title h2{font-size:21px;}
+  .act-title .tagline{font-size:13px; color:var(--weak);}
+  .act-desc{font-size:13.5px; color:var(--weak); line-height:1.75; margin:4px 0 14px;}
+  .act-desc b{color:var(--ink);}
+  .layer-row{display:flex; gap:12px; margin-bottom:9px; align-items:stretch;}
+  .layer-tag{flex:0 0 118px; display:flex; flex-direction:column; justify-content:center; align-items:center; border-radius:10px; font-size:12.5px; font-weight:700; line-height:1.5; padding:8px 4px;}
+  .layer-tag small{font-weight:400; font-size:10.5px; opacity:.75;}
+  .t-biz{background:var(--biz-bg); color:var(--biz); border:1.5px solid var(--biz-bd);}
+  .t-orch{background:var(--orch-bg); color:var(--orch); border:1.5px solid var(--orch-bd);}
+  .t-tmpl{background:var(--tmpl-bg); color:var(--tmpl); border:1.5px solid var(--tmpl-bd);}
+  .t-model{background:var(--model-bg); color:var(--model); border:1.5px solid var(--model-bd);}
+  .t-art{background:var(--art-bg); color:var(--art); border:1.5px solid var(--art-bd);}
+  .layer-body{flex:1; border:1.5px solid var(--art-bd); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.8; background:#fff;}
+  .layer-body .code{font-family:Consolas,"Courier New",monospace; font-size:12px; background:#0f172a; color:#e2e8f0; border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .api{font-family:Consolas,monospace; font-size:12px; color:#1d4ed8; background:var(--orch-bg); border:1px solid var(--orch-bd); border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .w{font-family:Consolas,monospace; font-size:12px; color:#9a3412; background:var(--model-bg); border:1px solid var(--model-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .file{font-family:Consolas,monospace; font-size:12px; color:#334155; background:var(--art-bg); border:1px solid var(--art-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .node{font-family:Consolas,monospace; font-size:12px; color:#0f766e; background:var(--tmpl-bg); border:1px solid var(--tmpl-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .muted{color:var(--weak); font-size:12.5px;}
+  .chain{font-size:12.5px; color:var(--weak); margin-top:6px; line-height:2;}
+  .handoff{display:flex; align-items:center; gap:14px; padding:12px 56px;}
+  .handoff .arrow{font-size:26px; color:#94a3b8; line-height:1;}
+  .handoff .hl-label{font-size:13px; color:#475569; background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:999px; padding:6px 18px;}
+  .handoff .hl-label b{color:var(--gold);}
+  .tbl-sec{padding:14px 56px 0;}
+  .tbl-sec h2{font-size:21px; margin:8px 0 12px;}
+  table{width:100%; border-collapse:collapse; font-size:12.3px;}
+  th{background:#1e293b; color:#f1f5f9; text-align:left; padding:8px 10px; font-size:12px; letter-spacing:.5px;}
+  td{border-bottom:1px solid #e2e8f0; padding:8px 10px; vertical-align:top; line-height:1.65;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  .next{margin:6px 56px 26px; background:linear-gradient(90deg,var(--biz-bg),#fff); border:1.5px solid var(--biz-bd); border-radius:14px; padding:16px 24px; font-size:14px; color:var(--ink); line-height:1.8;}
+  .next b{color:var(--biz);}
+  .foot{background:#0f172a; color:#94a3b8; padding:16px 56px; font-size:12.5px; line-height:1.8;}
+  .foot b{color:#e2e8f0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="series">系列竖图 1 / 4 · 全景与立项策划</div>
+    <h1>「<span class="hl">MINIMAX H3 线</span>」短剧生成全链路 · 图1</h1>
+    <div class="sub">
+      核心理念：<b>人是本体，背景只是壳</b> —— 初始图锁身份 → 试镜视频保五官体态 → 分镜只换背景壳 → 拍摄首帧继承高保真人脸<br>
+      本图：十步总路线 · 层次图例 · 剧本源头 · C1 故事策划（系列：图1 全景立项 → 图2 身份链★ → 图3 拍摄成片 → 图4 台账纪律）
+    </div>
+    <div class="meta">
+      <span>产品后端 Node.js :8767</span>
+      <span>DGX Spark · ComfyUI :8188（H3 权重 ~94G 热集）</span>
+      <span>facegate :8195（人脸门控）</span>
+      <span>CosyVoice2 TTS :9880</span>
+      <span>ACE-Step 音乐 :8190</span>
+      <span>5060 Ti · ComfyUI :8188（标准档并行线）</span>
+      <span>2026-11-21 · X-Theater 实测代码</span>
+    </div>
+  </div>
+
+  <div class="crumbs">
+    <div class="c on"><b>图1 · 全景立项</b>总路线·剧本·C1</div>
+    <div class="c"><b>图2 · 身份链 ★</b>定妆→试镜→换壳分镜</div>
+    <div class="c"><b>图3 · 拍摄成片</b>声音·逐镜·机审·导出</div>
+    <div class="c"><b>图4 · 台账纪律</b>权重表·横切护栏</div>
+  </div>
+
+  <div class="stepper">
+    <div class="st-title">▶ 一集短剧的十步总路线（黄色＝本次试妆试镜调整新增）</div>
+    <div class="steps">
+      <div class="step"><b>剧本</b><span>结构化 JSON</span></div>
+      <div class="step"><b>C1 策划</b><span>H3 海报 t2i</span></div>
+      <div class="step"><b>初始定妆</b><span>上传 / t2i 生成</span></div>
+      <div class="step new"><b>试妆试镜 C2S</b><span>5.17s 多角度视频→抽帧</span></div>
+      <div class="step"><b>角色分镜</b><span>选角度帧＋换壳</span></div>
+      <div class="step"><b>配音·音乐·预览</b><span>C4→C9→C5→C6</span></div>
+      <div class="step"><b>开机拍摄</b><span>逐镜声画视频</span></div>
+      <div class="step"><b>机审复审</b><span>moderate→C7→C8</span></div>
+      <div class="step final"><b>成片导出</b><span>FFmpeg 真合成</span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="lg"><span class="dot" style="background:var(--biz)"></span>业务决策层（用户拍板面 · 卡流）</div>
+    <div class="lg"><span class="dot" style="background:var(--orch)"></span>编排层（DAG 引擎 · lane · API）</div>
+    <div class="lg"><span class="dot" style="background:var(--tmpl)"></span>模板节点层（ComfyUI 固化模板）</div>
+    <div class="lg"><span class="dot" style="background:var(--model)"></span>模型权重层（DiT / TE / VAE / LoRA）</div>
+    <div class="lg"><span class="dot" style="background:var(--art)"></span>产物素材层（var/ 落盘）</div>
+    <div class="hint">每一幕自上而下：人做什么 → 引擎怎么派 → 模板怎么跑 → 模型是什么 → 产出什么</div>
+  </div>
+
+  <div class="acts">
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 0 幕</span><h2>起点：剧本 = 唯一结构化源头</h2><span class="tagline">业务场景 · 立项</span></div>
+    <div class="act-desc">编剧产出的不是文档而是 <b>结构化 JSON</b>：分场分镜表（画面描述/时长/在场角色/台词/档位）＋角色定义表（人设/外形锚点/服装锁/参考图）。全链所有环节都从这里透传，不再有二次解析。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>用户操作</small></div>
+      <div class="layer-body"><span class="api">POST /api/projects</span> 建项目（影调/画比/音乐开关）　→　<span class="api">POST /api/episodes</span> {title, brief, script}</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>DAG 引擎</small></div>
+      <div class="layer-body">建集即派 <b>c1plan</b> 任务；引擎按 <span class="code">type × tier</span> 路由 lane（tier=high ⇒ 全族走 imgspark·H3 线）；<b> aireview</b> 对 C1/C2/C4/C6 拍板卡自动多人格机检</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>数据结构</small></div>
+      <div class="layer-body"><span class="file">script.scenes[]{name, mood, shots[]{desc, sec≤15s, cast[], dialogue, tier, width, height}}</span>　<span class="file">script.cast[]{role, name, desc, anchor, wardrobe, refImage}</span></div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">建集完成 → <b>engine.enqueue("c1plan")</b> → 进入故事策划</span></div>
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 1 幕</span><h2>C1 故事策划卡 ＋ H3 主视觉海报</h2><span class="tagline">业务场景 · 策划拍板</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C1 卡</small></div>
+      <div class="layer-body">用户看到：故事梗概 ＋ 人物表 ＋ 分场分镜表（每镜画面描述/时长/台词）→ <b>accept</b>（必答门①，决策+1）；reject → 重出 c1plan</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>状态机</small></div>
+      <div class="layer-body">c1plan done → 卡流监听 <span class="code">onPlanDone</span> 生成 C1 卡；accept 后 <span class="code">ensureScenesAndShots</span> 把剧本物化成 state 场/镜（镜号 seq = 场×100＋镜）</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>固化模板</small></div>
+      <div class="layer-body"><span class="node">h3-image-cast</span>（transform 删 LoadImage 4/5/6 → <b>纯 t2i</b>）768×1344 竖版海报　节点链：<span class="chain" style="display:inline"><span class="node">UNETLoader</span>→<span class="node">MiniMaxH3ImageConditioning</span>→<span class="node">ConditioningZeroOut</span>→<span class="node">KSampler(6步 euler/simple cfg1)</span>→<span class="node">VAEDecode</span>→<span class="node">SaveImage</span></span></div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>权重</small></div>
+      <div class="layer-body"><span class="w">minimax_h3_image_pruned_int8_convrot 20.98G</span> 生图 DiT　＋　<span class="w">qwen3vl_32b_nvfp4_awq 15.7G</span> 文本/图像编码器　＋　<span class="w">minimax_h3_image_vae_fp16 1.17G</span>　→ 实测 <b>14.9s/张</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>落盘</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;jobId&gt;_poster.png</span> ＋ meta sidecar（prompt_id/权重清单/AI 标注）· 影子记账 20 分</div></div>
+  </div>
+
+  </div>
+
+  <div class="tbl-sec">
+    <h2>▶ 全链速览表（九幕 × 五层 · 详细展开见图 2 / 图 3）</h2>
+    <table>
+      <tr><th style="width:104px">幕</th><th style="width:170px">业务拍板</th><th style="width:180px">编排（job → lane）</th><th style="width:160px">固化模板</th><th style="width:220px">核心模型</th><th>产物</th></tr>
+      <tr><td><b>0 立项</b></td><td>建项目 / 建集（script JSON）</td><td>c1plan → imgspark</td><td>—</td><td>—</td><td>场/镜结构化入库</td></tr>
+      <tr><td><b>1 策划</b></td><td>C1 accept（必答门①）</td><td>c1plan → imgspark</td><td>h3-image-cast 纯t2i</td><td>H3-Image DiT＋TE（14.9s/张）</td><td>海报 PNG ＋ C1 卡 ＋ 场/镜物化</td></tr>
+      <tr><td><b>2 初始定妆</b></td><td>上传/生成/继承 → 确认</td><td>castref API ＋ cast_init</td><td>h3-image-cast 纯t2i</td><td>facegate buffalo_l（no_face 机检）</td><td>cast.refImage 身份源</td></tr>
+      <tr><td><b>3 试妆试镜 ★</b></td><td>C2S 勾选拍板（可驳回重出）</td><td>screen_test → imgspark</td><td>h3-fl2va-video 首帧模式</td><td>FL2VA DiT＋turbo4＋双VAE（5.17s/124帧）</td><td>试镜 mp4 → 13 帧 → viewRefs 帧库</td></tr>
+      <tr><td><b>4 角色分镜</b></td><td>分镜逐格可见（可重出）</td><td>storyboard_char → imgspark</td><td>h3-image-edit img2img</td><td>H3-Image＋facegate/inswapper 门控</td><td>分镜首帧（绑 shotId·refAngle 溯源）</td></tr>
+      <tr><td><b>5 声音资产</b></td><td>C9 采用 → C5 → C6（必答门）</td><td>voice / music / compose(preview)</td><td>—</td><td>CosyVoice2 :9880 · ACE-Step :8190</td><td>台词 wav · 每场 BGM 候选 · 预览样片</td></tr>
+      <tr><td><b>6 拍摄</b></td><td>POST /shoot {ver}（CAS）</td><td>video → vidspark（tier=high）</td><td>h3-fl2va / h3-ref2va</td><td>双 DiT＋双 VAE＋turbo4（h3ir IR·286s/镜）</td><td>每镜 mp4 原生声画（take·150 分）</td></tr>
+      <tr><td><b>7 机审复审</b></td><td>C7 批复 → C8 收官</td><td>moderate → 复审队列</td><td>—</td><td>规则机审（verdict）</td><td>shot ok / 局部重拍</td></tr>
+      <tr><td><b>8 成片</b></td><td>导出确认</td><td>compose(purpose=export)</td><td>FFmpeg 合成流水线</td><td>FFmpeg 6.0（concat/amix/adelay）</td><td><b>final.mp4</b> 720×1280·24fps·水印</td></tr>
+    </table>
+  </div>
+
+  <div class="next">
+    ▶ 接下来进入<b>「身份链」</b>（图 2/4）：初始定妆三入口确认制 → 试妆试镜 C2S 多角度视频 → 分镜只换背景壳 ——
+    <b>这是本次调整的核心幕，单独成图详述</b>。声音资产与逐镜拍摄见<b>图 3</b>；模型权重台账与横切纪律见<b>图 4</b>。
+  </div>
+
+  <div class="foot"><b>MINIMAX H3 线 · 图1/4 全景与立项策划</b> · 依据 X-Theater 工作区实测代码整理（2026-11-21）</div>
+
+</div>
+</body>
+</html>

@@ -53,17 +53,19 @@
           <div class="list" v-else-if="queue">
             <div class="list-item v-review-item" v-for="it in queue" :key="it.id"
                  :class="{ 'v-review-stale': !!stale[it.id] }">
-              <div class="v-review-thumb" :style="thumbStyle(it)"></div>
+              <div class="v-review-thumb" :style="it.frame ? null : thumbStyle(it)">
+                <img v-if="it.frame" :src="'/' + it.frame" style="width:100%;height:100%;object-fit:cover" alt="分镜首帧" />
+              </div>
               <div class="grow col">
                 <div class="row wrap">
-                  <b>镜号 {{ shotNo(it) }}</b>
-                  <span class="mono muted">{{ it.shotId }}</span>
+                  <b>{{ shotLabel(it) }}</b>
                   <span class="badge" :class="stOf(it)[1]">{{ stOf(it)[0] }}</span>
                   <span class="weak">SLA 剩余 <b class="num" :style="sla(it)==='已超时' ? {color:'var(--err)'} : null">{{ sla(it) }}</b></span>
                   <span class="muted" v-if="it.ts">送审于 <time-ago :ts="it.ts"></time-ago></span>
-                  <span class="muted" v-else>送审于 <b class="num">—</b></span>
+                  <a v-if="it.takeArt" class="btn btn-sm" :href="'/' + it.takeArt" target="_blank">▶ 看这条片</a>
                 </div>
                 <div class="card-sub">{{ hs(it.reason) }}</div>
+                <div class="weak" v-if="it.shotName || it.sec">{{ clean(it.shotName || '') }}<template v-if="it.sec"> · {{ it.sec }} 秒 · 分镜首帧见左侧</template></div>
                 <err-state v-if="stale[it.id]" compact :err="stale[it.id]"
                   :on-retry="() => retryItem(it)"></err-state>
                 <div class="row wrap" v-if="it.status === 'pending' && !stale[it.id]">
@@ -132,7 +134,12 @@
         err: Vue.computed(() => store.review.error),
         reload, openReject, cancelReject, decide, retryItem,
         stOf: it => RQ_STATE[String(it.status || "pending").toLowerCase()] || RQ_STATE.pending,
+        shotLabel: it => {
+          const seq = it.seq ? (it.seq % 100 || it.seq) : null;
+          return seq ? ("镜 #" + seq) : ("镜 " + String(it.shotId || "").slice(-6));
+        },
         shotNo: it => { const m = String(it.shotId || "").match(/(\d+)\s*$/); return m ? m[1] : "—"; },
+        clean: s => T.sanitize(s),
         sla: it => slaText(it.sla_left),
         hs: s => T.sanitize(s),
         thumbStyle: it => {

@@ -85,14 +85,16 @@ const REPLY = {
     return "给「" + sceneName + "」备 3 段「" + mood + "」气质的配乐候选，预计 " + est.cents + " 分。确认卡已发出，批准后我就安排生成。";
     },
   need_shot_no: "要重拍或择优的话，说清是第几镜，比如「重拍第3镜」。",
-  expensive_pre: function (tool, args, est) {
+  expensive_pre: function (tool, args, est, ctx) {
+    const gpuNote = " ⚠ 本机 LLM 正在线——这些动作的下游生图/拍摄需要独占显卡，会被挡。建议先点左下角 GPU 徽章「停止 LLM 让路」再让我执行。";
+    const gpuOn = ctx.llm && ctx.llm.enabled() && ctx.llm.blockedByLocalLLM ? ctx.llm.blockedByLocalLLM() : false;
     if (tool === "decide_card") {
       const t = String(args.card_type || "卡");
-      return "你要「" + (args.action === "accept" ? "通过" : "重出") + "」" + t + "卡。这一步会推进制作流程，确认卡已发出，请在确认面板批准后我才执行。";
+      return "你要「" + (args.action === "accept" ? "通过" : "重出") + "」" + t + "卡。这一步会推进制作流程，确认卡已发出，请在确认面板批准后我才执行。" + (gpuOn ? gpuNote : "");
     }
-    if (tool === "shoot_episode") return "开机拍摄整集，预计 " + est.cents + " 分。这是最大的一笔开销，确认卡已发出——请核对预算后批准。";
+    if (tool === "shoot_episode") return "开机拍摄整集，预计 " + est.cents + " 分。这是最大的一笔开销，确认卡已发出——请核对预算后批准。" + (gpuOn ? gpuNote : "");
     if (tool === "export_episode") return "导出成片（含交付预检），预计 " + est.cents + " 分。确认卡已发出，批准后我就点火合成。";
-    if (tool === "revise_scenes") return "修订剧本分场分镜表（" + ((args.scenes || []).length) + " 场），C1 卡会重导出重审。确认卡已发出，批准后生效。";
+    if (tool === "revise_scenes") return "修订剧本分场分镜表（" + ((args.scenes || []).length) + " 场），C1 卡会重导出重审。确认卡已发出，批准后生效。" + (gpuOn ? gpuNote : "");
     return "这步动作需要确认，确认卡已发出，请在确认面板批准后执行。";
   }
 };
@@ -202,7 +204,7 @@ async function runTurn(opts) {
       const scene = st.scenes[args.scene_id] || {};
       await say(REPLY.music_pre(scene.name || args.scene_id, args.mood || scene.mood || "释然", est));
     } else {
-      await say(REPLY.expensive_pre(tool, args, est));
+      await say(REPLY.expensive_pre(tool, args, est, ctx));
     }
     publish({ type: "approval_request", sid: session.id, approval: approval });
     // 前端契约事件（扁平）：approval_new

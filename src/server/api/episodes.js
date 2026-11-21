@@ -375,6 +375,102 @@ function register(router, ctx) {
     { auth: true }
   );
 
+  // POST /api/episodes/:id/song — 歌曲锚点修订（拍摄前）：{title?, motif?, accompaniment?, tempo?, key?, voice?}
+  // 整首歌统一风格写入 ep.script.song，每镜视频 IR 引用同一段锚点（H3 音画直出的「小样」机制：
+  // 先拍 1 镜试唱定风格，全量拍摄时同一锚点保证 8 镜拼起来像同一首歌）
+  router.add(
+    "POST",
+    "/api/episodes/:id/song",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const e = requireEpisode(ctx, params.id);
+      if ((e.stage || 1) >= 7) throw { code: "LOCKED", message: "已开拍，歌曲锚点锁定" };
+      if (!e.script) throw { code: "BAD_REQUEST", message: "本集无剧本" };
+      const b = body || {};
+      const cur = e.script.song || {};
+      e.script.song = {
+        title: String(b.title != null ? b.title : cur.title || "").slice(0, 40),
+        motif: String(b.motif || cur.motif || "one gentle slow ballad, the same melodic motif carried through the whole song").slice(0, 200),
+        accompaniment: String(b.accompaniment || cur.accompaniment || "soft piano arpeggios with light strings").slice(0, 120),
+        tempo: String(b.tempo || cur.tempo || "about 70 bpm").slice(0, 40),
+        key: String(b.key || cur.key || "G major").slice(0, 40),
+        voice: String(b.voice || cur.voice || "young female vocals, breathy and intimate, close to the microphone").slice(0, 160)
+      };
+      store.commit();
+      audit(auth, "song_revise", e.id, { title: e.script.song.title });
+      try { ctx.bus.publish("episodes", { event: "song_revise", episodeId: e.id }); } catch (err) {}
+      return router.json(res, 200, { song: e.script.song });
+    },
+    { auth: true }
+  );
+
+  // GET /api/episodes/:id/timeline — 全程时间线（2026-11-21）：job 账本＋审计日志合并、
+  // 人话化倒序——多次重出/失败/驳回一屏看全「何时发生了什么、有什么问题」
+  const JOB_CN = {
+    c1plan: "方向海报", storyboard: "场景分镜", casting: "定妆", cast_init: "初始定妆生成",
+    screen_test: "试妆试镜视频", storyboard_char: "角色分镜", video: "镜头拍摄",
+    voice: "配音", music: "配乐", compose: "混流", moderate: "机审", aireview: "AI 审查"
+  };
+  const AUDIT_CN = {
+    episode_create: "建集", card_accept: "拍板", card_reject: "驳回", card_edit: "递修改意见",
+    castref_upload: "上传初始定妆图", castref_confirm: "确认初始定妆", castref_generate: "AI 生成初始图",
+    song_revise: "歌曲锚点修订", viewrefs_refresh: "参考库重固化", review_decide: "复审批复",
+    shoot: "开机拍摄", quant_change: "量化档调整", export_artifacts: "成片导出"
+  };
+  router.add(
+    "GET",
+    "/api/episodes/:id/timeline",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const epId = params.id;
+      requireEpisode(ctx, epId);
+      const events = [];
+      const fs = require("fs");
+      const pathm = require("path");
+      const readJsonl = (f) => {
+        try {
+          const p = pathm.join(process.cwd(), "var", f);
+          if (!fs.existsSync(p)) return [];
+          return fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map((l) => {
+            try { return JSON.parse(l); } catch (e) { return null; }
+          }).filter(Boolean);
+        } catch (e) { return []; }
+      };
+      readJsonl("log-job.jsonl").forEach((r) => {
+        if (r.episodeId !== epId) return;
+        const cn = JOB_CN[r.type] || r.type;
+        const at = r.attempts ? ("（第 " + (r.attempts + 1) + " 次）") : "";
+        if (r.status === "done") events.push({ ts: r.ts, level: "ok", text: "✓ " + cn + at + " 完成" + (r.cost_cents ? "（" + r.cost_cents + " 分）" : ""), job: r.job_id });
+        else if (r.status === "failed") events.push({ ts: r.ts, level: "err", text: "✗ " + cn + " 失败" + (r.error ? "：" + String(r.error).slice(0, 120) : ""), job: r.job_id });
+        else if (r.status === "retry") events.push({ ts: r.ts, level: "warn", text: "⟳ " + cn + " 自动重试：" + String(r.error || "").slice(0, 100), job: r.job_id });
+        else if (r.status === "running") events.push({ ts: r.ts, level: "info", text: "▶ " + cn + " 开始渲染", job: r.job_id });
+        else if (r.status === "cancelled") events.push({ ts: r.ts, level: "warn", text: "■ " + cn + " 已取消", job: r.job_id });
+      });
+      readJsonl("log-audit.jsonl").forEach((r) => {
+        const cn = AUDIT_CN[r.action];
+        if (!cn) return;
+        if (r.action === "review_decide") {
+          if (r.decision === "pass") events.push({ ts: r.ts, level: "ok", text: "✓ 复审批复：镜通过（" + String(r.shotId || "").slice(-6) + "）" });
+          else events.push({ ts: r.ts, level: "warn", text: "↺ 复审批复：镜重拍（" + String(r.shotId || "").slice(-6) + "）" });
+          return;
+        }
+        // 卡片类审计带批次号（从 state 里取该卡 round）
+        let roundTag = "";
+        if ((r.action === "card_accept" || r.action === "card_reject") && r.target) {
+          const st = store.get();
+          const cd = (st.cards || {})[r.target];
+          if (cd && cd.round) roundTag = "第 " + cd.round + " 版";
+          if (cd && cd.type) roundTag = (JOB_CN[cd.type] || cd.type) + " " + roundTag;
+        }
+        events.push({ ts: r.ts, level: r.action === "card_reject" ? "warn" : "info", text: "· " + cn + (roundTag ? "：" + roundTag : "") });
+      });
+      events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      const q = 200;
+      return router.json(res, 200, { events: events.slice(0, q), total: events.length });
+    },
+    { auth: true }
+  );
+
   // POST /api/episodes/:id/script-scenes — 剧本场景修订（拍摄前；与 state 场景按 seq 1:1 对齐）
   router.add(
     "POST",

@@ -9,6 +9,11 @@ AI 短剧全链路创作 SaaS —— 一期完全自部署（5060 Ti ＋ DGX Spa
 | [theater-product-master-plan.md](docs/theater-product-master-plan.md) | **总纲（评审基线）**：定位/FR/架构/合规/路线图 |
 | [theater-phase1-plan.md](docs/theater-phase1-plan.md) | 一期执行细分：WBS 280pd、双里程碑、周排程、验收 V1–V10 |
 | [theater-test-acceptance-plan.md](docs/theater-test-acceptance-plan.md) | **全业务自动化测试与验收规划**：分层模型 L0–L4、覆盖矩阵（34 端点/12 视图/FR）、韧性·安全·property 系列、UI 双 lane、执行节律与证据链治理 |
+| [h3-line-diagram.png](docs/h3-line-diagram.png) | **MINIMAX H3 线全链路一张图**（长图）：业务流程×编排节点×固化模板×模型权重四层视图（源 [h3-line-diagram.html](docs/h3-line-diagram.html)） |
+| [h3-diagram-1-overview.png](docs/h3-diagram-1-overview.png) | **系列竖图 1/4 全景立项**：十步总路线·五层图例·剧本源头·C1 策划＋九幕五层速览表（源 [h3-diagram-1-overview.html](docs/h3-diagram-1-overview.html)） |
+| [h3-diagram-2-identity.png](docs/h3-diagram-2-identity.png) | **系列竖图 2/4 身份链★**：初始定妆三入口→试妆试镜 C2S（FL2VA 多角度视频→抽帧打分→viewRefs）→分镜「选角度帧＋只换背景壳」（源 [h3-diagram-2-identity.html](docs/h3-diagram-2-identity.html)） |
+| [h3-diagram-3-production.png](docs/h3-diagram-3-production.png) | **系列竖图 3/4 拍摄成片**：配音·音乐·预览→逐镜原生声画拍摄→机审复审→FFmpeg 真合成（源 [h3-diagram-3-production.html](docs/h3-diagram-3-production.html)） |
+| [h3-diagram-4-reference.png](docs/h3-diagram-4-reference.png) | **系列竖图 4/4 台账纪律**：14 项模型权重台账＋8 条横切纪律＋源文件索引（源 [h3-diagram-4-reference.html](docs/h3-diagram-4-reference.html)） |
 | [theater-ux-design.md](docs/theater-ux-design.md) | 竞品 UX 拆解与体验机制 |
 | [theater-ui-interaction-design.md](docs/theater-ui-interaction-design.md) | 一期实现级 UI 交互规范 v1.5（S1–S18） |
 | [theater-infer-backend-adr.md](docs/theater-infer-backend-adr.md) | ADR-001 推理计算后端 |

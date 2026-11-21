@@ -301,6 +301,10 @@ a { color: inherit; text-decoration: none; }
 .v-shoot-meta { flex-wrap: wrap; gap: 8px; font-size: 12.5px; color: var(--ink2); }
 .v-shoot-acts { margin-top: 2px; gap: 6px; }
 .v-shoot-q { padding: 8px 10px; }
+.v-shoot-q-run { background: #F2F7FC; border-color: var(--run); box-shadow: 0 0 0 1px var(--run) inset; }
+.v-shoot-q-fail { background: #FCF4F4; border-color: var(--err); box-shadow: 0 0 0 1px var(--err) inset; }
+.v-shoot-q-pos { font-size: 11.5px; font-weight: 700; color: var(--ink2); border: 1px solid var(--line); background: #FAF9F6; border-radius: 999px; padding: 1px 9px; white-space: nowrap; flex: none; }
+.v-shoot-q-pos.is-run { color: #fff; background: var(--run); border-color: var(--run); }
 
 /* copilot 制片助手 */
 .v-copilot-sticky { display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; }

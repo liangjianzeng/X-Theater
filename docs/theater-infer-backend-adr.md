@@ -146,6 +146,9 @@
 | D3 | 弹性供给层 = 托管 ComfyUI 双供应商 + 商业 API 质量档（BYOK）——**二期商业化接入，一期仅契约/UI 槽位预留** | 定（2026-11-20 修订） |
 | D5 | **硬件定位**：5060 Ti＝开发调试机（模板熔炉，一切 dev/前期调测在此）；DGX Spark＝商业化之前验收＋自生产（非量产/非 SLA 依据）；**生图先行**（图确认后才进视频与厂家确认）；模型准入白名单（§4-8）；**DGX 量化优先级：nvfp4 首选→int8 次选→皆无才 MXFP8+FP8 档** | 定（发起人 2026-11-20 确认） |
 | D4 | 私有化交付线以毕业层为前提，GPL/商标/权重标注合规包随 P3 建 | 定（随 P3 复审） |
+| D6 | **H3 线 lane 路由修订（2026-11-21 执行修订，证据 runtime/spark-evidence/EVIDENCE.md）**：tier=high 时生图全族（c1plan/casting/storyboard_char/storyboard/cast_init/screen_test）固定走 imgspark（DGX Spark ComfyUI :8188·int8_convrot，60/40 档即 Manifest 四元组锁定）；vidspark 只接 video·high；**试妆试镜流＝初始图三入口确认制（castref upload/generate/confirm）→ screen_test（初始图作 FL2VA 首帧 5.17s 多角度视频→抽帧→ArcFace 逐帧打分→C2S 拍板固化 viewRefs）→ storyboard_char「选角度帧＋只换背景壳」**——人是本体背景只是壳，人脸五官/体态/眼神/表情高保真由帧库继承，不再自动生成新脸 | 定（随试妆试镜真机验收复审） |
+| D7 | **身份门控标准化（2026-11-21 执行修订）**：facegate 服务（:8195，insightface buffalo_l＋inswapper_128）为一期唯一一致性门——ArcFace 余弦门限 0.6；分镜/生成产物 <0.6 先 inswapper 换回锁定源脸复核，2 次尝试仍不过→真错误进自动补拍梯子（不静默重扣费）；姿态输出（yaw/pitch 角度路由）为待补项 | 定（pose 输出待实现） |
+| D8 | **拍板点机检 lane（aireview，2026-11-21 新增）**：pending 的 C1/C2/C4/C6 自动进多人格规则机检（free·防重派·启动自愈补派），结果回写卡 payload.ai_review 仅警示不拦拍板；真 LLM 到位后同 lane 换 prompt 实现 | 定 |
 
 ---
 

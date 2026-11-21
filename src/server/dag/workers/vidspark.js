@@ -22,8 +22,44 @@ const TIER = "h3-int8";
 const COST_CENTS = 150;
 const TMPL_FL2VA = "h3-fl2va-video";
 const TMPL_REF2VA = "h3-ref2va-video";
+// 歌曲锚点默认值（2026-11-21）：整首歌统一旋律动机/伴奏/唱法——8 镜独立生成拼起来像同一首歌。
+// 剧本 song 字段（ep.script.song）可覆盖（POST /api/episodes/:id/song）。
+const DEFAULT_SONG = {
+  motif: "one gentle slow ballad, the same melodic motif carried through the whole song",
+  accompaniment: "soft piano arpeggios with light strings",
+  tempo: "about 70 bpm",
+  key: "G major",
+  voice: "young female vocals, breathy and intimate, close to the microphone"
+};
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
-const STYLE = "Live-action cinematic look, teal-and-orange grade, soft practical lights, shallow depth of field";
+const STYLE = "Live-action cinematic look, soft diffused practical lights, matte natural skin with no oily shine, subtle film grain, shallow depth of field";
+
+/** ffmpeg 助手（runtime/bin/ffmpeg.exe，essentials 版） */
+function runFfmpeg(args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const exe = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
+    if (!fs.existsSync(exe)) return reject(Object.assign(new Error("ffmpeg 不存在（runtime/bin）"), { code: "NO_FFMPEG" }));
+    const pr = require("child_process").spawn(exe, args, { windowsHide: true });
+    let err = "";
+    pr.stderr.on("data", (c) => { if (err.length < 4000) err += String(c); });
+    pr.on("close", (code) => code === 0 ? resolve(true) : reject(Object.assign(new Error("ffmpeg 失败：" + err.slice(-300)), { code: "FFMPEG_FAIL" })));
+    pr.on("error", (e) => reject(Object.assign(new Error("ffmpeg 启动失败：" + e.message), { code: "FFMPEG_SPAWN" })));
+    setTimeout(() => { try { pr.kill(); } catch (e2) {} reject(Object.assign(new Error("ffmpeg 超时"), { code: "FFMPEG_TIMEOUT" })); }, timeoutMs || 120000).unref();
+  });
+}
+
+/** 首帧等比适配到镜幅（cover 居中裁切，不拉伸——试妆抽帧 736×1312 → 镜幅 768×1344 等） */
+async function fitFrame(bytes, width, height, tag) {
+  const tmpDir = path.join(process.cwd(), "var", "tmp");
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const src = path.join(tmpDir, "ff_" + tag + "_src.png");
+  const dst = path.join(tmpDir, "ff_" + tag + "_fit.png");
+  fs.writeFileSync(src, bytes);
+  await runFfmpeg(["-y", "-i", src, "-vf", "scale=" + width + ":" + height + ":force_original_aspect_ratio=increase,crop=" + width + ":" + height, dst]);
+  const out = fs.readFileSync(dst);
+  try { fs.unlinkSync(src); fs.unlinkSync(dst); } catch (e) { /* 临时文件清理失败不阻断 */ }
+  return out;
+}
 
 function fnv1a(str) {
   let h = 0x811c9dc5;
@@ -62,6 +98,7 @@ function writeOut(ctx, fileName, data) {
   fs.writeFileSync(fp, data);
   return fp;
 }
+function log2(job, msg) { try { console.log("[vidspark " + String(job.id || "").slice(4, 10) + "] " + msg); } catch (e) {} }
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -143,6 +180,8 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const st = ctx.store.get();
   const shot = (st.shots || {})[shotId] || {};
   const episodeId = p.episodeId || j.episodeId || null;
+  const epRow = (st.episodes || {})[episodeId] || {};
+  const song = (epRow.script && epRow.script.song) || DEFAULT_SONG;
   const scr = shotScript(ctx, episodeId, shot);
   const sec = Number(p.sec) > 0 ? Number(p.sec) : 5;
   const length = h3ir.lengthFrames(sec);
@@ -154,11 +193,61 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   // 素材上传到 Spark input
   const sbBytes = sbArtForShot(ctx, episodeId, shotId);
   const refs = castRefArts(ctx, episodeId, scr.castDefs);
-  let tmplId, params;
+  let tmplId, params, irLlmUsed = false, rMeta = null, mp4Bytes = null, reusedPid = null;
   if (sbBytes) {
-    const ffName = await comfy.uploadAsset(base, sbBytes, "spark_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
-    const ir = h3ir.buildFL2VA({ shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, speaker: scr.castDefs[0] && scr.castDefs[0].name });
+    // 孤儿产物接续（断点续跑 2026-11-21）：同规格（length/width/height）+ 本镜歌词文本匹配的
+    // 已渲成功产物直接领回（守护环境长任务随时被打断，避免重复渲染）。消费过的 prompt_id 落账。
+    try {
+      const st2 = ctx.store.get();
+      st2.settings = st2.settings || {};
+      const pool = st2.settings.spark_reuse_pool || (st2.settings.spark_reuse_pool = []);
+      const keyDlg = String((scr.dialogue || "").trim().slice(0, 12));
+      if (keyDlg) {
+        const hist = await fetch(base + "/history", { signal: AbortSignal.timeout(15000) }).then((r) => r.json());
+        for (const pid of Object.keys(hist).reverse()) {
+          if (pool.indexOf(pid) >= 0) continue;
+          const rec = hist[pid] || {};
+          if ((rec.status || {}).status_str !== "success") continue;
+          let okSpec = false, promptTxt = "";
+          Object.values((rec.prompt && rec.prompt[2]) || {}).forEach((n) => {
+            if (n && n.class_type === "MiniMaxH3ImageToVideo" && n.inputs && n.inputs.length === length && n.inputs.width === width && n.inputs.height === height) okSpec = true;
+            if (n && n.inputs && typeof n.inputs.prompt === "string") promptTxt += n.inputs.prompt;
+          });
+          if (!okSpec || promptTxt.indexOf(keyDlg) < 0) continue;
+          let a0 = null;
+          Object.values(rec.outputs || {}).forEach((o) => {
+            const arr = o.videos || o.gifs || o.images || [];
+            if (arr.length && !a0) a0 = arr[0];
+          });
+          if (!a0) continue;
+          const q = "?filename=" + encodeURIComponent(a0.filename) + "&subfolder=" + encodeURIComponent(a0.subfolder || "") + "&type=" + encodeURIComponent(a0.type || "output");
+          const res = await fetch(base + "/view" + q, { signal: AbortSignal.timeout(120000) });
+          if (!res.ok) continue;
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (!buf || buf.length < 100000) continue;
+          mp4Bytes = buf;
+          reusedPid = pid;
+          break;
+        }
+      }
+      if (reusedPid) {
+        log2(j, "接续孤儿产物 prompt_id=" + reusedPid + "（" + mp4Bytes.length + " bytes，免重渲）");
+        pool.push(reusedPid);
+        ctx.store.commit();
+      }
+    } catch (e) {
+      log2(j, "reuse pool skip: " + e.message);
+    }
+  }
+  if (sbBytes && mp4Bytes) {
+    // 已接续：直接出 take（跳过渲染）
+  } else if (sbBytes) {
+    // 首帧等比适配到镜幅（开机前校准 2026-11-21：试妆抽帧 736×1312 → 镜幅 768×1344，cover 裁切防拉伸）
+    const fitBytes = await fitFrame(sbBytes, width, height, safeSeg(shotId).slice(0, 24));
+    const ffName = await comfy.uploadAsset(base, fitBytes, "spark_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
+    const ir = h3ir.buildFL2VA({ shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, speaker: scr.castDefs[0] && scr.castDefs[0].name, song });
     const rewritten = await h3ir.rewriteWithLLM(ir, ctx.cfg);
+    irLlmUsed = rewritten.llm_used === true;
     tmplId = TMPL_FL2VA;
     params = { SEED: seedNum, PROMPT: rewritten.ir, WIDTH: width, HEIGHT: height, LENGTH: length, STEPS: 4, FIRST_FRAME: ffName };
   } else if (refs.length) {
@@ -167,8 +256,9 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
       names.push(await comfy.uploadAsset(base, refs[i].bytes, "spark_ref_" + safeSeg(refs[i].def.role || String(i)) + "_" + seed.slice(0, 6) + "_" + i + ".png"));
     }
     while (names.length < 3) names.push(names[names.length - 1]);
-    const ir = h3ir.buildRef2VA({ subjects: refs.map((r) => r.def), shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, refImages: names.map((_, i) => "<Picture " + (i + 1) + ">") });
+    const ir = h3ir.buildRef2VA({ subjects: refs.map((r) => r.def), shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, refImages: names.map((_, i) => "<Picture " + (i + 1) + ">"), song });
     const rewritten = await h3ir.rewriteWithLLM(ir, ctx.cfg);
+    irLlmUsed = rewritten.llm_used === true;
     tmplId = TMPL_REF2VA;
     params = { SEED: seedNum, PROMPT: rewritten.ir, WIDTH: width, HEIGHT: height, LENGTH: length, STEPS: 4, REF_IMAGE_1: names[0], REF_IMAGE_2: names[1], REF_IMAGE_3: names[2] };
   } else {
@@ -177,28 +267,35 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     throw e;
   }
 
-  // 内存常驻优先：仅低于阈值才释放（用户纪律 2026-11-21）
-  await comfy.ensureFree(base, 8);
-  const r = await comfy.runTemplate(ctx, j, {
-    base,
-    tmplId,
-    params,
-    pollMs: 3000,
-    timeoutMs: 1800000 // GB10 慢档：30 分钟上限
-  });
+  // 渲染（接续路径跳过——mp4Bytes 已领回）
+  if (!mp4Bytes) {
+    // 内存常驻优先：仅低于阈值才释放（用户纪律 2026-11-21）
+    await comfy.ensureFree(base, 8);
+    const r = await comfy.runTemplate(ctx, j, {
+      base,
+      tmplId,
+      params,
+      pollMs: 3000,
+      timeoutMs: 1800000 // GB10 慢档：30 分钟上限
+    });
+    mp4Bytes = r.bytes;
+    rMeta = r.meta;
+  }
 
   const takeId = safeSeg(p.takeId || "tk_" + seed.slice(0, 8));
   const fileName = takeId + ".mp4";
   const meta = {
     kind: "video-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER, tier: TIER,
-    tmpl_id: tmplId, ir_llm_used: rewritten.llm_used === true,
-    sec, length, shotId, episodeId, prompt_id: r.promptId,
-    tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
-    bytes: r.bytes.length, seed: String(seedNum), cents,
+    tmpl_id: tmplId, ir_llm_used: irLlmUsed,
+    sec, length, shotId, episodeId,
+    prompt_id: rMeta ? rMeta.promptId : (reusedPid || null),
+    tmpl_sha16: rMeta ? rMeta.tmpl_sha16 : null, comfy_commit: rMeta ? rMeta.comfy_commit : null, cn_commits: rMeta ? rMeta.cn_commits : null, weights: rMeta ? rMeta.weights : null,
+    reused: !!reusedPid,
+    bytes: mp4Bytes.length, seed: String(seedNum), cents,
     ai_label: "AI 生成内容（MiniMax H3）" // Community License：UI 显著标注
   };
   const art = "var/out/" + fileName;
-  const abs = writeOut(ctx, fileName, r.bytes);
+  const abs = writeOut(ctx, fileName, mp4Bytes);
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   meta.art_abs = abs;
   const take = { id: takeId, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true };

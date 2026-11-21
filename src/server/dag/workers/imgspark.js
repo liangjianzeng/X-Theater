@@ -22,20 +22,52 @@ const TMPL_EDIT = "h3-image-edit";
 const TMPL_FL2VA = "h3-fl2va-video";
 const STYLE_SUFFIX = "实拍电影剧照质感，真实摄影，自然皮肤纹理与真实光影，浅景深";
 // 试妆试镜视频规格：与原图 720×1280 等比例最近的 32 倍数画幅（736×1312，比例误差 0.27%）；
-// 5 秒＝124 帧（17k+5 网格），turbo 4 步。
-const ST_W = 736, ST_H = 1312, ST_LEN = 124, ST_STEPS = 4, ST_SEC = 5.17;
-// 试妆试镜动作设计：左右 3/4 侧脸＋仰头闭眼——覆盖床上唱歌分镜所需头部角度；
-// 面部/发型/服装全程锁定。用户重出意见（p.note）追加在尾部。
-const SCREEN_TEST_PROMPT = [
-  "Beauty screen test, one continuous static shot, no camera movement.",
-  "She faces the camera, then slowly turns her head into a three-quarter profile and holds,",
-  "returns to front, then slowly turns into the other three-quarter profile and holds,",
-  "then gently tilts her head up and closes her eyes for a moment,",
-  "then opens her eyes and looks back at the camera with a soft natural smile.",
-  "Keep her face, facial features, hairstyle and outfit exactly consistent throughout.",
-  "Warm soft key light, subtle hair movement, natural skin texture, shallow depth of field.",
-  "No dialogue."
-].join(" ");
+// 10 秒档＝243 帧（17k+5 网格：243/24≈10.1s，训练范围 124-362 内），turbo 4 步。
+const ST_W = 736, ST_H = 1312, ST_LEN = 243, ST_STEPS = 4, ST_SEC = 10.13;
+// 试妆试镜动作设计（2026-11-21 v2）：动作序列与段落表同源生成——抽帧按时间轴标注动作段
+// （几何 yaw/pitch 对低头等姿态不敏感，kps 5 点估不准；段落表+停顿设计才是可靠标注）。
+// 动作集按本集分镜角度需求动态拼装；每个姿态明确 hold，段边界清晰。
+function screenTestPlan(script) {
+  const needs = new Set(["front", "left", "right", "up", "down"]); // 兜底全集
+  (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => {
+    const a = shotAngleNeed(String((sh && sh.desc) || ""));
+    if (a) needs.add(a);
+  }));
+  const acts = [];          // 英文动作序列（拼 prompt）
+  const segs = [];          // 段落表 {tag, w}——w=时长权重（hold 1 / 过渡 0.4）
+  acts.push("she faces the camera and holds still for a moment"); segs.push({ tag: "front", w: 1.2 });
+  if (needs.has("left")) { acts.push("then slowly turns her head into a left three-quarter profile and holds"); segs.push({ tag: "left", w: 1.2 }); }
+  acts.push("turns back to the front briefly"); segs.push({ tag: "front", w: 0.4 });
+  if (needs.has("right")) { acts.push("then slowly turns into a right three-quarter profile and holds"); segs.push({ tag: "right", w: 1.2 }); }
+  acts.push("returns to the front"); segs.push({ tag: "front", w: 0.4 });
+  if (needs.has("up")) { acts.push("gently tilts her head up with eyes closed"); segs.push({ tag: "up", w: 1 }); }
+  if (needs.has("down")) { acts.push("then lowers her head with eyes cast down and a soft smile"); segs.push({ tag: "down", w: 1 }); }
+  // 望窗段（2026-11-21 用户要求取景多样性）：转头望窗＋镜头轻摇带出夜窗与月光——不走位（大位移易身份漂移），
+  // 抽帧库获得「窗边侧脸/月光光影」素材；分镜 desc 含「窗」关键词时自动匹配
+  acts.push("then turns her head to gaze toward the window while the camera gently pans to reveal the night window beside the bed with soft moonlight on her face"); segs.push({ tag: "window", w: 1.2 });
+  acts.push("finally returns to the front and holds, looking at the camera with a natural expression"); segs.push({ tag: "front", w: 1.2 });
+  const prompt = [
+    "Beauty screen test, one continuous static shot, no camera movement.",
+    acts.join(", then ") + ".",
+    "Each pose holds clearly and distinctly so every head angle is easy to see.",
+    "Keep her face, facial features, hairstyle, eyes and outfit exactly consistent throughout.",
+    "Soft diffused candle glow kept low-key, matte skin with natural fine texture and no oily shine, subtle hair movement, shallow depth of field.",
+    "No dialogue."
+  ].join(" ");
+  return { prompt, segments: segs };
+}
+
+/** 按段落表把帧时间戳映射到动作段标签（权重均分总时长） */
+function segmentAngle(segments, t, secTotal) {
+  if (!segments || !segments.length) return null;
+  const wSum = segments.reduce((a, s) => a + (s.w || 1), 0);
+  let acc = 0;
+  for (const s of segments) {
+    acc += (s.w || 1) / wSum * secTotal;
+    if (t <= acc) return s.tag;
+  }
+  return segments[segments.length - 1].tag;
+}
 const PNG_1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
@@ -125,22 +157,25 @@ function runFfmpeg(args, timeoutMs) {
 
 const CAST_DIR = path.join(process.cwd(), "var", "assets", "cast");
 function castAssetPath(rel) {
-  // rel 可为 var/out/xxx、var/assets/cast/xxx 或裸文件名 → 绝对路径；仅允许仓库内两处白名单目录
-  const name = safeSeg(String(rel || "").replace(/^.*[\\/]/, ""));
-  const cands = [path.join(CAST_DIR, name), path.join(process.cwd(), "var", "out", name)];
+  // rel 可为 var/... 全相对路径（含角色 views 子目录）、var/out/xxx、裸文件名 → 绝对路径
+  const s = String(rel || "");
+  const name = safeSeg(s.replace(/^.*[\\/]/, ""));
+  const cands = [];
+  if (/^var[\\/]/.test(s)) cands.push(path.join(process.cwd(), s)); // 全相对路径优先（保子目录）
+  cands.push(path.join(CAST_DIR, name), path.join(process.cwd(), "var", "out", name));
   for (const p of cands) if (fs.existsSync(p)) return p;
   return null;
 }
 
-/** facegate 门控调用（127.0.0.1:8195）：原照片脸换回 + ArcFace 打分 */
-async function faceGateSwap(pngBytes) {
+/** facegate 门控调用（127.0.0.1:8195）：指定参考脸（ref_file）换回 + ArcFace 打分 */
+async function faceGateSwap(pngBytes, refFile) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 30000);
   try {
     const res = await fetch("http://127.0.0.1:8195/swap", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dst_b64: pngBytes.toString("base64") }),
+      body: JSON.stringify({ dst_b64: pngBytes.toString("base64"), ref_file: refFile || undefined }),
       signal: ctrl.signal
     });
     clearTimeout(t);
@@ -160,14 +195,14 @@ function pngSize(bytes) {
   return { w: bytes.readUInt32BE(16), h: bytes.readUInt32BE(20) };
 }
 function r16(x) { return Math.max(256, Math.floor(x / 16) * 16); }
-async function faceGateScore(pngBytes) {
+async function faceGateScore(pngBytes, refFile) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 20000);
   try {
     const res = await fetch("http://127.0.0.1:8195/score", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ img_b64: pngBytes.toString("base64") }),
+      body: JSON.stringify({ img_b64: pngBytes.toString("base64"), ref_file: refFile || undefined }),
       signal: ctrl.signal
     });
     clearTimeout(t);
@@ -197,86 +232,251 @@ function angleTag(yaw, pitch) {
 /** 分镜角度需求解析（desc/anchor 关键词 → 参考帧角度） */
 function shotAngleNeed(desc) {
   const s = String(desc || "");
+  if (/窗|月光|夜色/.test(s)) return "window";
   if (/仰头|抬头|仰望|仰视|仰面/.test(s)) return "up";
-  if (/低头|垂眸|俯首|低眉/.test(s)) return "down";
+  if (/低头|垂眸|俯首|低眉|低垂/.test(s)) return "down";
   if (/左侧脸|左脸|向左|左回眸|画面左/.test(s)) return "left";
   if (/右侧脸|右脸|向右|右回眸|画面右/.test(s)) return "right";
   return "front";
 }
 
-/** 从试妆抽帧参考里挑本镜输入：精确角度 → 正面 → 最高分兜底 */
-function pickView(views, need) {
-  const ok = (views || []).filter((v) => v && v.art && (v.score == null || v.score >= 0.6));
+/** 从试妆抽帧参考里挑分镜首帧：目标动作段内按镜序轮换（同段多帧时相邻镜取不同帧）。
+ *  段内无合格帧 → 正面段轮换 → 全局最优。
+ *  角度门：仅正面帧要求 |yaw|≤0.8（防深侧帧混入正面池）；侧脸/仰/低头帧的 yaw 本就偏移，
+ *  不设 yaw 门（选帧直出时代——帧已过用户拍板与 0.45 身份线，edit 时代的崩脸守门退役）。 */
+function pickView(views, need, shotIdx) {
+  const ok = (views || []).filter((v) => v && v.art && (v.score == null || v.score >= 0.45));
   if (!ok.length) return null;
-  const by = (tag) => ok.filter((v) => v.angle === tag).sort((a, b) => (b.score || 0) - (a.score || 0));
-  return by(need)[0] || by("front")[0] || ok.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  const near = (tag) => ok.filter((v) => {
+    if (v.angle !== tag) return false;
+    if (tag === "front") return Math.abs(Number(v.yaw) || 0) <= 0.8;
+    return true;
+  }).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const globalBest = ok.slice().filter((v) => Math.abs(Number(v.yaw) || 0) <= 0.8)
+    .sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
+  const pick = (list) => (list && list.length ? list[(Number(shotIdx) || 0) % list.length] : null);
+  return pick(near(need)) || pick(near("front")) || globalBest;
 }
-async function runSparkCharShots(ctx, job, p, seed, cents) {
+
+/** cast_init：初始定妆图生成（用户提示词＋角色人设 → H3-Image t2i，864×1536 精确 9:16） */
+async function runSparkCastInit(ctx, job, p, seed, cents) {
   const j = job || {};
   const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const st0 = ctx.store.get();
+  const ep = st0.episodes && st0.episodes[p.episodeId];
+  const script = (ep && ep.script) || { cast: [] };
+  const castDef = script.cast.find((c) => c.role === p.role) || {};
+  const prompt = [
+    String(p.prompt || "").trim(),
+    castDef.desc,
+    "角色初始定妆照，竖屏 9:16 构图，半身景别，面部清晰锐利",
+    STYLE_SUFFIX
+  ].filter(Boolean).join(" ");
+  await comfy.ensureFree(base, 8);
+  const sd = numFrom(seed) % 18446744073709551615;
+  const r = await comfy.runTemplate(ctx, j, {
+    base,
+    tmplId: TMPL_CAST,
+    params: {
+      SEED: sd, PROMPT: prompt, WIDTH: 864, HEIGHT: 1536,
+      REF_IMAGE_1: "cast___.png", REF_IMAGE_2: "cast___.png", REF_IMAGE_3: "cast___.png"
+    },
+    transform: (wf) => { // 纯 t2i：去掉参考图节点与 images 条件
+      ["4", "5", "6"].forEach((id) => delete wf[id]);
+      const c = wf["7"];
+      if (c && c.inputs && c.inputs.images !== undefined) c.inputs.images = [];
+    },
+    pollMs: 1500,
+    timeoutMs: 300000
+  });
+  const fn = safeSeg(j.id) + "_castinit.png";
+  const art = "var/out/" + fn;
+  const abs = writeOut(ctx, fn, r.bytes);
+  const meta = {
+    kind: "image-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    tmpl_id: TMPL_CAST, tmpl_sha16: r.meta.tmpl_sha16, prompt_id: r.promptId, bytes: r.bytes.length,
+    jobType: "cast_init", episodeId: p.episodeId, role: p.role, seed: String(sd), cents,
+    ai_label: "AI 生成内容（MiniMax H3-Image）"
+  };
+  writeOut(ctx, fn + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  meta.art_abs = abs;
+  const bag = { ok: true, cents, art, meta, engine: ENGINE_USER, role: p.role };
+  j.result = bag; j.art = bag;
+  return { ok: true, cents, art, meta, role: p.role };
+}
+
+/** screen_test：试妆试镜——初始图为首帧 → FL2VA 10.1 秒等比例视频 → ffmpeg 抽帧 → ArcFace 打分＋角度标签 */
+async function runSparkScreenTest(ctx, job, p, seed, cents) {
+  const j = job || {};
+  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const st0 = ctx.store.get();
+  const ep = st0.episodes && st0.episodes[p.episodeId];
+  const script = (ep && ep.script) || { cast: [] };
+  const castDef = script.cast.find((c) => c.role === p.role) || script.cast.find((c) => c.refImage) || script.cast[0] || {};
+  if (!castDef.refImage) throw Object.assign(new Error("初始定妆未确认：请先在 C2 卡上传或生成初始图并确认"), { code: "CAST_REF_MISSING" });
+  const refPath = castAssetPath(castDef.refImage);
+  if (!refPath) throw Object.assign(new Error("初始定妆文件缺失: " + castDef.refImage), { code: "CAST_FILE_MISSING" });
+
+  // 1) 孤儿产物接续（断点续跑，2026-11-21）：服务重启/重派时，Spark 上已渲染成功的同规格
+  //    试妆产物直接领回续跑（抽帧/打分/出卡），不再重渲浪费 GPU。已消费的 prompt_id 落账防重复。
+  const st0c = ctx.store.get();
+  st0c.settings = st0c.settings || {};
+  const usedPool = st0c.settings.spark_reuse_pool || (st0c.settings.spark_reuse_pool = []);
+  let mp4Bytes = null, reusedPid = null, reusedSha = null;
+  try {
+    const hist = await fetch(base + "/history", { signal: AbortSignal.timeout(15000) }).then((r) => r.json());
+    const ids = Object.keys(hist).reverse();
+    for (const pid of ids) {
+      if (usedPool.indexOf(pid) >= 0) continue;
+      const rec = hist[pid] || {};
+      if ((rec.status || {}).status_str !== "success") continue;
+      let isST = false, artNode = null;
+      Object.values((rec.prompt && rec.prompt[2]) || {}).forEach((n) => {
+        if (n && n.class_type === "MiniMaxH3ImageToVideo" && n.inputs && n.inputs.length === ST_LEN && n.inputs.width === ST_W && n.inputs.height === ST_H) isST = true;
+      });
+      if (!isST) continue;
+      for (const nid of Object.keys(rec.outputs || {})) {
+        const arr = rec.outputs[nid].videos || rec.outputs[nid].gifs || rec.outputs[nid].images || [];
+        if (arr.length && (arr[0].videos !== undefined || true)) artNode = arr[0];
+      }
+      if (!artNode) continue;
+      const q = "?filename=" + encodeURIComponent(artNode.filename) + "&subfolder=" + encodeURIComponent(artNode.subfolder || "") + "&type=" + encodeURIComponent(artNode.type || "output");
+      const res = await fetch(base + "/view" + q, { signal: AbortSignal.timeout(60000) });
+      if (!res.ok) continue;
+      mp4Bytes = Buffer.from(await res.arrayBuffer());
+      if (!mp4Bytes || mp4Bytes.length < 100000) { mp4Bytes = null; continue; }
+      reusedPid = pid;
+      break;
+    }
+  } catch (e) {
+    log2(j, "reuse pool skip: " + e.message);
+  }
+
+  // 2) 无可接续产物 → 首帧等比适配＋FL2VA 真跑
+  let renderMeta = null;
+  if (!mp4Bytes) {
+    const tmpDir = path.join(process.cwd(), "var", "tmp");
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const fitPath = path.join(tmpDir, safeSeg(j.id) + "_fit.png");
+    await runFfmpeg(["-y", "-i", refPath, "-vf", "scale=" + ST_W + ":" + ST_H + ":force_original_aspect_ratio=increase,crop=" + ST_W + ":" + ST_H, fitPath]);
+    const fitBytes = fs.readFileSync(fitPath);
+    const ffName = await comfy.uploadAsset(base, fitBytes, "screentest_ff_" + seed.slice(0, 6) + ".png");
+    await comfy.ensureFree(base, 8);
+    const sd = numFrom(hash12(ctx, { jobId: j.id, note: p.note || "", role: p.role })) % 18446744073709551615;
+    const plan = screenTestPlan(script);
+    const prompt = plan.prompt + (p.note ? " Additional direction: " + String(p.note).slice(0, 160) : "");
+    log2(j, "screen test start seed=" + sd + " segments=" + plan.segments.map((s) => s.tag).join("/"));
+    const r = await comfy.runTemplate(ctx, j, {
+      base,
+      tmplId: TMPL_FL2VA,
+      params: { SEED: sd, PROMPT: prompt, FIRST_FRAME: ffName, WIDTH: ST_W, HEIGHT: ST_H, LENGTH: ST_LEN, STEPS: ST_STEPS },
+      pollMs: 3000,
+      timeoutMs: 1500000
+    });
+    mp4Bytes = r.bytes;
+    renderMeta = r.meta;
+  }
+  // 段落表始终按当前剧本生成（接续/渲染同源标注）
+  const plan = screenTestPlan(script);
+  const mp4Name = safeSeg(j.id) + "_screentest.mp4";
+  if (reusedPid) {
+    log2(j, "接续孤儿产物 prompt_id=" + reusedPid + "（" + mp4Bytes.length + " bytes，免重渲）");
+    usedPool.push(reusedPid);
+    ctx.store.commit();
+  } else {
+    log2(j, "mp4 done " + mp4Bytes.length + " bytes");
+  }
+  const mp4Path = writeOut(ctx, mp4Name, mp4Bytes);
+
+  // 3) 抽帧（每 10 帧取 1 → 约 24 帧全分辨率候选，736×1312）
+  const outDir = path.join(process.cwd(), "var", "out");
+  const prefix = safeSeg(j.id) + "_view_";
+  const viewPat = path.join(outDir, prefix + "%02d.png");
+  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\,10))", "-vsync", "vfr", viewPat]);
+  const viewFiles = fs.readdirSync(outDir).filter((f) => f.indexOf(prefix) === 0 && f.endsWith(".png")).sort();
+
+  // 4) 逐帧 ArcFace 打分＋动作段标注（段落表为主，几何 yaw 仅留档交叉参考）
+  const views = [];
+  for (let i = 0; i < viewFiles.length; i++) {
+    const fp = path.join(outDir, viewFiles[i]);
+    const sc = await faceGateScore(fs.readFileSync(fp), castDef.refImage);
+    const t = Math.round((i * 10) / 24 * 100) / 100;
+    const seg = segmentAngle(plan.segments, t, ST_SEC);
+    views.push({
+      art: "var/out/" + viewFiles[i],
+      t: t,
+      score: sc.score,
+      yaw: sc.yaw,
+      pitch: sc.pitch,
+      angle: seg || (sc.yaw != null ? angleTag(sc.yaw, sc.pitch) : null)
+    });
+    log2(j, "view " + (i + 1) + "/" + viewFiles.length + " t=" + t + "s angle=" + views[i].angle + " yaw=" + sc.yaw + " pitch=" + sc.pitch + " score=" + sc.score);
+  }
+
+  // 5) contact grid（5×5 缩略，卡片一眼看全）
+  const gridName = safeSeg(j.id) + "_grid.png";
+  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\,10)),scale=184:328,tile=5x5", "-vsync", "vfr", "-frames:v", "1", path.join(outDir, gridName)]);
+
+  const meta = {
+    kind: "video-comfy-spark-screentest", lane: NAME, engine: ENGINE + " fl2va first-frame", engine_user: ENGINE_USER,
+    tmpl_id: TMPL_FL2VA, tmpl_sha16: renderMeta ? renderMeta.tmpl_sha16 : null, prompt_id: renderMeta ? renderMeta.promptId : (reusedPid || null), bytes: mp4Bytes.length,
+    jobType: "screen_test", episodeId: p.episodeId, role: castDef.role, seed: renderMeta ? String(numFrom(hash12(ctx, { jobId: j.id, note: p.note || "", role: p.role })) % 18446744073709551615) : ("reuse:" + (reusedPid || "")),
+    width: ST_W, height: ST_H, frames: ST_LEN, sec: ST_SEC, cents,
+    ai_label: "AI 生成内容（MiniMax H3 FL2VA）"
+  };
+  writeOut(ctx, mp4Name + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  const bag = {
+    ok: true, cents, art: "var/out/" + mp4Name, meta, engine: ENGINE_USER,
+    role: castDef.role, views, grid: "var/out/" + gridName, sec: ST_SEC, frames: ST_LEN,
+    refImage: castDef.refImage,
+    checklist: ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按本集分镜需求）"]
+  };
+  j.result = bag; j.art = bag;
+  return bag;
+}
+/** 角色分镜＝选帧直出（2026-11-21 用户裁决）：C2S 试妆抽帧直接作分镜首帧（每镜视频的 I2V 输入），
+ *  不再 edit 重绘——生成毁图（服装漂移/换脸/构图自嗨）。按镜角度需求从拍板帧中直选，
+ *  该角度无合格帧时用全局最优帧兜底；未走试妆的旧集回退初始定妆原图。 */
+async function runSparkCharShots(ctx, job, p, seed, cents) {
+  const j = job || {};
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
   const cast = script.cast || [];
   const shots = [];
   (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name }, sh))));
+  const viewsByRole = (st0.viewRefs || {})[p.episodeId] || {};
   const castDef0 = cast.find((x) => x.refImage) || cast[0] || {};
-  const nameOrig = castDef0.refImage ? safeSeg(String(castDef0.refImage).replace(/^.*[\\/]/, "")) : null;
-  const refPath = [
-    nameOrig ? path.join(process.cwd(), "var", "assets", "cast", nameOrig) : null,
-    path.join(process.cwd(), "var", "assets", "cast", "liangchen.png")
-  ].filter(Boolean).find((p2) => fs.existsSync(p2));
-  if (!refPath) throw Object.assign(new Error("定妆原图缺失（var/assets/cast）"), { code: "CAST_FILE_MISSING" });
-  const refBytes = fs.readFileSync(refPath);
-  const dim = pngSize(refBytes);
-  const editW = r16(dim.w), editH = r16(dim.h);
-  const refNameU = await comfy.uploadAsset(base, refBytes, "h3edit_ref_" + seed.slice(0, 6) + ".png");
+  const fallbackPath = castDef0.refImage ? castAssetPath(castDef0.refImage) : null;
+  const outDirAbs = path.join(process.cwd(), "var", "out");
   const images = [];
   for (let i = 0; i < shots.length; i++) {
     const sh = shots[i];
     if (!(sh.cast || []).length) continue; // 空镜不在本 worker 范围
     const refName = sh.cast[0];
     const castDef = cast.find((x) => x.role === refName || x.name === refName) || {};
-    const cleanDesc = String(sh.desc || "").replace(/。人物锚点：[\s\S]*$/, "");
-    const prompt = [
-      "编辑 <Picture 1>：保持同一位人物完全不变——脸、五官、发型、香槟色缎面吊带睡裙都与参考图一致。",
-      "新的镜头：" + cleanDesc + "。",
-      "单幅剧照（single frame）：整个画面只有一个镜头时刻，禁止分屏、多格拼贴。",
-      "烛光卧室、白床品、暖调，实拍电影剧照质感，真实摄影，浅景深"
-    ].filter(Boolean).join(" ");
-    await comfy.ensureFree(base, 8);
-    let pngBytes = null, gateScore = 0;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const r = await comfy.runTemplate(ctx, j, {
-        base,
-        tmplId: TMPL_EDIT,
-        params: {
-          SEED: (numFrom(hash12(ctx, { jobId: j.id, i, attempt, shot: sh.desc })) + attempt * 7919) % 18446744073709551615,
-          PROMPT: prompt,
-          IMAGE: refNameU,
-          WIDTH: editW, HEIGHT: editH
-        },
-        pollMs: 1500,
-        timeoutMs: 300000
-      });
-      const sc = await faceGateScore(r.bytes);
-      let best = { png: r.bytes, score: sc.score || 0 };
-      if (best.score < 0.6) {
-        try { const sw = await faceGateSwap(r.bytes); if (sw.score > best.score) best = sw; } catch (e) { log2(j, "swap fallback fail: " + e.message); }
-      }
-      log2(j, "shot " + (i + 1) + " attempt" + attempt + " gate=" + best.score);
-      if (best.score > gateScore) { gateScore = best.score; pngBytes = best.png; }
-      if (gateScore >= 0.6) break;
-    }
-    if (gateScore < 0.6) throw Object.assign(new Error("分镜身份门控未过（ArcFace " + gateScore.toFixed(3) + " < 0.6）: " + refName + " 镜" + (i + 1)), { code: "IDENTITY_GATE_FAIL" });
+    const need = shotAngleNeed(String(sh.desc || "") + " " + String(castDef.anchor || ""));
+    const view = pickView(viewsByRole[refName], need, i);
+    const srcAbs = view ? castAssetPath(view.art) : fallbackPath;
+    if (!srcAbs) throw Object.assign(new Error("镜 " + (i + 1) + " 无可用参考帧：请先完成试妆试镜（C2S）拍板"), { code: "CAST_FILE_MISSING" });
     const fn = safeSeg(j.id) + "_h3char" + (i + 1) + ".png";
     const artPath = "var/out/" + fn;
-    writeOut(ctx, fn, pngBytes);
-    images.push({ shotId: null, seq: i + 1, art: artPath, bytes: pngBytes.length, gate: gateScore });
-    log2(j, "shot " + (i + 1) + "/" + shots.length + " done (H3-Edit+gate " + gateScore + ")");
+    writeOut(ctx, fn, fs.readFileSync(srcAbs)); // 选帧直出——零生成
+    images.push({
+      shotId: null, seq: i + 1, art: artPath,
+      bytes: fs.statSync(path.join(outDirAbs, fn)).size,
+      gate: view ? view.score : null,
+      refAngle: view ? view.angle : "original", refT: view ? view.t : null,
+      source: view ? "screen_test_frame" : "cast_ref"
+    });
+    log2(j, "shot " + (i + 1) + "/" + shots.length + " ← " + (view ? (view.angle + "@" + view.t + "s ArcFace " + view.score) : "初始定妆原图") + " (need=" + need + ")");
   }
-  const metaC = { kind: "image-comfy-spark-char", lane: NAME, engine: ENGINE + " edit", engine_user: ENGINE_USER, jobType: "storyboard_char", episodeId: p.episodeId, tmpl_id: TMPL_EDIT, images, cents, ai_label: "AI 生成内容（MiniMax H3-Image edit）" };
-  const bagC = { ok: true, cents, art: images.length ? images[0].art : null, meta: metaC, engine: ENGINE_USER, images };
+  const metaC = {
+    kind: "image-screen-test-frame", lane: NAME, engine: "试妆抽帧直选（零生成）", engine_user: ENGINE_USER,
+    jobType: "storyboard_char", episodeId: p.episodeId, images, cents: 0,
+    ai_label: "AI 生成内容（MiniMax H3 试妆视频抽帧）"
+  };
+  const bagC = { ok: true, cents: 0, art: images.length ? images[0].art : null, meta: metaC, engine: ENGINE_USER, images };
   j.result = bagC; j.art = bagC;
   return bagC;
 }
@@ -390,6 +590,18 @@ async function run(job, ctx) {
   if (comfyOn && j.type === "casting") return runSparkComfy(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "storyboard_char") return runSparkCharShots(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "c1plan") return runSparkC1Plan(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "cast_init") return runSparkCastInit(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "screen_test") return runSparkScreenTest(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "storyboard") {
+    // H3 线：场景级 5060 t2i 分镜退役——C2 由剧本＋初始定妆直采构成，分镜首帧由
+    // storyboard_char 在试妆（C2S）拍板后按 viewRefs 产出（背景只换壳）。本任务只承载卡流推进。
+    const bag = {
+      ok: true, cents: 0, art: null, engine: ENGINE_USER, images: [],
+      meta: { kind: "storyboard-h3-defer", lane: NAME, jobType: "storyboard", episodeId: p.episodeId || null, images: [] }
+    };
+    j.result = bag; j.art = bag;
+    return { ok: true, cents: 0, meta: bag.meta, images: [] };
+  }
 
   // —— stub 模式（验收套件 / 非 casting 类型）——
   const idSeg = safeSeg(j.id || "imgspk_" + seed.slice(0, 8));

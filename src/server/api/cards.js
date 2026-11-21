@@ -89,6 +89,14 @@ function upsertCard(ctx, spec) {
     payload: spec.payload,
     status: "pending",
     ver: 1,
+    round: (() => { // 批次号（2026-11-21）：同集同类型第几版——多次重出唯一标识「这批是哪一版」
+      let mx = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const c = st.cards[ids[i]];
+        if (c.episodeId === spec.episodeId && c.type === spec.type) mx = Math.max(mx, c.round || 1);
+      }
+      return mx + 1;
+    })(),
     decided_by: null,
     decided_at: null,
     created_at: ctx.util.now()
@@ -343,34 +351,54 @@ function advanceOnAccept(ctx, card, episode, operator) {
       derived.push({ kind: "card", card: r.card });
     }
   } else if (t === "C4") {
-    const scenes = scenesOf(ctx, epId);
-    const project = projectOf(ctx, episode);
-    const musicEnabled = !(project && project.music_enabled === false);
-    scenes.forEach((sc) => {
-      const job = ctx.engine.enqueue(
-        "voice",
-        { episodeId: epId, sceneId: sc.id, text: sc.name },
-        { episodeId: epId, initiated_by: "user" }
-      );
-      derived.push({ kind: "job", job });
-    });
-    if (musicEnabled) {
+    // H3 全家桶线（2026-11-21 用户裁决）：台词/歌声由 H3 视频音画直出（vidspark FL2VA/R2VA），
+    // 不派独立 TTS/配乐/预览混流——样片即开机后的真视频。直接进 C5 预算确认。
+    // 旧链（stub 时代：voice/music/compose preview）仅在 Spark 通道关闭时保留。
+    const sparkOn = !!(ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled);
+    if (sparkOn) {
+      const r = upsertCard(ctx, {
+        episodeId: epId,
+        type: "C5",
+        payload: {
+          note: "H3 全家桶：台词与歌声由视频生成时音画直出，无独立配音/配乐环节；确认预算后开机拍摄",
+          h3_direct: true
+        },
+        skipIfDecided: true
+      });
+      if (r.created) {
+        publishCard(ctx, "created", r.card);
+        derived.push({ kind: "card", card: r.card });
+      }
+    } else {
+      const scenes = scenesOf(ctx, epId);
+      const project = projectOf(ctx, episode);
+      const musicEnabled = !(project && project.music_enabled === false);
       scenes.forEach((sc) => {
-        if (adoptedForScene(ctx, sc.id) || pendingForScene(ctx, epId, sc.id)) return;
         const job = ctx.engine.enqueue(
-          "music",
-          { episodeId: epId, sceneId: sc.id, mood: sc.mood },
+          "voice",
+          { episodeId: epId, sceneId: sc.id, text: sc.name },
           { episodeId: epId, initiated_by: "user" }
         );
         derived.push({ kind: "job", job });
       });
+      if (musicEnabled) {
+        scenes.forEach((sc) => {
+          if (adoptedForScene(ctx, sc.id) || pendingForScene(ctx, epId, sc.id)) return;
+          const job = ctx.engine.enqueue(
+            "music",
+            { episodeId: epId, sceneId: sc.id, mood: sc.mood },
+            { episodeId: epId, initiated_by: "user" }
+          );
+          derived.push({ kind: "job", job });
+        });
+      }
+      const job = ctx.engine.enqueue(
+        "compose",
+        { episodeId: epId, purpose: "preview" },
+        { episodeId: epId, initiated_by: "user" }
+      );
+      derived.push({ kind: "job", job });
     }
-    const job = ctx.engine.enqueue(
-      "compose",
-      { episodeId: epId, purpose: "preview" },
-      { episodeId: epId, initiated_by: "user" }
-    );
-    derived.push({ kind: "job", job });
   } else if (t === "C5") {
     const { estimateBreakdown } = require("./episodes.js");
     const project = projectOf(ctx, episode);
@@ -384,6 +412,15 @@ function advanceOnAccept(ctx, card, episode, operator) {
       });
       episode.est = { time_min: est.time_min, cents: est.cents, shots: est.shots };
     }
+    // 开机批次快照（2026-11-21）：C6 卡唯一标识本次开机用哪个版本的素材——
+    // 每镜首帧来源（试妆第几版的哪个角度帧），拍板前一眼看清「开机 = 拍这一批」
+    const stSnap = ctx.store.get();
+    const c2cur = Object.keys(stSnap.cards || {}).map((k) => stSnap.cards[k])
+      .filter((c) => c.episodeId === epId && c.type === "C2")
+      .sort((a, b) => (b.ver || 0) - (a.ver || 0))[0];
+    const c2sDec = Object.keys(stSnap.cards || {}).map((k) => stSnap.cards[k])
+      .filter((c) => c.episodeId === epId && c.type === "C2S" && c.status === "decided")
+      .sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0))[0];
     const r = upsertCard(ctx, {
       episodeId: epId,
       type: "C6",
@@ -391,6 +428,12 @@ function advanceOnAccept(ctx, card, episode, operator) {
         estimate: { shots: est.shots, time_min: est.time_min, cents: est.cents },
         breakdown: est.breakdown,
         estimate_ver: episode ? episode.estimate_ver : null,
+        snapshot: {
+          castRound: (c2sDec && c2sDec.round) || null,
+          frames: ((c2cur && c2cur.payload && c2cur.payload.images) || [])
+            .filter((im) => im && im.art)
+            .map((im) => ({ seq: im.seq, angle: im.refAngle || null, t: im.refT != null ? im.refT : null, file: String(im.art || "").replace(/^.*[\\/]/, "") }))
+        },
         note: "开机确认：接受后以 ver 调 POST /api/episodes/:id/shoot"
       },
       skipIfDecided: true
@@ -400,33 +443,9 @@ function advanceOnAccept(ctx, card, episode, operator) {
       derived.push({ kind: "card", card: r.card });
     }
   } else if (t === "C2S") {
-    // 试妆试镜拍板 → 固化多角度抽帧参考（viewRefs＝分镜「换背景壳」的身份输入源）→ 派角色分镜
-    const st = ctx.store.get();
-    const p2 = card.payload || {};
-    const role = p2.role || "主角色";
-    const roleSeg = String(role).replace(/[^A-Za-z0-9._-]/g, "_") || "role";
-    st.viewRefs = st.viewRefs || {};
-    st.viewRefs[epId] = st.viewRefs[epId] || {};
-    const fs = require("fs");
-    const path = require("path");
-    const vdir = path.join(process.cwd(), "var", "assets", "cast", roleSeg, "views");
-    fs.mkdirSync(vdir, { recursive: true });
-    const refs = [];
-    (p2.views || []).forEach((v) => {
-      if (!v || !v.art) return;
-      if (v.selected === false) return; // 用户可取消勾选（默认全收）
-      if (v.score != null && v.score < 0.6) return; // 身份门控硬线
-      const name = String(v.art).replace(/^.*[\\/]/, "");
-      const src = [path.join(process.cwd(), "var", "out", name), path.join(process.cwd(), "var", "assets", "cast", name)]
-        .find((x) => fs.existsSync(x));
-      if (!src) return;
-      if (path.resolve(path.dirname(src)).toLowerCase() !== path.resolve(vdir).toLowerCase()) {
-        fs.copyFileSync(src, path.join(vdir, name));
-      }
-      refs.push({ art: "var/assets/cast/" + roleSeg + "/views/" + name, t: v.t, score: v.score, angle: v.angle });
-    });
-    st.viewRefs[epId][role] = refs;
-    if (refs.length) {
+    // 试妆试镜拍板 → 固化多角度抽帧参考（viewRefs＝分镜选帧的身份输入源）→ 派角色分镜
+    const role = refineViewRefs(ctx, epId, card);
+    if (role) {
       const job = ctx.engine.enqueue(
         "storyboard_char",
         { episodeId: epId },
@@ -450,6 +469,37 @@ function advanceOnAccept(ctx, card, episode, operator) {
   }
   // C6/C7/C8 accept：仅决策留痕，无进一步派生
   return derived;
+}
+
+/** 从已拍板的 C2S 卡固化 viewRefs（可重入：阈值调整/勾选变更后刷新，不重渲试妆）。
+ *  0.45 弱同人下限：同源试妆帧血缘明确（首帧=原图、时间轴连续），用户拍板高于机检硬线。 */
+function refineViewRefs(ctx, episodeId, c2sCard) {
+  const st = ctx.store.get();
+  const p2 = (c2sCard && c2sCard.payload) || {};
+  const role = p2.role || "主角色";
+  const roleSeg = String(role).replace(/[^A-Za-z0-9._-]/g, "_") || "role";
+  st.viewRefs = st.viewRefs || {};
+  st.viewRefs[episodeId] = st.viewRefs[episodeId] || {};
+  const fs = require("fs");
+  const path = require("path");
+  const vdir = path.join(process.cwd(), "var", "assets", "cast", roleSeg, "views");
+  fs.mkdirSync(vdir, { recursive: true });
+  const refs = [];
+  (p2.views || []).forEach((v) => {
+    if (!v || !v.art) return;
+    if (v.selected === false) return; // 用户取消勾选的帧不收
+    if (v.score != null && v.score < 0.45) return; // <0.45 疑似换人，硬线
+    const name = String(v.art).replace(/^.*[\\/]/, "");
+    const src = [path.join(process.cwd(), "var", "out", name), path.join(process.cwd(), "var", "assets", "cast", name)]
+      .find((x) => fs.existsSync(x));
+    if (!src) return;
+    if (path.resolve(path.dirname(src)).toLowerCase() !== path.resolve(vdir).toLowerCase()) {
+      fs.copyFileSync(src, path.join(vdir, name));
+    }
+    refs.push({ art: "var/assets/cast/" + roleSeg + "/views/" + name, t: v.t, score: v.score, angle: v.angle });
+  });
+  st.viewRefs[episodeId][role] = refs;
+  return refs.length ? role : null;
 }
 
 function reEnqueueOnReject(ctx, card, body) {
@@ -1074,6 +1124,36 @@ function register(router, ctx) {
     },
     { auth: true }
   );
+  // POST /api/episodes/:id/viewrefs/refresh — 从本集最新已拍板 C2S 卡重固化 viewRefs（阈值调整后可重入），
+  // 并重派选帧分镜（storyboard_char，零生成秒级）
+  router.add(
+    "POST",
+    "/api/episodes/:id/viewrefs/refresh",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const epId = params.id;
+      if (!(st.episodes || {})[epId]) throw { code: "NOT_FOUND", message: "剧集不存在: " + epId };
+      const c2sList = Object.keys(st.cards || {}).map((k) => st.cards[k])
+        .filter((c) => c.episodeId === epId && c.type === "C2S" && c.status === "decided")
+        .sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0));
+      const card = c2sList[0];
+      if (!card) throw { code: "NOT_READY", message: "本集尚无已拍板的试妆试镜卡（C2S）" };
+      const role = refineViewRefs(ctx, epId, card);
+      if (!role) throw { code: "NOT_READY", message: "固化后参考库为空（帧缺失或全部被勾选取消）" };
+      const job = engine.enqueue(
+        "storyboard_char",
+        { episodeId: epId },
+        { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+      );
+      const vr = (st.viewRefs || {})[epId] || {};
+      audit(auth, "viewrefs_refresh", epId, { role, frames: (vr[role] || []).length, job_id: job && job.id });
+      store.commit();
+      return router.json(res, 200, { role, frames: (vr[role] || []).length, job });
+    },
+    { auth: true }
+  );
+
   // POST /api/cards/:id/decide {action:"accept|edit|reject",payload?,ver}
   router.add(
     "POST",

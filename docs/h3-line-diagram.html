@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MINIMAX H3 线 · 短剧生成全链路一张图</title>
+<style>
+  :root{
+    --biz:#7c3aed; --biz-bg:#f5f3ff; --biz-bd:#ddd6fe;
+    --orch:#2563eb; --orch-bg:#eff6ff; --orch-bd:#bfdbfe;
+    --tmpl:#0d9488; --tmpl-bg:#f0fdfa; --tmpl-bd:#99f6e4;
+    --model:#ea580c; --model-bg:#fff7ed; --model-bd:#fed7aa;
+    --art:#475569;  --art-bg:#f8fafc;  --art-bd:#e2e8f0;
+    --ink:#1e293b; --weak:#64748b; --gold:#b45309;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+    background:#eef1f6; color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{width:1420px; margin:0 auto; background:#fff; box-shadow:0 0 24px rgba(15,23,42,.12);}
+  /* ---------- 头部 ---------- */
+  .head{
+    background:linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4338ca 100%);
+    color:#fff; padding:46px 56px 38px;
+  }
+  .head h1{font-size:34px; letter-spacing:1px;}
+  .head h1 .hl{color:#fbbf24;}
+  .head .sub{margin-top:12px; font-size:16px; color:#c7d2fe; line-height:1.7;}
+  .head .meta{margin-top:18px; display:flex; flex-wrap:wrap; gap:8px;}
+  .head .meta span{
+    background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25);
+    border-radius:999px; padding:4px 14px; font-size:12.5px; color:#e0e7ff;
+  }
+  /* ---------- 总路线条 ---------- */
+  .stepper{padding:26px 56px 8px; }
+  .stepper .st-title{font-size:15px; color:var(--weak); margin-bottom:12px; font-weight:700;}
+  .steps{display:flex; align-items:stretch; gap:0;}
+  .step{
+    flex:1; text-align:center; padding:10px 4px 12px; border-radius:10px;
+    background:var(--biz-bg); border:1.5px solid var(--biz-bd); margin:0 3px;
+  }
+  .step b{display:block; font-size:14.5px; color:var(--biz);}
+  .step span{display:block; font-size:11.5px; color:var(--weak); margin-top:3px;}
+  .step.new{background:#fffbeb; border-color:#fcd34d; box-shadow:0 2px 10px rgba(245,158,11,.18);}
+  .step.new b{color:#b45309;}
+  .step.final{background:#ecfdf5; border-color:#6ee7b7;}
+  .step.final b{color:#047857;}
+  /* ---------- 图例 ---------- */
+  .legend{padding:18px 56px 24px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .legend .lg{
+    display:flex; align-items:center; gap:7px; font-size:13px; color:var(--ink);
+    border:1.5px solid var(--art-bd); border-radius:999px; padding:5px 14px 5px 8px; background:#fff;
+  }
+  .legend .dot{width:14px; height:14px; border-radius:4px;}
+  .legend .hint{font-size:12.5px; color:var(--weak); margin-left:6px;}
+  /* ---------- 幕（act） ---------- */
+  .acts{padding:0 56px 8px;}
+  .act{
+    border:1.5px solid #e2e8f0; border-radius:16px; background:#fff;
+    padding:20px 24px 16px; margin-bottom:0; position:relative;
+  }
+  .act.new{border:2px solid #f59e0b; background:#fffdf7; box-shadow:0 4px 18px rgba(245,158,11,.14);}
+  .act-title{display:flex; align-items:baseline; gap:12px; margin-bottom:4px;}
+  .act-title .no{
+    background:var(--ink); color:#fff; border-radius:8px; padding:3px 10px;
+    font-size:13px; font-weight:700; letter-spacing:1px;
+  }
+  .act.new .act-title .no{background:#b45309;}
+  .act-title h2{font-size:21px;}
+  .act-title .tagline{font-size:13px; color:var(--weak);}
+  .act.new .act-title h2{color:#92400e;}
+  .act-desc{font-size:13.5px; color:var(--weak); line-height:1.75; margin:4px 0 14px;}
+  .act-desc b{color:var(--ink);}
+  /* 层级行 */
+  .layer-row{display:flex; gap:12px; margin-bottom:9px; align-items:stretch;}
+  .layer-tag{
+    flex:0 0 118px; display:flex; flex-direction:column; justify-content:center; align-items:center;
+    border-radius:10px; font-size:12.5px; font-weight:700; line-height:1.5; padding:8px 4px;
+  }
+  .layer-tag small{font-weight:400; font-size:10.5px; opacity:.75;}
+  .t-biz{background:var(--biz-bg); color:var(--biz); border:1.5px solid var(--biz-bd);}
+  .t-orch{background:var(--orch-bg); color:var(--orch); border:1.5px solid var(--orch-bd);}
+  .t-tmpl{background:var(--tmpl-bg); color:var(--tmpl); border:1.5px solid var(--tmpl-bd);}
+  .t-model{background:var(--model-bg); color:var(--model); border:1.5px solid var(--model-bd);}
+  .t-art{background:var(--art-bg); color:var(--art); border:1.5px solid var(--art-bd);}
+  .layer-body{
+    flex:1; border:1.5px solid var(--art-bd); border-radius:10px; padding:10px 14px;
+    font-size:13.5px; line-height:1.8; background:#fff;
+  }
+  .layer-body b{color:var(--ink);}
+  .layer-body .code{
+    font-family:Consolas,"Courier New",monospace; font-size:12px;
+    background:#0f172a; color:#e2e8f0; border-radius:6px; padding:1px 7px; white-space:nowrap;
+  }
+  .layer-body .api{
+    font-family:Consolas,monospace; font-size:12px; color:#1d4ed8; background:var(--orch-bg);
+    border:1px solid var(--orch-bd); border-radius:6px; padding:1px 7px; white-space:nowrap;
+  }
+  .layer-body .w{ /* 权重名 */
+    font-family:Consolas,monospace; font-size:12px; color:#9a3412; background:var(--model-bg);
+    border:1px solid var(--model-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;
+  }
+  .layer-body .file{
+    font-family:Consolas,monospace; font-size:12px; color:#334155; background:var(--art-bg);
+    border:1px solid var(--art-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;
+  }
+  .layer-body .node{ /* comfy 节点名 */
+    font-family:Consolas,monospace; font-size:12px; color:#0f766e; background:var(--tmpl-bg);
+    border:1px solid var(--tmpl-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;
+  }
+  .layer-body .muted{color:var(--weak); font-size:12.5px;}
+  .chain{font-size:12.5px; color:var(--weak); margin-top:6px; line-height:2;}
+  .chain .node{margin:0 1px;}
+  /* 幕间箭头 */
+  .handoff{
+    display:flex; align-items:center; gap:14px; padding:10px 56px;
+  }
+  .handoff .arrow{font-size:26px; color:#94a3b8; line-height:1;}
+  .handoff .hl-label{
+    font-size:13px; color:#475569; background:#f1f5f9; border:1px dashed #cbd5e1;
+    border-radius:999px; padding:6px 18px;
+  }
+  .handoff .hl-label b{color:var(--gold);}
+  /* ---------- 权重台账表 ---------- */
+  .tbl-sec{padding:8px 56px 0;}
+  .tbl-sec h2{font-size:22px; margin:10px 0 6px;}
+  .tbl-sec .sub{font-size:13px; color:var(--weak); margin-bottom:14px;}
+  table{width:100%; border-collapse:collapse; font-size:12.8px;}
+  th{
+    background:#1e293b; color:#f1f5f9; text-align:left; padding:9px 12px;
+    font-size:12.5px; letter-spacing:.5px;
+  }
+  td{border-bottom:1px solid #e2e8f0; padding:9px 12px; vertical-align:top; line-height:1.7;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  td .w, td .file{margin-right:4px;}
+  .pill{border-radius:999px; padding:1px 9px; font-size:11.5px; white-space:nowrap;}
+  .p-img{background:var(--model-bg); color:#9a3412; border:1px solid var(--model-bd);}
+  .p-vid{background:#ecfeff; color:#155e75; border:1px solid #a5f3fc;}
+  .p-gate{background:#fdf2f8; color:#9d174d; border:1px solid #fbcfe8;}
+  .p-aux{background:var(--art-bg); color:#475569; border:1px solid var(--art-bd);}
+  /* ---------- 纪律带 ---------- */
+  .rules{padding:30px 56px 10px;}
+  .rules h2{font-size:22px; margin-bottom:14px;}
+  .rule-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
+  .rule{
+    border:1.5px solid #e2e8f0; border-left:4px solid var(--orch); border-radius:10px;
+    padding:10px 14px; font-size:12.8px; line-height:1.7; background:#f8fafc;
+  }
+  .rule b{display:block; font-size:13.5px; color:var(--ink); margin-bottom:2px;}
+  .rule.gold{border-left-color:#f59e0b;}
+  .rule.green{border-left-color:#10b981;}
+  /* ---------- 尾部 ---------- */
+  .foot{
+    margin-top:26px; background:#0f172a; color:#94a3b8; padding:20px 56px;
+    font-size:12.5px; line-height:1.8;
+  }
+  .foot b{color:#e2e8f0;}
+  h2.sec{padding:26px 56px 0; font-size:22px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= 头部 ================= -->
+  <div class="head">
+    <h1>「<span class="hl">MINIMAX H3 线</span>」短剧生成全链路 · 一张图</h1>
+    <div class="sub">
+      业务流程 × 编排节点 × ComfyUI 固化模板 × 模型权重 —— 自上而下四层视图<br>
+      核心理念：<b style="color:#fbbf24">人是本体，背景只是壳</b> —— 初始图锁身份 → 试镜视频保五官体态 → 分镜只换背景壳 → 拍摄首帧继承高保真人脸
+    </div>
+    <div class="meta">
+      <span>产品后端 Node.js :8767</span>
+      <span>DGX Spark · ComfyUI :8188（H3 权重 ~94G 热集）</span>
+      <span>facegate :8195（人脸门控）</span>
+      <span>CosyVoice2 TTS :9880</span>
+      <span>ACE-Step 音乐 :8190</span>
+      <span>5060 Ti · ComfyUI :8188（标准档并行线）</span>
+      <span>2026-11-21 · X-Theater 实测代码</span>
+    </div>
+  </div>
+
+  <!-- ================= 总路线 ================= -->
+  <div class="stepper">
+    <div class="st-title">▶ 一集短剧的十步总路线（黄色＝本次试妆试镜调整新增）</div>
+    <div class="steps">
+      <div class="step"><b>剧本</b><span>结构化 JSON</span></div>
+      <div class="step"><b>C1 策划</b><span>H3 海报 t2i</span></div>
+      <div class="step"><b>初始定妆</b><span>上传 / t2i 生成</span></div>
+      <div class="step new"><b>试妆试镜 C2S</b><span>5.17s 多角度视频→抽帧</span></div>
+      <div class="step"><b>角色分镜</b><span>选角度帧＋换壳</span></div>
+      <div class="step"><b>配音·音乐·预览</b><span>C4→C9→C5→C6</span></div>
+      <div class="step"><b>开机拍摄</b><span>逐镜声画视频</span></div>
+      <div class="step"><b>机审复审</b><span>moderate→C7→C8</span></div>
+      <div class="step final"><b>成片导出</b><span>FFmpeg 真合成</span></div>
+    </div>
+  </div>
+
+  <!-- ================= 图例 ================= -->
+  <div class="legend">
+    <div class="lg"><span class="dot" style="background:var(--biz)"></span>业务决策层（用户拍板面 · 卡流）</div>
+    <div class="lg"><span class="dot" style="background:var(--orch)"></span>编排层（DAG 引擎 · lane · API）</div>
+    <div class="lg"><span class="dot" style="background:var(--tmpl)"></span>模板节点层（ComfyUI 固化模板）</div>
+    <div class="lg"><span class="dot" style="background:var(--model)"></span>模型权重层（DiT / TE / VAE / LoRA）</div>
+    <div class="lg"><span class="dot" style="background:var(--art)"></span>产物素材层（var/ 落盘）</div>
+    <div class="hint">每一幕自上而下：人做什么 → 引擎怎么派 → 模板怎么跑 → 模型是什么 → 产出什么</div>
+  </div>
+
+  <div class="acts">
+
+  <!-- ================= 幕 0 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 0 幕</span><h2>起点：剧本 = 唯一结构化源头</h2><span class="tagline">业务场景 · 立项</span></div>
+    <div class="act-desc">编剧产出的不是文档而是 <b>结构化 JSON</b>：分场分镜表（画面描述/时长/在场角色/台词/档位）＋角色定义表（人设/外形锚点/服装锁/参考图）。全链所有环节都从这里透传，不再有二次解析。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>用户操作</small></div>
+      <div class="layer-body"><span class="api">POST /api/projects</span> 建项目（影调/画比/音乐开关）　→　<span class="api">POST /api/episodes</span> {title, brief, script}</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>DAG 引擎</small></div>
+      <div class="layer-body">建集即派 <b>c1plan</b> 任务；引擎按 <span class="code">type × tier</span> 路由 lane（tier=high ⇒ 全族走 imgspark·H3 线）；<b> aireview</b> 对 C1/C2/C4/C6 拍板卡自动多人格机检</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>数据结构</small></div>
+      <div class="layer-body"><span class="file">script.scenes[]{name, mood, shots[]{desc, sec≤15s, cast[], dialogue, tier, width, height}}</span>　<span class="file">script.cast[]{role, name, desc, anchor, wardrobe, refImage}</span></div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">建集完成 → <b>engine.enqueue("c1plan")</b> → 进入故事策划</span></div>
+
+  <!-- ================= 幕 1 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 1 幕</span><h2>C1 故事策划卡 ＋ H3 主视觉海报</h2><span class="tagline">业务场景 · 策划拍板</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C1 卡</small></div>
+      <div class="layer-body">用户看到：故事梗概 ＋ 人物表 ＋ 分场分镜表（每镜画面描述/时长/台词）→ <b>accept</b>（必答门①，决策+1）；reject → 重出 c1plan</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>状态机</small></div>
+      <div class="layer-body">c1plan done → 卡流监听 <span class="code">onPlanDone</span> 生成 C1 卡；accept 后 <span class="code">ensureScenesAndShots</span> 把剧本物化成 state 场/镜（镜号 seq = 场×100＋镜）</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>固化模板</small></div>
+      <div class="layer-body"><span class="node">h3-image-cast</span>（transform 删 LoadImage 4/5/6 → <b>纯 t2i</b>）768×1344 竖版海报　节点链：<span class="chain" style="display:inline"><span class="node">UNETLoader</span>→<span class="node">MiniMaxH3ImageConditioning</span>→<span class="node">ConditioningZeroOut</span>→<span class="node">KSampler(6步 euler/simple cfg1)</span>→<span class="node">VAEDecode</span>→<span class="node">SaveImage</span></span></div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>权重</small></div>
+      <div class="layer-body"><span class="w">minimax_h3_image_pruned_int8_convrot 20.98G</span> 生图 DiT　＋　<span class="w">qwen3vl_32b_nvfp4_awq 15.7G</span> 文本/图像编码器　＋　<span class="w">minimax_h3_image_vae_fp16 1.17G</span>　→ 实测 <b>14.9s/张</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>落盘</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;jobId&gt;_poster.png</span> ＋ meta sidecar（prompt_id/权重清单/AI 标注）· 影子记账 20 分</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C1 accept → 场/镜物化 → storyboard(壳任务) → <b>进入「初始定妆」</b></span></div>
+
+  <!-- ================= 幕 2 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 2 幕</span><h2>初始定妆：确立「角色身份源」</h2><span class="tagline">业务场景 · 用户三入口确认制</span></div>
+    <div class="act-desc">身份从这里锁定：<b>用户上传的原图就是定妆终稿</b>（也可以让 H3 按提示词生成候选再挑）。此后所有环节（试镜、分镜、视频）都以这张图为身份根，<b>不再自动随机生成新脸</b>。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C2 卡</small></div>
+      <div class="layer-body">每个角色三选一：① <b>上传原图</b> ② <b>提示词生成</b>初始图 ③ <b>继承旧集</b>定妆（跨轮沿用，脸不重掷）→ 卡上点「确认」</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>REST API</small></div>
+      <div class="layer-body">
+        ① <span class="api">POST /api/episodes/:id/castref/upload?role=X</span>（raw PNG/JPG ≤16MB，router 支持 raw body）
+        ② <span class="api">POST …/castref/generate</span> {role, prompt} → <b>cast_init</b> job
+        ③ <span class="api">POST …/castref/confirm</span> {role, file}
+      </div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>生成入口</small></div>
+      <div class="layer-body">cast_init 走 <span class="node">h3-image-cast</span> 纯 t2i：<b>864×1536 精确 9:16</b>（32 倍数）· 半身景别·面部清晰锐利；产物追加为该角色候选「AI 初始图」</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>门控模型</small></div>
+      <div class="layer-body">confirm 时 <span class="w">facegate buffalo_l</span>（insightface，:8195）做<b>人脸存在性机检</b>——<span class="code">no_face</span> 拒绝确认；ArcFace embedding 即身份基准</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>固化</small></div>
+      <div class="layer-body"><span class="file">var/assets/cast/&lt;file&gt;.png</span> → 写入 <span class="file">cast.refImage</span>；<b>全员确认齐 → 自动派 screen_test</b>（每角色 1 条，engine.activeOf 防重派）</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">全员 refImage 就位 → 自动派 <b>screen_test</b>（★ 本次调整核心幕）</span></div>
+
+  <!-- ================= 幕 3 ================= -->
+  <div class="act new">
+    <div class="act-title"><span class="no">第 3 幕 ★</span><h2>试妆试镜（C2S）：一条视频锁死「脸＋体态」</h2><span class="tagline">业务场景 · 高保真身份采集</span></div>
+    <div class="act-desc"><b>为什么用视频不用照片：</b>一张定妆照只有一个角度；分镜需要的左右 3/4 侧脸、仰头、低头等姿态各有专属参考帧。用初始图直接作<b>首帧</b>生成一条多角度试镜视频，再逐帧打分挑帧——<b>背景和道具只是壳，人脸五官、体态、眼神、表情才是要高保真的本体</b>。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C2S 卡</small></div>
+      <div class="layer-body">用户看：试镜视频 ＋ 7×2 抽帧网格 ＋ 逐帧分数/角度 ＋ 确认清单（五官脸型/身材体态/服装细节/多角度）→ <b>勾选拍板</b>；不满意 → reject 附意见 note → 自动重出试镜</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>screen_test job</small></div>
+      <div class="layer-body">lane 固定 <span class="code">imgspark</span>；流程：ffmpeg cover 裁切初始图 → 上传 Spark → FL2VA 真跑 → 抽帧 → 逐帧打分 → <span class="code">onScreenTestDone</span> 出 C2S 卡</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>h3-fl2va-video</small></div>
+      <div class="layer-body">节点链：<span class="node">LoadImage(FIRST_FRAME)</span>→<span class="node">MiniMaxH3ImageToVideo</span>→<span class="node">SamplerCustomAdvanced(res_multistep)</span>→<span class="node">VAEDecode</span>+<span class="node">VAEDecodeAudio</span>→<span class="node">CreateVideo(24fps)</span>→<span class="node">SaveVideo</span><br>
+      参数：<b>736×1312</b>（32 倍数等比裁切）· <b>124 帧 / 5.17s</b> · turbo <b>4 步</b> · timeout 1500s · 动作提示词＝正面→左 3/4→右 3/4→仰头闭眼→回眸微笑（覆盖分镜所需头部角度）· 用户 note 追加尾部</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>权重</small></div>
+      <div class="layer-body"><span class="w">minimax_h3_fl2va_pruned_int8 20.97G</span> 首帧→声画 DiT　＋　<span class="w">fl2v_turbo_4step LoRA 1.96G</span>（40+步→4步蒸馏）　＋　<span class="w">video VAE 5.21G</span> ＋ <span class="w">audio VAE 0.61G</span>（原生声画）　＋　<span class="w">qwen3vl_32b TE 15.7G</span></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>抽帧＋固化</small></div>
+      <div class="layer-body">
+        <span class="file">&lt;jobId&gt;_screentest.mp4</span> → ffmpeg <span class="code">select=not(mod(n,10))</span> 抽 ~13 张全分辨率候选 → 逐帧 <b>facegate ArcFace 打分</b>（yaw/pitch 角度标签）→ <span class="file">&lt;jobId&gt;_grid.png</span> 7×2 缩略墙<br>
+        <b>accept C2S → score≥0.6 硬线过滤 → 拷贝 var/assets/cast/&lt;role&gt;/views/ → 固化 st.viewRefs[episodeId][role]</b>（分镜的身份输入源）
+      </div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">viewRefs 固化 → 自动派 <b>storyboard_char</b>（分镜＝选角度帧＋换背景壳）</span></div>
+
+  <!-- ================= 幕 4 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 4 幕</span><h2>角色分镜＝「选角度参考帧 ＋ 只换背景壳」</h2><span class="tagline">业务场景 · 保脸分镜</span></div>
+    <div class="act-desc">分镜不再重新画人：每一镜先解析出需要的<b>头部角度</b>，从试妆帧库选最匹配的参考帧，然后 H3-Image edit <b>只替换背景与环境</b>——人（脸/五官/发型/体态/头部角度/服装）原封不动。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>分镜可见</small></div>
+      <div class="layer-body">分镜首帧逐格出现在 C2/C4 卡（带 refAngle/refT 溯源：用了哪条试镜帧、什么角度）；用户 reject → 重出</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>storyboard_char job</small></div>
+      <div class="layer-body">逐镜：<span class="code">shotAngleNeed(镜desc＋角色anchor)</span> 关键词解析（仰头/低头/左侧脸/右侧脸/正面）→ <span class="code">pickView(viewRefs)</span> 选该角度最高分帧（缺角度→front→全局最高分兜底；旧集回退初始原图）；同图上传缓存不重传</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>h3-image-edit</small></div>
+      <div class="layer-body"><b>img2img</b>：KSampler 的 latent ← 参考帧 VAE 编码（身份像素级保真）· 宽高＝原图 /16 对齐<br>
+      提示词模板：「<b>人物保持完全不变</b>——脸、五官、发型、体态、头部角度与参考帧一致，服装：&lt;wardrobe 锁&gt;。<b>只替换背景与环境为</b>：&lt;该镜描述&gt;。单幅剧照，禁止分屏拼贴。实拍电影剧照质感，浅景深」</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>门控闭环</small></div>
+      <div class="layer-body"><span class="w">H3-Image DiT 20.98G</span>（edit 模式）＋ <span class="w">facegate inswapper_128</span>：出图 → ArcFace 打分，<b>&lt;0.6 → /swap 换回锁定源脸再打分</b>；每镜 2 次尝试，仍不过 → <span class="code">IDENTITY_GATE_FAIL</span> 进自动补拍梯子</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>分镜首帧</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;jobId&gt;_h3charN.png</span> → <span class="code">onStoryboardCharDone</span> 按 seq 绑 shotId → 回填 C2/C4 卡 → <b>即第 6 幕拍摄的首帧源</b></div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C3 演员表锁定 → C4 分镜确认 accept → 派 voice / music / compose(preview)</span></div>
+
+  <!-- ================= 幕 5 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 5 幕</span><h2>配音 · 配乐 · 预览 · 预算</h2><span class="tagline">业务场景 · 声音资产与成本确认</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C9→C5→C6</small></div>
+      <div class="layer-body">每场音乐 3 候选 → <b>C9 采用卡</b>（reject=换一批；永不计决策数）→ <b>C5 预览样片卡</b> → <b>C6 预算开机卡</b>（estimate_ver，CAS 防并发拍板）</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>三条 lane 并行</small></div>
+      <div class="layer-body">voice（每场 1 job，场景过滤·诚实空结果）· music（每场 1 job，mood→候选）· compose(preview)；台词产物持久化 <span class="file">state.voice_lines</span>（compose 断供保护）</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>声音模型</small></div>
+      <div class="layer-body"><span class="w">CosyVoice2 :9880</span> 台词→wav（角色→音色映射「女主→中文女」，TTS 前卸 ComfyUI 显存互斥）　·　<span class="w">ACE-Step 1.5 :8190</span> mood→45s BGM wav（MIT 许可·预检拦截演示位）</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>声音资产</small></div>
+      <div class="layer-body"><span class="file">var/out/tts_*.wav</span>（供第 8 幕对位混流）· <span class="file">music_*.wav</span>（采用条入曲库带 license 快照）</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C6 accept ＋ <span style="font-family:Consolas,monospace">POST /shoot {ver}</span> CAS 校验 → 逐镜派 video job</span></div>
+
+  <!-- ================= 幕 6 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 6 幕</span><h2>开机拍摄：逐镜「原生声画」视频</h2><span class="tagline">业务场景 · 高价值档出片</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>开机</small></div>
+      <div class="layer-body">预算确认后一键开机（支持 <span class="code">shotIds</span> 局部重拍）；预算护栏：累计成本 &gt; 预算×120% → 整集暂停</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>模板二选一</small></div>
+      <div class="layer-body">逐镜查 C2 分镜图（按 shotId 绑定）：<b>有首帧 → h3-fl2va</b>（首帧锁构图与长相）；<b>无首帧有定妆 → h3-ref2va</b>（subject reference 保脸兜底）；两者皆无 → <span class="code">NO_SPARK_INPUT_ART</span> 真错误不造假。拍摄前 <span class="code">ensureFree(base,8)</span> 内存守卫</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>IR 提示词引擎</small></div>
+      <div class="layer-body"><b>h3ir</b>（官方 Context-IR 规则化复刻）：<span class="code">buildFL2VA</span> 三字段（integrated_multimodal_description / overall_soundscape / non_diegetic_music）· <span class="code">buildRef2VA</span> 六段式（subject_definitions / summary / retention_analysis / detailed_description / …）· 台词以 <span class="code">&lt;d&gt;[中文]…&lt;/d&gt;</span> 内嵌 → <b>口型自动同步</b> · <span class="code">lengthFrames(sec)</span>：max(124, sec×24) 对齐 <b>17k+5 帧网格</b>，上限 362 帧≈15s；可选 LLM 全英文重写（默认关）</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>视频族权重</small></div>
+      <div class="layer-body"><span class="w">fl2va DiT 20.97G</span> / <span class="w">ref2va DiT 20.97G</span> ＋ <span class="w">turbo 4step LoRA</span> ＋ <span class="w">video VAE 5.2G</span> ＋ <span class="w">audio VAE 0.61G</span>；res_multistep/simple · 768×1344 竖屏 · 同族常驻不互逐（跨族才 /free）· 实测 <b>fl2va 286.5s / ref2va 260.4s 每镜</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>take</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;takeId&gt;.mp4</span> 画面动作＋对口型台词＋环境声一步到位 · 150 分/镜 · meta 带 IR/LLM/权重四元组</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">每镜 video done → 自动派 moderate 机审</span></div>
+
+  <!-- ================= 幕 7 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 7 幕</span><h2>机审 · 复审 · 收官</h2><span class="tagline">业务场景 · 质量门</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C7/C8</small></div>
+      <div class="layer-body">机审 pass → 镜 ok；fail → 复审队列 ＋ <b>C7 复审批复卡</b>（每集唯一，新落审镜并入同一张）→ 批复通过 / <span class="code">shotIds</span> 局部重拍 → 全部 ok 且无 pending 复审 → <b>C8 收官卡</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>moderate lane</small></div>
+      <div class="layer-body">verdict 规则机审（pass / fail_review）；失败补拍梯子：worker 抛错 → 系统免费重试 ≤2 次（共 3 跑）→ failed＋告警</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>状态</small></div>
+      <div class="layer-body">shot.status: pending → moderating → ok / pending_review；全 ok 触发 <span class="code">maybeFinishShoot</span> 出 C8</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C8 accept → 导出 → compose(purpose=export, THEATER_COMPOSE_REAL=1)</span></div>
+
+  <!-- ================= 幕 8 ================= -->
+  <div class="act">
+    <div class="act-title"><span class="no">第 8 幕</span><h2>成片导出：FFmpeg 真合成</h2><span class="tagline">业务场景 · 交付</span></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">节点层<small>合成流水线</small></div>
+      <div class="layer-body">
+        ① 片头字幕卡 2s（drawtext 黑底白字＋静音轨统一流）　② 逐镜 <b>best take</b>（显式 best 优先·新拍覆盖旧拍；音轨统一 aac 48k stereo，无音轨补 anullsrc）　③ concat 拼接<br>
+        ④ <b>台词对位</b>：voice_lines 按剧本扁平镜序（seq=场×100＋镜）对齐时间轴 adelay 叠加——<b>take 自带原生说话声的镜自动跳过，不双叠</b>　⑤ 终混：BGM volume 0.18 ＋ 台词轨 amix(normalize=0)
+      </div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>合成引擎</small></div>
+      <div class="layer-body"><span class="w">FFmpeg 6.0</span>（runtime/bin·essentials，无 ffprobe 用 -i stderr 探测时长/音轨）</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>✅ 最终成片</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;episodeId&gt;_final.mp4</span> · 720×1280 · 24fps · h264+aac · 内测水印 · meta（explicit/implicit 标记＋每场音乐许可快照）；真机交付实证 1:22.66 · 26.4MB</div></div>
+  </div>
+
+  </div><!-- /acts -->
+
+  <!-- ================= 权重总台账 ================= -->
+  <h2 class="sec">▶ 模型权重总台账（谁在哪个层次干什么、输入什么输出什么）</h2>
+  <div class="tbl-sec">
+    <table>
+      <tr><th style="width:150px">层次</th><th style="width:330px">模型 / 权重</th><th style="width:150px">规格</th><th style="width:250px">服务哪一步</th><th>输入 → 输出</th></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">minimax_h3_image_pruned_int8_convrot</span></td><td>DiT 20.98G</td>
+        <td>①海报 t2i · ②初始图 t2i · ④分镜 edit img2img</td>
+        <td>prompt（＋参考图/参考帧 latent）→ 1024²~864×1536 PNG</td></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">qwen3vl_32b_nvfp4_awq</span>（TE）</td><td>15.69G</td>
+        <td>H3 全家族共用编码器</td>
+        <td>IR prompt ＋ 参考图 → 正/负条件（CLIPLoader type=minimax）</td></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">minimax_h3_image_vae_fp16</span></td><td>1.17G</td>
+        <td>生图 VAE</td><td>像素 ↔ latent（edit 模式靠它编码参考帧）</td></tr>
+      <tr><td><span class="pill p-aux">备用</span></td>
+        <td><span class="w">qwen3.5_9b_w4a8_gptq</span></td><td>7.34G</td>
+        <td>官方 prompt 扩写分支（产品未启用）</td>
+        <td>—（h3ir 规则拼装替代，可选 llama-server 重写钩子）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_fl2va_pruned_int8_convrot</span></td><td>DiT 20.97G</td>
+        <td>③试镜视频 · ⑥有首帧拍摄</td>
+        <td>首帧＋IR＋17k+5 帧网格 → mp4 原生声画（口型同步）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_ref2va_pruned_int8_convrot</span></td><td>DiT 20.97G</td>
+        <td>⑥无首帧拍摄的保脸兜底</td>
+        <td>≤3 张定妆 refs ＋ 六段式 IR → mp4 原生声画</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_video_vae_fp16</span> ＋ <span class="w">audio_vae_fp32</span></td><td>5.21G＋0.61G</td>
+        <td>视频/音频联合解码</td><td>联合 latent → 视频帧 ＋ 同步波形（台词＋环境声）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">fl2v/ref2v_turbo_4step LoRA ×3</span></td><td>各 1.96G</td>
+        <td>蒸馏加速</td><td>40+ 步采样 → <b>4 步</b>（strength=1）</td></tr>
+      <tr><td><span class="pill p-gate">门控</span></td>
+        <td><span class="w">buffalo_l</span>（insightface）</td><td>CPU</td>
+        <td>②人脸存在性机检 · ③逐帧打分/角度 · ④身份门控</td>
+        <td>图像 → ArcFace 余弦 score（门限 0.6）＋ yaw/pitch 姿态</td></tr>
+      <tr><td><span class="pill p-gate">门控</span></td>
+        <td><span class="w">inswapper_128.onnx</span></td><td>CPU</td>
+        <td>④生成图分数不达标 → 换回锁定源脸</td>
+        <td>生成图＋源脸 → 保真图（再打分复核）</td></tr>
+      <tr><td><span class="pill p-aux">声音</span></td>
+        <td><span class="w">CosyVoice2</span> :9880</td><td>自部署</td>
+        <td>⑤台词配音</td><td>台词文本＋音色 → wav（供对位混流）</td></tr>
+      <tr><td><span class="pill p-aux">声音</span></td>
+        <td><span class="w">ACE-Step 1.5</span> :8190</td><td>自部署 MIT</td>
+        <td>⑤场景 BGM</td><td>mood＋时长 → wav（采用后 -13dB 垫底）</td></tr>
+      <tr><td><span class="pill p-aux">合成</span></td>
+        <td><span class="w">FFmpeg 6.0</span></td><td>essentials</td>
+        <td>③裁切/抽帧/网格 · ⑧成片合成</td><td>图/视频流 → mp4（drawtext/concat/amix/adelay）</td></tr>
+      <tr><td><span class="pill p-aux">并行线</span></td>
+        <td><span class="w">qwen-image-2.1 turbo / edit</span> · <span class="w">LTX-2.5 22B distill</span></td><td>5060 Ti</td>
+        <td>标准档（tier≠high）生图/生视频</td>
+        <td>同一卡流，按镜 tier 路由；共享 TTS/音乐/合成出口</td></tr>
+    </table>
+  </div>
+
+  <!-- ================= 横切纪律 ================= -->
+  <div class="rules">
+    <h2>▶ 横切纪律（每一幕都受约束）</h2>
+    <div class="rule-grid">
+      <div class="rule"><b>模板四元组锁定</b>sha16 × ComfyUI commit × 节点 commit × 权重清单，manifest 校验不过即拒跑（COMFY_TMPL_DRIFT）</div>
+      <div class="rule"><b>内存族常驻</b>h3video / h3image 同族连续出片不卸载；跨族才 POST /free；ram_free&lt;8G 才释放（Spark 统一内存纪律）</div>
+      <div class="rule gold"><b>身份门控 0.6</b>ArcFace ≥0.6 过审；不达标 swap 换回源脸复核；2 次重试仍不过 = 真错误进补拍梯子</div>
+      <div class="rule"><b>失败补拍梯子</b>worker 抛错 → 系统免费重试 ≤2 次（共 3 跑）→ failed＋告警；绝不静默回退造假</div>
+      <div class="rule"><b>预算护栏＋CAS</b>成本&gt;预算×120% 整集暂停；卡 ver / estimate_ver 不符 → 409 STALE 防并发拍板</div>
+      <div class="rule green"><b>aireview 拍板机检</b>C1/C2/C4/C6 每个拍板点多人格规则审查（编剧/观众/制片/选角/造型/统筹/摄影/配音）；真 LLM 到位换 lane 不换骨架</div>
+      <div class="rule"><b>影子记账</b>Σbilling == episode.cost_cents 对账不变量；免费任务不记不计；用户面只显示「自部署·高价值档」</div>
+      <div class="rule"><b>许可合规</b>MiniMax-H3 Community License：take.license attribution ＋ meta.ai_label「AI 生成内容」显著标注</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>MINIMAX H3 线 · 短剧生成全链路一张图</b> · 依据 X-Theater 工作区实测代码整理（2026-11-21）<br>
+    关键源文件：src/server/dag/{engine.js, workers/imgspark.js, workers/vidspark.js, adapters/comfy.js, adapters/h3ir.js} · src/server/api/{cards.js, episodes.js, projects.js} · runtime/templates/manifest.json · runtime/facegate/server.py<br>
+    调整主线：初始图确认制（上传/生成/继承）→ 试妆试镜 FL2VA 多角度视频 → 抽帧 ArcFace 打分 → C2S 拍板固化 viewRefs → 分镜「只换背景壳」→ 首帧继承拍摄
+  </div>
+
+</div>
+</body>
+</html>

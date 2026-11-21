@@ -16,11 +16,13 @@
  *   lengthFrames(sec) → 17k+5 帧网格帧数（124=~5s，训练区间 124-362）
  */
 
-/** 17k+5 帧网格：24fps，124≈5s，上限 362（≈15s 官方训练区间） */
+/** 17k+5 帧网格：24fps，124≈5s，上限 362（≈15s 官方训练区间）。
+ *  向上取整：len = 5 + 17·ceil((base-5)/17)（2026-11-21 修负数取模 bug：7.5s 180帧 原错出 175） */
 function lengthFrames(sec) {
   const s = Number(sec) > 0 ? Number(sec) : 5;
   const base = Math.max(124, Math.round(s * 24));
-  const len = base + ((5 - (base % 17)) % 17);
+  const k = Math.ceil((base - 5) / 17);
+  const len = 5 + 17 * Math.max(0, k);
   return Math.min(362, len);
 }
 
@@ -29,6 +31,21 @@ function dialogueTag(dialogue, lang) {
   if (!d) return "";
   const l = String(lang || "中文").trim();
   return " <d>[" + l + "]" + d + "</d>";
+}
+
+/** 歌曲锚点（2026-11-21）：整首歌统一风格——同一旋律动机+伴奏+唱法写进每镜 IR，
+ *  保证 8 镜独立生成拼起来像同一首歌。song 可为字符串（直接用）或 {motif,accompaniment,tempo,key,voice}。 */
+function songLine(song) {
+  if (!song) return "";
+  if (typeof song === "string") return String(song).trim();
+  const s = song;
+  const parts = [];
+  if (s.motif) parts.push(s.motif);
+  if (s.accompaniment) parts.push(s.accompaniment + " accompaniment");
+  if (s.tempo) parts.push(s.tempo);
+  if (s.key) parts.push(s.key);
+  if (s.voice) parts.push(s.voice);
+  return parts.join(", ");
 }
 
 /**
@@ -42,7 +59,8 @@ function buildFL2VA(opts) {
   const dlg = dialogueTag(o.dialogue, o.lang);
   const style = String(o.style || "").trim();
   const desc = String(o.shotDesc || "").trim();
-  const speaker = o.speaker ? " The speaker (" + o.speaker + ") speaks:" : "";
+  const song = songLine(o.song);
+  const speaker = o.speaker ? " The speaker (" + o.speaker + ") sings these lyrics softly:" : (o.dialogue ? " She sings these lyrics softly:" : "");
   const lines = [];
   if (style) lines.push(style);
   lines.push(
@@ -51,10 +69,10 @@ function buildFL2VA(opts) {
     " The camera holds the composition with subtle handheld micro-movement throughout; the action begins immediately and completes just before the final second."
   );
   lines.push(
-    "overall_soundscape: Quiet location room tone matching the scene, with soft cloth rustle and footstep sounds synchronized to the subject's visible movements" +
-    (o.dialogue ? "; the spoken dialogue is clearly audible and lip-synced." : ".")
+    "overall_soundscape: Quiet bedroom room tone matching the scene, soft cloth rustle" +
+    (song ? "; she sings the lyrics above as " + song + " — the sung vocals are clearly audible and lip-synced" : (o.dialogue ? "; the spoken dialogue is clearly audible and lip-synced" : "")) + "."
   );
-  lines.push("non_diegetic_music: " + (o.music || "none; keep the natural location ambience only."));
+  lines.push("non_diegetic_music: " + (o.music || (song ? "the accompaniment of the song she sings is part of the scene; no extra background music." : "none; keep the natural location ambience only.")));
   return lines.join("\n");
 }
 

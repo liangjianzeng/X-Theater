@@ -1,540 +1,590 @@
 {
- "schema": 1,
- "templates": {
-  "qwen-image-turbo": {
-   "tmpl_sha16": "8ca46a9c07700932",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
-     "sha16": "37c51ff446f4db2e",
-     "role": "diffusion_model"
+  "schema": 1,
+  "templates": {
+    "qwen-image-turbo": {
+      "tmpl_sha16": "8ca46a9c07700932",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
+          "sha16": "37c51ff446f4db2e",
+          "role": "diffusion_model"
+        },
+        {
+          "file": "qwen3vl_8b_int8_convrot.safetensors",
+          "sha16": "8bfd0f6e12abf2d2",
+          "role": "text_encoder"
+        },
+        {
+          "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
+          "sha16": "bb21f7473051e1ac",
+          "role": "vae"
+        }
+      ],
+      "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存",
+      "evidence": "runtime/comfyui-evidence/EVIDENCE.md"
     },
-    {
-     "file": "qwen3vl_8b_int8_convrot.safetensors",
-     "sha16": "8bfd0f6e12abf2d2",
-     "role": "text_encoder"
+    "qwen-image-turbo-i2i": {
+      "tmpl_sha16": "5fcfcfb928587550",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
+          "sha16": "37c51ff446f4db2e",
+          "role": "diffusion_model"
+        },
+        {
+          "file": "qwen3vl_8b_int8_convrot.safetensors",
+          "sha16": "8bfd0f6e12abf2d2",
+          "role": "text_encoder"
+        },
+        {
+          "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
+          "sha16": "bb21f7473051e1ac",
+          "role": "vae"
+        }
+      ],
+      "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存；i2i：LoadImage→VAEEncode→denoise0.7（保影调变构图）",
+      "params": {
+        "DENOISE": "0.7（定妆默认）；人脸保真建议 0.4-0.45"
+      }
     },
-    {
-     "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
-     "sha16": "bb21f7473051e1ac",
-     "role": "vae"
+    "ltx25-t2v": {
+      "tmpl_sha16": "f4a3eae224cbb3e1",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
+          "sha16": "55442750eb0013d9",
+          "role": "diffusion_model",
+          "source": "modelscope:unsloth/LTX-2.5-GGUF",
+          "bytes": 14000234880
+        },
+        {
+          "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+          "sha16": "6ce688a0aa98a5fa",
+          "role": "text_encoder",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 15372969374
+        },
+        {
+          "file": "ltx-2.5-video-vae-bf16.safetensors",
+          "sha16": "847e14ca7f3355de",
+          "role": "vae",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 1472223346
+        },
+        {
+          "file": "ltx-2.5-audio-vae-bf16.safetensors",
+          "sha16": "c52733d37f6a7fb7",
+          "role": "vae_audio",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 364866540
+        },
+        {
+          "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+          "sha16": "eb5a71fe4068ee87",
+          "role": "latent_upscale_model",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 995778752
+        }
+      ],
+      "vram_profile": "16G：DiT UD-Q4_K_XL GGUF 全驻 + TE int8-convrot 15.4G staged 编码后逐出 + VAE×2/upscale ≈2.8G；实测峰值 15785MiB（96.8%）无 OOM；两段蒸馏 8+3 步 CFG1；禁与生图三件套热载共存，切换前必须 POST /free",
+      "params": {
+        "PROMPT": "场景+动作+镜头+风格描述",
+        "NEGATIVE": "默认 pc game, console game, video game, cartoon, childish, ugly",
+        "WIDTH": 720,
+        "HEIGHT": 1280,
+        "SEED": "int",
+        "FPS": 24,
+        "LENGTH": 121,
+        "STAGE1_W": 360,
+        "STAGE1_H": 640,
+        "CFG": 1,
+        "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+        "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
+      },
+      "notes": "LTX-2.5 VAE 空间下采样 32、两段流水线原生输出=STAGE1×64 对齐：720×1280 目标经 360×640 stage1 → 原生 704×1280 → ImageScale lanczos 到精确 720×1280；含同步音频（audio VAE）；输出 mp4 H.264",
+      "verified": {
+        "prompt_id": "12b1146b-608b-43d4-a48e-ea50b9695e72",
+        "wall_s": 190.7,
+        "vram_peak_mib": 15785,
+        "output": "runtime/ltx25-evidence/t2v_test_720x1280_00001_.mp4"
+      },
+      "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
+    },
+    "ltx25-i2v": {
+      "tmpl_sha16": "fefa64344445cc8d",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
+          "sha16": "55442750eb0013d9",
+          "role": "diffusion_model",
+          "source": "modelscope:unsloth/LTX-2.5-GGUF",
+          "bytes": 14000234880
+        },
+        {
+          "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+          "sha16": "6ce688a0aa98a5fa",
+          "role": "text_encoder",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 15372969374
+        },
+        {
+          "file": "ltx-2.5-video-vae-bf16.safetensors",
+          "sha16": "847e14ca7f3355de",
+          "role": "vae",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 1472223346
+        },
+        {
+          "file": "ltx-2.5-audio-vae-bf16.safetensors",
+          "sha16": "c52733d37f6a7fb7",
+          "role": "vae_audio",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 364866540
+        },
+        {
+          "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+          "sha16": "eb5a71fe4068ee87",
+          "role": "latent_upscale_model",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 995778752
+        }
+      ],
+      "vram_profile": "16G：同 ltx25-t2v；实测峰值 15755MiB（96.6%）无 OOM；首帧 guide 两段 Inplace（stage1 strength 0.7 / stage2 1.0）；禁与生图三件套热载共存",
+      "params": {
+        "IMAGE": "ComfyUI/input 内首帧文件名（竖屏 9:16 最佳）",
+        "PROMPT": "动作+表情+镜头描述",
+        "NEGATIVE": "默认同上",
+        "WIDTH": 720,
+        "HEIGHT": 1280,
+        "SEED": "int",
+        "FPS": 24,
+        "LENGTH": 121,
+        "STAGE1_W": 360,
+        "STAGE1_H": 640,
+        "CFG": 1,
+        "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+        "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
+      },
+      "notes": "LoadImage → LTXVPreprocess(18) → 两段 LTXVImgToVideoInplace（首帧锁定）；首帧在 stage2 以 strength 1.0 重编码锁死；其余同 ltx25-t2v",
+      "verified": {
+        "prompt_id": "f31002dd-0e37-4571-b4cc-8f285503e416",
+        "wall_s": 220.9,
+        "vram_peak_mib": 15755,
+        "output": "runtime/ltx25-evidence/i2v_test_720x1280_00001_.mp4"
+      },
+      "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
+    },
+    "qwen-image-edit-cast": {
+      "tmpl_sha16": "0a20351dfccf4b50",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "qwen-image-2.1-Q5_K_M.gguf",
+          "sha16": "f638bd4e385ea2af",
+          "role": "diffusion_model",
+          "source": "modelscope:unsloth/Qwen-Image-2.1-GGUF",
+          "bytes": 5390223168,
+          "note": "原始下载 sha16=4b53321654dd3bf0（与 ModelScope 清单一致）但容器零元数据致 UnetLoaderGGUF 拒载；gguf 库补写 general.architecture=qwen_image + quantization_version=2（与 unsloth turbo 同仓同构），tensor 载荷逐件未动（265 tensor 清单校验一致），修复后 sha16=f638bd4e385ea2af"
+        },
+        {
+          "file": "qwen3vl_8b_int8_convrot.safetensors",
+          "sha16": "8bfd0f6e12abf2d2",
+          "role": "text_encoder",
+          "bytes": 9350798360,
+          "note": "复用在盘件（qwen-image 系共用，CLIPLoader type=qwen_image，内含 vision tower 供 TextEncodeQwenImage21 图像 token 化）"
+        },
+        {
+          "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
+          "sha16": "bb21f7473051e1ac",
+          "role": "vae",
+          "bytes": 675509688,
+          "note": "复用在盘件"
+        }
+      ],
+      "vram_profile": "16G：DiT Q5_K_M 5.4G 全驻 + TE int8 staged 8916MB + VAE 644MB + TextEncodeQwenImage21 参考图 VAE/vision 编码；实测峰值：冷启动首跑 15969MiB（97.9%）无 OOM，稳态跑 14480-14512MiB（88.9%）；禁与 LTX 热载共存，生成前后 POST /free；单次 OOM 不重试同参数；res2048 复测：冷启 15969MiB 峰值后稳态无 OOM，57-60s/张（runtime/qwen-edit-evidence/T1_T2_*）",
+      "params": {
+        "IMAGE": "ComfyUI/input 内定妆图文件名（产品侧拷入；720x1280 竖幅最佳）",
+        "PROMPT": "身份锚点必须前置且如实描述参考图本人（脸型/五官/发量发尾形态），服装显式锁与参考图一致；锚点与图像矛盾的词（如把卷发写成直发）会把身份拽偏——实测 T2 精确锚点+服装锁 similarity 显著优于泛写锚点",
+        "NEGATIVE": "低质量，模糊，畸变，多余的手指，文字，水印（cfg=1 时不生效，保留占位）",
+        "SEED": "int",
+        "WIDTH": 720,
+        "HEIGHT": 1280,
+        "STEPS": 25,
+        "CFG": 1,
+        "RESOLUTION": "2048（参考图 token 量最大化；实测 T1/T2 无 OOM，57-60s）"
+      },
+      "notes": "Qwen-Image-2.1 全量档（7B，t2i+edit 统一，非 turbo）。TextEncodeQwenImage21 单节点出 positive/negative/latent 三路；KSampler latent 接 EmptySD3LatentImage(<WIDTH>,<HEIGHT>) 而非节点 LATENT——因节点 latent=参考图 32 对齐重采样尺寸（720x1280 输入会变 768x1376），无法精确输出分镜要求的 720x1280；若要严格跟随参考图构图可改接节点 LATENT（官方接法）。QwenImage21Cache device=auto/dtype=default 为官方 16G 档配置。sampler=euler/simple，denoise=1（固定实跑值）",
+      "verified": [
+        {
+          "tag": "ladder（雨夜灯塔旋梯+马灯，任务指令 a 原文）",
+          "prompt_id": "06ad41f9-7779-4c43-9253-72d6220c130f",
+          "wall_s": 59.3,
+          "vram_peak_mib": 15969,
+          "seed": 20261121,
+          "cfg": 1,
+          "steps": 25,
+          "output": "runtime/qwen-edit-evidence/ladder_06ad41f9.png",
+          "result": "身份保持✓ 场景/马灯/裙摆/青橙影调全命中"
+        },
+        {
+          "tag": "letter（塔顶值班室读信，任务指令 b 语义；身份锚点前置写法）",
+          "prompt_id": "629c3e5e-bb3a-40f9-aca9-9bd76bacad0f",
+          "wall_s": 57.1,
+          "vram_peak_mib": 14480,
+          "seed": 20261121,
+          "cfg": 1,
+          "steps": 25,
+          "output": "runtime/qwen-edit-evidence/letter_629c3e5e.png",
+          "result": "身份保持✓ 场景/旧信/烛光/实拍质感全命中；同指令 3 次失败记录见 evidence（裸身份子句 cfg1/cfg2.5 均换人）"
+        }
+      ],
+      "evidence": "runtime/qwen-edit-evidence/EVIDENCE.md"
+    },
+    "h3-ref2va-video": {
+      "tmpl_sha16": "1c9f3507c8121a5c",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3video",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+          "sha16": "9255f52b6677845a",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 20970379616
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_video_vae_fp16.safetensors",
+          "sha16": "7c1f131492e7edda",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 5207808496
+        },
+        {
+          "file": "minimax_h3_audio_vae_fp32.safetensors",
+          "sha16": "8e505d95dd1561d4",
+          "role": "vae_audio",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 605254808
+        },
+        {
+          "file": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+          "sha16": "5b9ab5ade15d0775",
+          "role": "lora",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 1956193000
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G 全驻 + TE nvfp4_awq 15G staged + 双 VAE 5.8G + turbo LoRA patch；DynamicVRAM 分页，实测 ram_free 余 ~60G；与 h3-fl2va 同族常驻不互逐；禁与 h3image 族热载共存（跨族 /free）",
+      "params": {
+        "PROMPT": "h3ir.buildRef2VA 六段式 IR（官方 ref-en.txt）",
+        "REF_IMAGE_1": "Spark /upload/image 上传后的文件名（定妆照）",
+        "REF_IMAGE_2": "备用参考图",
+        "REF_IMAGE_3": "备用参考图",
+        "WIDTH": 1344,
+        "HEIGHT": 768,
+        "LENGTH": "17k+5 帧网格（h3ir.lengthFrames）",
+        "SEED": "int",
+        "STEPS": 4
+      },
+      "notes": "角色镜主模板：subject reference 保脸 + IR prompt + <d> 台词 + 原生声画。MiniMaxH3ReferenceToVideo refs≤9 图；sampler res_multistep/simple denoise1；turbo LoRA 4step",
+      "verified": {
+        "prompt_id": "19598fb7-91c2-47f2-9ee7-8f634bf16b0c",
+        "wall_s": null,
+        "output": "runtime/spark-evidence/smoke/ref2va_result.mp4（冒烟）"
+      },
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "h3-fl2va-video": {
+      "tmpl_sha16": "5e91ebf52354f24a",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3video",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+          "sha16": "e889202c41dafb67",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 20970379616
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_video_vae_fp16.safetensors",
+          "sha16": "7c1f131492e7edda",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 5207808496
+        },
+        {
+          "file": "minimax_h3_audio_vae_fp32.safetensors",
+          "sha16": "8e505d95dd1561d4",
+          "role": "vae_audio",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 605254808
+        },
+        {
+          "file": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+          "sha16": "c396a9a06f58399e",
+          "role": "lora",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 1956192992
+        },
+        {
+          "file": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+          "sha16": "2339acdf19bfe123",
+          "role": "lora",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 1956193000
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G 全驻 + TE nvfp4_awq 15G staged + 双 VAE 5.8G；DynamicVRAM 分页；与 h3-ref2va 同族常驻；实测 286.5s/镜（768p 5.17s turbo4）",
+      "params": {
+        "PROMPT": "h3ir.buildFL2VA 三字段 IR（官方 base-en.txt）",
+        "FIRST_FRAME": "Spark /upload/image 上传后的分镜首帧文件名",
+        "WIDTH": 1344,
+        "HEIGHT": 768,
+        "LENGTH": "17k+5 帧网格",
+        "SEED": "int",
+        "STEPS": "4（turbo）/8"
+      },
+      "notes": "场景镜主模板：首帧=该镜分镜图（C2 payload.images shotId 绑定），原生声画直出+对口型台词",
+      "verified": {
+        "prompt_id": "058c24f5-7bdb-449e-a6cd-4e6af21a2f92",
+        "wall_s": 286.5,
+        "output": "runtime/spark-evidence/smoke/fl2va_result.mp4"
+      },
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "h3-image-cast": {
+      "tmpl_sha16": "d02b9ea887db1bbd",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3image",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
+          "sha16": "83eb140f1ff95c06",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 20979314802
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_image_vae_fp16.safetensors",
+          "sha16": "d80e9c2e5cfc9844",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 1168505312
+        },
+        {
+          "file": "qwen3.5_9b_w4a8_gptq.safetensors",
+          "sha16": "4cc6a1543ad20618",
+          "role": "text_encoder_llm",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 7343591088
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；实测 14.9s/张（1024²）动态分页无 OOM",
+      "params": {
+        "PROMPT": "定妆人设+身份锚点+风格后缀",
+        "REF_IMAGE_1": "定妆参考图（无则三槽同图）",
+        "REF_IMAGE_2": "-",
+        "REF_IMAGE_3": "-",
+        "WIDTH": 1024,
+        "HEIGHT": 1024,
+        "SEED": "int"
+      },
+      "notes": "定妆/分镜图：MiniMaxH3ImageConditioning(clip,vae,prompt,wh,images) 出 positive+latent；KSampler 6步 euler/simple cfg1 denoise1；负条件 ConditioningZeroOut；qwen3.5_9b TE 为官方 prompt 扩写分支预留（产品侧 h3ir 替代）",
+      "verified": {
+        "prompt_id": "f9497a6c-5292-4e5a-9018-4d60d4c389b5",
+        "wall_s": 14.91,
+        "output": "runtime/spark-evidence/smoke/image_cast_result.png"
+      },
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "ltx25-i2v-ref": {
+      "tmpl_sha16": "16918111ebbe4b95",
+      "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+      "cn_commits": {
+        "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
+      },
+      "weights": [
+        {
+          "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
+          "sha16": "55442750eb0013d9",
+          "role": "diffusion_model",
+          "source": "modelscope:unsloth/LTX-2.5-GGUF",
+          "bytes": 14000234880
+        },
+        {
+          "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+          "sha16": "6ce688a0aa98a5fa",
+          "role": "text_encoder",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 15372969374
+        },
+        {
+          "file": "ltx-2.5-video-vae-bf16.safetensors",
+          "sha16": "847e14ca7f3355de",
+          "role": "vae",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 1472223346
+        },
+        {
+          "file": "ltx-2.5-audio-vae-bf16.safetensors",
+          "sha16": "c52733d37f6a7fb7",
+          "role": "vae_audio",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 364866540
+        },
+        {
+          "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+          "sha16": "eb5a71fe4068ee87",
+          "role": "latent_upscale_model",
+          "source": "modelscope:Lightricks/LTX-2.5",
+          "bytes": 995778752
+        }
+      ],
+      "vram_profile": "16G：同 ltx25-t2v；实测峰值 15755MiB（96.6%）无 OOM；首帧 guide 两段 Inplace（stage1 strength 0.7 / stage2 1.0）；禁与生图三件套热载共存；ref 变体：stage2 链插 AddGuide(定妆原片,frame_idx=-1,overlap)+CropGuides，实测 199s/121帧 无 OOM（runtime/ltx-face-evidence/V2）",
+      "params": {
+        "REF": "ComfyUI/input 内参考图文件名（该镜主角色的定妆原片）",
+        "PROMPT": "角色 anchor 块前置＋镜动作/镜头描述（保脸功课结论：runtime/ltx-face-evidence/RESEARCH.md）"
+      }
+    },
+    "h3-image-edit": {
+      "tmpl_sha16": "541fb049d78292ed",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3image",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
+          "sha16": "83eb140f1ff95c06",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 20979314802
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_image_vae_fp16.safetensors",
+          "sha16": "d80e9c2e5cfc9844",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 1168505312
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；edit=img2img（latent←输入图编码）",
+      "params": {
+        "PROMPT": "edit 指令（引用 <Picture 1>，保持人物）",
+        "IMAGE": "Spark /upload/image 的原图文件名",
+        "WIDTH": "原图 /16 对齐宽",
+        "HEIGHT": "原图 /16 对齐高",
+        "SEED": "int"
+      },
+      "notes": "H3-Image edit 模式（官方 image_edit 工作流）：KSampler latent←MiniMaxH3ImageConditioning.1（输入图编码）——身份像素级保真；分镜站主模板",
+      "verified": {
+        "prompt_id": "pending"
+      },
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "h3-fl2va-video-plain": {
+      "tmpl_sha16": "2f4c04bc32cfaece",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3video",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+          "sha16": "e889202c41dafb67",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 20970379616
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_video_vae_fp16.safetensors",
+          "sha16": "7c1f131492e7edda",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 5207808496
+        },
+        {
+          "file": "minimax_h3_audio_vae_fp32.safetensors",
+          "sha16": "8e505d95dd1561d4",
+          "role": "vae_audio",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 605254808
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G 全驻 + TE nvfp4_awq 15G staged + 双 VAE 5.8G；DynamicVRAM 分页；与 h3-ref2va 同族常驻；实测 286.5s/镜（768p 5.17s turbo4）",
+      "params": {
+        "PROMPT": "h3ir.buildFL2VA 三字段 IR（官方 base-en.txt）",
+        "FIRST_FRAME": "Spark /upload/image 上传后的分镜首帧文件名",
+        "WIDTH": 1344,
+        "HEIGHT": 768,
+        "LENGTH": "17k+5 帧网格",
+        "SEED": "int",
+        "STEPS": "25（非 turbo，画质优先：皮肤/高光过渡质变）"
+      },
+      "notes": "画质版：无 turbo LoRA、25 步基础模型——治油光（turbo 4 步皮肤高光糊化）；渲染约为 turbo 版 2 倍",
+      "verified": null,
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
     }
-   ],
-   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存",
-   "evidence": "runtime/comfyui-evidence/EVIDENCE.md"
-  },
-  "qwen-image-turbo-i2i": {
-   "tmpl_sha16": "5fcfcfb928587550",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "qwen-image-2.1-turbo-Q5_K_M.gguf",
-     "sha16": "37c51ff446f4db2e",
-     "role": "diffusion_model"
-    },
-    {
-     "file": "qwen3vl_8b_int8_convrot.safetensors",
-     "sha16": "8bfd0f6e12abf2d2",
-     "role": "text_encoder"
-    },
-    {
-     "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
-     "sha16": "bb21f7473051e1ac",
-     "role": "vae"
-    }
-   ],
-   "vram_profile": "16G：TE int8 staged + DiT Q5_K_M + VAE ≈14.9G 常驻；实测峰值 14800MiB（90.7%）无 OOM；禁与 LTX 热载共存；i2i：LoadImage→VAEEncode→denoise0.7（保影调变构图）",
-   "params": {
-    "DENOISE": "0.7（定妆默认）；人脸保真建议 0.4-0.45"
-   }
-  },
-  "ltx25-t2v": {
-   "tmpl_sha16": "f4a3eae224cbb3e1",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
-     "sha16": "55442750eb0013d9",
-     "role": "diffusion_model",
-     "source": "modelscope:unsloth/LTX-2.5-GGUF",
-     "bytes": 14000234880
-    },
-    {
-     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-     "sha16": "6ce688a0aa98a5fa",
-     "role": "text_encoder",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 15372969374
-    },
-    {
-     "file": "ltx-2.5-video-vae-bf16.safetensors",
-     "sha16": "847e14ca7f3355de",
-     "role": "vae",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 1472223346
-    },
-    {
-     "file": "ltx-2.5-audio-vae-bf16.safetensors",
-     "sha16": "c52733d37f6a7fb7",
-     "role": "vae_audio",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 364866540
-    },
-    {
-     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
-     "sha16": "eb5a71fe4068ee87",
-     "role": "latent_upscale_model",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 995778752
-    }
-   ],
-   "vram_profile": "16G：DiT UD-Q4_K_XL GGUF 全驻 + TE int8-convrot 15.4G staged 编码后逐出 + VAE×2/upscale ≈2.8G；实测峰值 15785MiB（96.8%）无 OOM；两段蒸馏 8+3 步 CFG1；禁与生图三件套热载共存，切换前必须 POST /free",
-   "params": {
-    "PROMPT": "场景+动作+镜头+风格描述",
-    "NEGATIVE": "默认 pc game, console game, video game, cartoon, childish, ugly",
-    "WIDTH": 720,
-    "HEIGHT": 1280,
-    "SEED": "int",
-    "FPS": 24,
-    "LENGTH": 121,
-    "STAGE1_W": 360,
-    "STAGE1_H": 640,
-    "CFG": 1,
-    "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
-    "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
-   },
-   "notes": "LTX-2.5 VAE 空间下采样 32、两段流水线原生输出=STAGE1×64 对齐：720×1280 目标经 360×640 stage1 → 原生 704×1280 → ImageScale lanczos 到精确 720×1280；含同步音频（audio VAE）；输出 mp4 H.264",
-   "verified": {
-    "prompt_id": "12b1146b-608b-43d4-a48e-ea50b9695e72",
-    "wall_s": 190.7,
-    "vram_peak_mib": 15785,
-    "output": "runtime/ltx25-evidence/t2v_test_720x1280_00001_.mp4"
-   },
-   "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
-  },
-  "ltx25-i2v": {
-   "tmpl_sha16": "fefa64344445cc8d",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
-     "sha16": "55442750eb0013d9",
-     "role": "diffusion_model",
-     "source": "modelscope:unsloth/LTX-2.5-GGUF",
-     "bytes": 14000234880
-    },
-    {
-     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-     "sha16": "6ce688a0aa98a5fa",
-     "role": "text_encoder",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 15372969374
-    },
-    {
-     "file": "ltx-2.5-video-vae-bf16.safetensors",
-     "sha16": "847e14ca7f3355de",
-     "role": "vae",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 1472223346
-    },
-    {
-     "file": "ltx-2.5-audio-vae-bf16.safetensors",
-     "sha16": "c52733d37f6a7fb7",
-     "role": "vae_audio",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 364866540
-    },
-    {
-     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
-     "sha16": "eb5a71fe4068ee87",
-     "role": "latent_upscale_model",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 995778752
-    }
-   ],
-   "vram_profile": "16G：同 ltx25-t2v；实测峰值 15755MiB（96.6%）无 OOM；首帧 guide 两段 Inplace（stage1 strength 0.7 / stage2 1.0）；禁与生图三件套热载共存",
-   "params": {
-    "IMAGE": "ComfyUI/input 内首帧文件名（竖屏 9:16 最佳）",
-    "PROMPT": "动作+表情+镜头描述",
-    "NEGATIVE": "默认同上",
-    "WIDTH": 720,
-    "HEIGHT": 1280,
-    "SEED": "int",
-    "FPS": 24,
-    "LENGTH": 121,
-    "STAGE1_W": 360,
-    "STAGE1_H": 640,
-    "CFG": 1,
-    "SIGMAS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
-    "SIGMAS2": "0.85, 0.7250, 0.4219, 0.0"
-   },
-   "notes": "LoadImage → LTXVPreprocess(18) → 两段 LTXVImgToVideoInplace（首帧锁定）；首帧在 stage2 以 strength 1.0 重编码锁死；其余同 ltx25-t2v",
-   "verified": {
-    "prompt_id": "f31002dd-0e37-4571-b4cc-8f285503e416",
-    "wall_s": 220.9,
-    "vram_peak_mib": 15755,
-    "output": "runtime/ltx25-evidence/i2v_test_720x1280_00001_.mp4"
-   },
-   "evidence": "runtime/ltx25-evidence/EVIDENCE.md"
-  },
-  "qwen-image-edit-cast": {
-   "tmpl_sha16": "0a20351dfccf4b50",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "qwen-image-2.1-Q5_K_M.gguf",
-     "sha16": "f638bd4e385ea2af",
-     "role": "diffusion_model",
-     "source": "modelscope:unsloth/Qwen-Image-2.1-GGUF",
-     "bytes": 5390223168,
-     "note": "原始下载 sha16=4b53321654dd3bf0（与 ModelScope 清单一致）但容器零元数据致 UnetLoaderGGUF 拒载；gguf 库补写 general.architecture=qwen_image + quantization_version=2（与 unsloth turbo 同仓同构），tensor 载荷逐件未动（265 tensor 清单校验一致），修复后 sha16=f638bd4e385ea2af"
-    },
-    {
-     "file": "qwen3vl_8b_int8_convrot.safetensors",
-     "sha16": "8bfd0f6e12abf2d2",
-     "role": "text_encoder",
-     "bytes": 9350798360,
-     "note": "复用在盘件（qwen-image 系共用，CLIPLoader type=qwen_image，内含 vision tower 供 TextEncodeQwenImage21 图像 token 化）"
-    },
-    {
-     "file": "qwen_image_2.1_vae_bf16_comfyorg.safetensors",
-     "sha16": "bb21f7473051e1ac",
-     "role": "vae",
-     "bytes": 675509688,
-     "note": "复用在盘件"
-    }
-   ],
-   "vram_profile": "16G：DiT Q5_K_M 5.4G 全驻 + TE int8 staged 8916MB + VAE 644MB + TextEncodeQwenImage21 参考图 VAE/vision 编码；实测峰值：冷启动首跑 15969MiB（97.9%）无 OOM，稳态跑 14480-14512MiB（88.9%）；禁与 LTX 热载共存，生成前后 POST /free；单次 OOM 不重试同参数；res2048 复测：冷启 15969MiB 峰值后稳态无 OOM，57-60s/张（runtime/qwen-edit-evidence/T1_T2_*）",
-   "params": {
-    "IMAGE": "ComfyUI/input 内定妆图文件名（产品侧拷入；720x1280 竖幅最佳）",
-    "PROMPT": "身份锚点必须前置且如实描述参考图本人（脸型/五官/发量发尾形态），服装显式锁与参考图一致；锚点与图像矛盾的词（如把卷发写成直发）会把身份拽偏——实测 T2 精确锚点+服装锁 similarity 显著优于泛写锚点",
-    "NEGATIVE": "低质量，模糊，畸变，多余的手指，文字，水印（cfg=1 时不生效，保留占位）",
-    "SEED": "int",
-    "WIDTH": 720,
-    "HEIGHT": 1280,
-    "STEPS": 25,
-    "CFG": 1,
-    "RESOLUTION": "2048（参考图 token 量最大化；实测 T1/T2 无 OOM，57-60s）"
-   },
-   "notes": "Qwen-Image-2.1 全量档（7B，t2i+edit 统一，非 turbo）。TextEncodeQwenImage21 单节点出 positive/negative/latent 三路；KSampler latent 接 EmptySD3LatentImage(<WIDTH>,<HEIGHT>) 而非节点 LATENT——因节点 latent=参考图 32 对齐重采样尺寸（720x1280 输入会变 768x1376），无法精确输出分镜要求的 720x1280；若要严格跟随参考图构图可改接节点 LATENT（官方接法）。QwenImage21Cache device=auto/dtype=default 为官方 16G 档配置。sampler=euler/simple，denoise=1（固定实跑值）",
-   "verified": [
-    {
-     "tag": "ladder（雨夜灯塔旋梯+马灯，任务指令 a 原文）",
-     "prompt_id": "06ad41f9-7779-4c43-9253-72d6220c130f",
-     "wall_s": 59.3,
-     "vram_peak_mib": 15969,
-     "seed": 20261121,
-     "cfg": 1,
-     "steps": 25,
-     "output": "runtime/qwen-edit-evidence/ladder_06ad41f9.png",
-     "result": "身份保持✓ 场景/马灯/裙摆/青橙影调全命中"
-    },
-    {
-     "tag": "letter（塔顶值班室读信，任务指令 b 语义；身份锚点前置写法）",
-     "prompt_id": "629c3e5e-bb3a-40f9-aca9-9bd76bacad0f",
-     "wall_s": 57.1,
-     "vram_peak_mib": 14480,
-     "seed": 20261121,
-     "cfg": 1,
-     "steps": 25,
-     "output": "runtime/qwen-edit-evidence/letter_629c3e5e.png",
-     "result": "身份保持✓ 场景/旧信/烛光/实拍质感全命中；同指令 3 次失败记录见 evidence（裸身份子句 cfg1/cfg2.5 均换人）"
-    }
-   ],
-   "evidence": "runtime/qwen-edit-evidence/EVIDENCE.md"
-  },
-  "h3-ref2va-video": {
-   "tmpl_sha16": "1c9f3507c8121a5c",
-   "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
-   "cn_commits": {},
-   "family": "h3video",
-   "endpoint": "spark",
-   "weights": [
-    {
-     "file": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-     "sha16": "9255f52b6677845a",
-     "role": "diffusion_model",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 20970379616
-    },
-    {
-     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-     "sha16": "35a88d51044231fe",
-     "role": "text_encoder",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 15687142551
-    },
-    {
-     "file": "minimax_h3_video_vae_fp16.safetensors",
-     "sha16": "7c1f131492e7edda",
-     "role": "vae",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 5207808496
-    },
-    {
-     "file": "minimax_h3_audio_vae_fp32.safetensors",
-     "sha16": "8e505d95dd1561d4",
-     "role": "vae_audio",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 605254808
-    },
-    {
-     "file": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-     "sha16": "5b9ab5ade15d0775",
-     "role": "lora",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 1956193000
-    }
-   ],
-   "vram_profile": "121G 统一内存：DiT int8 20G 全驻 + TE nvfp4_awq 15G staged + 双 VAE 5.8G + turbo LoRA patch；DynamicVRAM 分页，实测 ram_free 余 ~60G；与 h3-fl2va 同族常驻不互逐；禁与 h3image 族热载共存（跨族 /free）",
-   "params": {
-    "PROMPT": "h3ir.buildRef2VA 六段式 IR（官方 ref-en.txt）",
-    "REF_IMAGE_1": "Spark /upload/image 上传后的文件名（定妆照）",
-    "REF_IMAGE_2": "备用参考图",
-    "REF_IMAGE_3": "备用参考图",
-    "WIDTH": 1344,
-    "HEIGHT": 768,
-    "LENGTH": "17k+5 帧网格（h3ir.lengthFrames）",
-    "SEED": "int",
-    "STEPS": 4
-   },
-   "notes": "角色镜主模板：subject reference 保脸 + IR prompt + <d> 台词 + 原生声画。MiniMaxH3ReferenceToVideo refs≤9 图；sampler res_multistep/simple denoise1；turbo LoRA 4step",
-   "verified": {
-    "prompt_id": "19598fb7-91c2-47f2-9ee7-8f634bf16b0c",
-    "wall_s": null,
-    "output": "runtime/spark-evidence/smoke/ref2va_result.mp4（冒烟）"
-   },
-   "evidence": "runtime/spark-evidence/EVIDENCE.md"
-  },
-  "h3-fl2va-video": {
-   "tmpl_sha16": "5e91ebf52354f24a",
-   "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
-   "cn_commits": {},
-   "family": "h3video",
-   "endpoint": "spark",
-   "weights": [
-    {
-     "file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-     "sha16": "e889202c41dafb67",
-     "role": "diffusion_model",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 20970379616
-    },
-    {
-     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-     "sha16": "35a88d51044231fe",
-     "role": "text_encoder",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 15687142551
-    },
-    {
-     "file": "minimax_h3_video_vae_fp16.safetensors",
-     "sha16": "7c1f131492e7edda",
-     "role": "vae",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 5207808496
-    },
-    {
-     "file": "minimax_h3_audio_vae_fp32.safetensors",
-     "sha16": "8e505d95dd1561d4",
-     "role": "vae_audio",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 605254808
-    },
-    {
-     "file": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
-     "sha16": "c396a9a06f58399e",
-     "role": "lora",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 1956192992
-    },
-    {
-     "file": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-     "sha16": "2339acdf19bfe123",
-     "role": "lora",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 1956193000
-    }
-   ],
-   "vram_profile": "121G 统一内存：DiT int8 20G 全驻 + TE nvfp4_awq 15G staged + 双 VAE 5.8G；DynamicVRAM 分页；与 h3-ref2va 同族常驻；实测 286.5s/镜（768p 5.17s turbo4）",
-   "params": {
-    "PROMPT": "h3ir.buildFL2VA 三字段 IR（官方 base-en.txt）",
-    "FIRST_FRAME": "Spark /upload/image 上传后的分镜首帧文件名",
-    "WIDTH": 1344,
-    "HEIGHT": 768,
-    "LENGTH": "17k+5 帧网格",
-    "SEED": "int",
-    "STEPS": "4（turbo）/8"
-   },
-   "notes": "场景镜主模板：首帧=该镜分镜图（C2 payload.images shotId 绑定），原生声画直出+对口型台词",
-   "verified": {
-    "prompt_id": "058c24f5-7bdb-449e-a6cd-4e6af21a2f92",
-    "wall_s": 286.5,
-    "output": "runtime/spark-evidence/smoke/fl2va_result.mp4"
-   },
-   "evidence": "runtime/spark-evidence/EVIDENCE.md"
-  },
-  "h3-image-cast": {
-   "tmpl_sha16": "d02b9ea887db1bbd",
-   "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
-   "cn_commits": {},
-   "family": "h3image",
-   "endpoint": "spark",
-   "weights": [
-    {
-     "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
-     "sha16": "83eb140f1ff95c06",
-     "role": "diffusion_model",
-     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
-     "bytes": 20979314802
-    },
-    {
-     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-     "sha16": "35a88d51044231fe",
-     "role": "text_encoder",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 15687142551
-    },
-    {
-     "file": "minimax_h3_image_vae_fp16.safetensors",
-     "sha16": "d80e9c2e5cfc9844",
-     "role": "vae",
-     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
-     "bytes": 1168505312
-    },
-    {
-     "file": "qwen3.5_9b_w4a8_gptq.safetensors",
-     "sha16": "4cc6a1543ad20618",
-     "role": "text_encoder_llm",
-     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
-     "bytes": 7343591088
-    }
-   ],
-   "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；实测 14.9s/张（1024²）动态分页无 OOM",
-   "params": {
-    "PROMPT": "定妆人设+身份锚点+风格后缀",
-    "REF_IMAGE_1": "定妆参考图（无则三槽同图）",
-    "REF_IMAGE_2": "-",
-    "REF_IMAGE_3": "-",
-    "WIDTH": 1024,
-    "HEIGHT": 1024,
-    "SEED": "int"
-   },
-   "notes": "定妆/分镜图：MiniMaxH3ImageConditioning(clip,vae,prompt,wh,images) 出 positive+latent；KSampler 6步 euler/simple cfg1 denoise1；负条件 ConditioningZeroOut；qwen3.5_9b TE 为官方 prompt 扩写分支预留（产品侧 h3ir 替代）",
-   "verified": {
-    "prompt_id": "f9497a6c-5292-4e5a-9018-4d60d4c389b5",
-    "wall_s": 14.91,
-    "output": "runtime/spark-evidence/smoke/image_cast_result.png"
-   },
-   "evidence": "runtime/spark-evidence/EVIDENCE.md"
-  },
-  "ltx25-i2v-ref": {
-   "tmpl_sha16": "16918111ebbe4b95",
-   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
-   "cn_commits": {
-    "ComfyUI-GGUF": "9ecc3c48e7ec48ec6fee95de90197ae7aee6644e"
-   },
-   "weights": [
-    {
-     "file": "ltx-2.5-22b-distilled-UD-Q4_K_XL.gguf",
-     "sha16": "55442750eb0013d9",
-     "role": "diffusion_model",
-     "source": "modelscope:unsloth/LTX-2.5-GGUF",
-     "bytes": 14000234880
-    },
-    {
-     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-     "sha16": "6ce688a0aa98a5fa",
-     "role": "text_encoder",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 15372969374
-    },
-    {
-     "file": "ltx-2.5-video-vae-bf16.safetensors",
-     "sha16": "847e14ca7f3355de",
-     "role": "vae",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 1472223346
-    },
-    {
-     "file": "ltx-2.5-audio-vae-bf16.safetensors",
-     "sha16": "c52733d37f6a7fb7",
-     "role": "vae_audio",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 364866540
-    },
-    {
-     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
-     "sha16": "eb5a71fe4068ee87",
-     "role": "latent_upscale_model",
-     "source": "modelscope:Lightricks/LTX-2.5",
-     "bytes": 995778752
-    }
-   ],
-   "vram_profile": "16G：同 ltx25-t2v；实测峰值 15755MiB（96.6%）无 OOM；首帧 guide 两段 Inplace（stage1 strength 0.7 / stage2 1.0）；禁与生图三件套热载共存；ref 变体：stage2 链插 AddGuide(定妆原片,frame_idx=-1,overlap)+CropGuides，实测 199s/121帧 无 OOM（runtime/ltx-face-evidence/V2）",
-   "params": {
-    "REF": "ComfyUI/input 内参考图文件名（该镜主角色的定妆原片）",
-    "PROMPT": "角色 anchor 块前置＋镜动作/镜头描述（保脸功课结论：runtime/ltx-face-evidence/RESEARCH.md）"
-   }
-  },
-  "h3-image-edit": {
-   "tmpl_sha16": "541fb049d78292ed",
-   "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
-   "cn_commits": {},
-   "family": "h3image",
-   "endpoint": "spark",
-   "weights": [
-    {
-     "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
-     "sha16": "83eb140f1ff95c06",
-     "role": "diffusion_model",
-     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
-     "bytes": 20979314802
-    },
-    {
-     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-     "sha16": "35a88d51044231fe",
-     "role": "text_encoder",
-     "source": "modelscope:Comfy-Org/MiniMax-H3",
-     "bytes": 15687142551
-    },
-    {
-     "file": "minimax_h3_image_vae_fp16.safetensors",
-     "sha16": "d80e9c2e5cfc9844",
-     "role": "vae",
-     "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
-     "bytes": 1168505312
-    }
-   ],
-   "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；edit=img2img（latent←输入图编码）",
-   "params": {
-    "PROMPT": "edit 指令（引用 <Picture 1>，保持人物）",
-    "IMAGE": "Spark /upload/image 的原图文件名",
-    "WIDTH": "原图 /16 对齐宽",
-    "HEIGHT": "原图 /16 对齐高",
-    "SEED": "int"
-   },
-   "notes": "H3-Image edit 模式（官方 image_edit 工作流）：KSampler latent←MiniMaxH3ImageConditioning.1（输入图编码）——身份像素级保真；分镜站主模板",
-   "verified": {
-    "prompt_id": "pending"
-   },
-   "evidence": "runtime/spark-evidence/EVIDENCE.md"
   }
- }
 }

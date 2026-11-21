@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>图3/4 · MINIMAX H3 线 · 声音·拍摄·成片</title>
+<style>
+  :root{
+    --biz:#7c3aed; --biz-bg:#f5f3ff; --biz-bd:#ddd6fe;
+    --orch:#2563eb; --orch-bg:#eff6ff; --orch-bd:#bfdbfe;
+    --tmpl:#0d9488; --tmpl-bg:#f0fdfa; --tmpl-bd:#99f6e4;
+    --model:#ea580c; --model-bg:#fff7ed; --model-bd:#fed7aa;
+    --art:#475569;  --art-bg:#f8fafc;  --art-bd:#e2e8f0;
+    --ink:#1e293b; --weak:#64748b; --gold:#b45309;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; background:#eef1f6; color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{width:1280px; margin:0 auto; background:#fff; box-shadow:0 0 24px rgba(15,23,42,.12);}
+  .head{background:linear-gradient(135deg,#082f49 0%,#155e75 55%,#0e7490 100%); color:#fff; padding:40px 56px 34px;}
+  .head .series{font-size:13px; color:#a5f3fc; letter-spacing:2px; margin-bottom:10px;}
+  .head h1{font-size:30px; letter-spacing:1px;}
+  .head h1 .hl{color:#67e8f9;}
+  .head .sub{margin-top:10px; font-size:15px; color:#a5f3fc; line-height:1.7;}
+  .head .sub b{color:#fff;}
+  .crumbs{display:flex; gap:8px; padding:16px 56px 0;}
+  .crumbs .c{flex:1; text-align:center; font-size:13px; padding:8px 6px; border-radius:10px; border:1.5px solid var(--art-bd); color:var(--weak); background:#f8fafc;}
+  .crumbs .c b{display:block; font-size:14px;}
+  .crumbs .c.on{border-color:var(--orch); color:var(--orch); background:var(--orch-bg); box-shadow:0 2px 10px rgba(37,99,235,.15);}
+  .lmini{padding:12px 56px 4px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .lmini .lg{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink); border:1.5px solid var(--art-bd); border-radius:999px; padding:4px 12px 4px 7px; background:#fff;}
+  .lmini .dot{width:12px; height:12px; border-radius:4px;}
+  .acts{padding:10px 56px 8px;}
+  .act{border:1.5px solid #e2e8f0; border-radius:16px; background:#fff; padding:20px 24px 16px;}
+  .act-title{display:flex; align-items:baseline; gap:12px; margin-bottom:4px;}
+  .act-title .no{background:var(--ink); color:#fff; border-radius:8px; padding:3px 10px; font-size:13px; font-weight:700; letter-spacing:1px;}
+  .act-title h2{font-size:21px;}
+  .act-title .tagline{font-size:13px; color:var(--weak);}
+  .act-desc{font-size:13.5px; color:var(--weak); line-height:1.75; margin:4px 0 14px;}
+  .act-desc b{color:var(--ink);}
+  .layer-row{display:flex; gap:12px; margin-bottom:9px; align-items:stretch;}
+  .layer-tag{flex:0 0 118px; display:flex; flex-direction:column; justify-content:center; align-items:center; border-radius:10px; font-size:12.5px; font-weight:700; line-height:1.5; padding:8px 4px;}
+  .layer-tag small{font-weight:400; font-size:10.5px; opacity:.75;}
+  .t-biz{background:var(--biz-bg); color:var(--biz); border:1.5px solid var(--biz-bd);}
+  .t-orch{background:var(--orch-bg); color:var(--orch); border:1.5px solid var(--orch-bd);}
+  .t-tmpl{background:var(--tmpl-bg); color:var(--tmpl); border:1.5px solid var(--tmpl-bd);}
+  .t-model{background:var(--model-bg); color:var(--model); border:1.5px solid var(--model-bd);}
+  .t-art{background:var(--art-bg); color:var(--art); border:1.5px solid var(--art-bd);}
+  .layer-body{flex:1; border:1.5px solid var(--art-bd); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.8; background:#fff;}
+  .layer-body b{color:var(--ink);}
+  .layer-body .code{font-family:Consolas,"Courier New",monospace; font-size:12px; background:#0f172a; color:#e2e8f0; border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .api{font-family:Consolas,monospace; font-size:12px; color:#1d4ed8; background:var(--orch-bg); border:1px solid var(--orch-bd); border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .w{font-family:Consolas,monospace; font-size:12px; color:#9a3412; background:var(--model-bg); border:1px solid var(--model-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .file{font-family:Consolas,monospace; font-size:12px; color:#334155; background:var(--art-bg); border:1px solid var(--art-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .node{font-family:Consolas,monospace; font-size:12px; color:#0f766e; background:var(--tmpl-bg); border:1px solid var(--tmpl-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .handoff{display:flex; align-items:center; gap:14px; padding:12px 56px;}
+  .handoff .arrow{font-size:26px; color:#94a3b8; line-height:1;}
+  .handoff .hl-label{font-size:13px; color:#475569; background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:999px; padding:6px 18px;}
+  .handoff .hl-label b{color:var(--gold);}
+  .next{margin:6px 56px 26px; background:linear-gradient(90deg,var(--orch-bg),#fff); border:1.5px solid var(--orch-bd); border-radius:14px; padding:16px 24px; font-size:14px; color:var(--ink); line-height:1.8;}
+  .next b{color:var(--orch);}
+  .foot{background:#0f172a; color:#94a3b8; padding:16px 56px; font-size:12.5px; line-height:1.8;}
+  .foot b{color:#e2e8f0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="series">系列竖图 3 / 4 · 声音·拍摄·成片</div>
+    <h1>图3 · <span class="hl">声音资产、逐镜拍摄与成片交付</span></h1>
+    <div class="sub">
+      承接图 2 的换壳分镜首帧：<b>配音/配乐并行备产 → C6 预算确认开机 → 逐镜「原生声画」视频（台词口型自动同步）→ 机审复审 → FFmpeg 真合成成片</b>。
+    </div>
+  </div>
+
+  <div class="crumbs">
+    <div class="c"><b>图1 · 全景立项</b>总路线·剧本·C1</div>
+    <div class="c"><b>图2 · 身份链 ★</b>定妆→试镜→换壳分镜</div>
+    <div class="c on"><b>图3 · 拍摄成片</b>声音·逐镜·机审·导出</div>
+    <div class="c"><b>图4 · 台账纪律</b>权重表·横切护栏</div>
+  </div>
+
+  <div class="lmini">
+    <div class="lg"><span class="dot" style="background:var(--biz)"></span>业务决策层</div>
+    <div class="lg"><span class="dot" style="background:var(--orch)"></span>编排层</div>
+    <div class="lg"><span class="dot" style="background:var(--tmpl)"></span>模板节点层</div>
+    <div class="lg"><span class="dot" style="background:var(--model)"></span>模型权重层</div>
+    <div class="lg"><span class="dot" style="background:var(--art)"></span>产物素材层</div>
+  </div>
+
+  <div class="acts">
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 5 幕</span><h2>配音 · 配乐 · 预览 · 预算</h2><span class="tagline">业务场景 · 声音资产与成本确认</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C9→C5→C6</small></div>
+      <div class="layer-body">每场音乐 3 候选 → <b>C9 采用卡</b>（reject=换一批；永不计决策数）→ <b>C5 预览样片卡</b> → <b>C6 预算开机卡</b>（estimate_ver，CAS 防并发拍板）</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>三条 lane 并行</small></div>
+      <div class="layer-body">voice（每场 1 job，场景过滤·诚实空结果）· music（每场 1 job，mood→候选）· compose(preview)；台词产物持久化 <span class="file">state.voice_lines</span>（compose 断供保护）</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>声音模型</small></div>
+      <div class="layer-body"><span class="w">CosyVoice2 :9880</span> 台词→wav（角色→音色映射「女主→中文女」，TTS 前卸 ComfyUI 显存互斥）　·　<span class="w">ACE-Step 1.5 :8190</span> mood→45s BGM wav（MIT 许可·预检拦截演示位）</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>声音资产</small></div>
+      <div class="layer-body"><span class="file">var/out/tts_*.wav</span>（供第 8 幕对位混流）· <span class="file">music_*.wav</span>（采用条入曲库带 license 快照）</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C6 accept ＋ <span style="font-family:Consolas,monospace">POST /shoot {ver}</span> CAS 校验 → 逐镜派 video job</span></div>
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 6 幕</span><h2>开机拍摄：逐镜「原生声画」视频</h2><span class="tagline">业务场景 · 高价值档出片</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>开机</small></div>
+      <div class="layer-body">预算确认后一键开机（支持 <span class="code">shotIds</span> 局部重拍）；预算护栏：累计成本 &gt; 预算×120% → 整集暂停</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>模板二选一</small></div>
+      <div class="layer-body">逐镜查 C2 分镜图（按 shotId 绑定）：<b>有首帧 → h3-fl2va</b>（首帧锁构图与长相）；<b>无首帧有定妆 → h3-ref2va</b>（subject reference 保脸兜底）；两者皆无 → <span class="code">NO_SPARK_INPUT_ART</span> 真错误不造假。拍摄前 <span class="code">ensureFree(base,8)</span> 内存守卫</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>IR 提示词引擎</small></div>
+      <div class="layer-body"><b>h3ir</b>（官方 Context-IR 规则化复刻）：<span class="code">buildFL2VA</span> 三字段（integrated_multimodal_description / overall_soundscape / non_diegetic_music）· <span class="code">buildRef2VA</span> 六段式（subject_definitions / summary / retention_analysis / detailed_description / …）· 台词以 <span class="code">&lt;d&gt;[中文]…&lt;/d&gt;</span> 内嵌 → <b>口型自动同步</b> · <span class="code">lengthFrames(sec)</span>：max(124, sec×24) 对齐 <b>17k+5 帧网格</b>，上限 362 帧≈15s；可选 LLM 全英文重写（默认关）</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>视频族权重</small></div>
+      <div class="layer-body"><span class="w">fl2va DiT 20.97G</span> / <span class="w">ref2va DiT 20.97G</span> ＋ <span class="w">turbo 4step LoRA</span> ＋ <span class="w">video VAE 5.2G</span> ＋ <span class="w">audio VAE 0.61G</span>；res_multistep/simple · 768×1344 竖屏 · 同族常驻不互逐（跨族才 /free）· 实测 <b>fl2va 286.5s / ref2va 260.4s 每镜</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>take</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;takeId&gt;.mp4</span> 画面动作＋对口型台词＋环境声一步到位 · 150 分/镜 · meta 带 IR/LLM/权重四元组</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">每镜 video done → 自动派 moderate 机审</span></div>
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 7 幕</span><h2>机审 · 复审 · 收官</h2><span class="tagline">业务场景 · 质量门</span></div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C7/C8</small></div>
+      <div class="layer-body">机审 pass → 镜 ok；fail → 复审队列 ＋ <b>C7 复审批复卡</b>（每集唯一，新落审镜并入同一张）→ 批复通过 / <span class="code">shotIds</span> 局部重拍 → 全部 ok 且无 pending 复审 → <b>C8 收官卡</b></div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>moderate lane</small></div>
+      <div class="layer-body">verdict 规则机审（pass / fail_review）；失败补拍梯子：worker 抛错 → 系统免费重试 ≤2 次（共 3 跑）→ failed＋告警</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>状态</small></div>
+      <div class="layer-body">shot.status: pending → moderating → ok / pending_review；全 ok 触发 <span class="code">maybeFinishShoot</span> 出 C8</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">C8 accept → 导出 → compose(purpose=export, THEATER_COMPOSE_REAL=1)</span></div>
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 8 幕</span><h2>成片导出：FFmpeg 真合成</h2><span class="tagline">业务场景 · 交付</span></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">节点层<small>合成流水线</small></div>
+      <div class="layer-body">
+        ① 片头字幕卡 2s（drawtext 黑底白字＋静音轨统一流）　② 逐镜 <b>best take</b>（显式 best 优先·新拍覆盖旧拍；音轨统一 aac 48k stereo，无音轨补 anullsrc）　③ concat 拼接<br>
+        ④ <b>台词对位</b>：voice_lines 按剧本扁平镜序（seq=场×100＋镜）对齐时间轴 adelay 叠加——<b>take 自带原生说话声的镜自动跳过，不双叠</b>　⑤ 终混：BGM volume 0.18 ＋ 台词轨 amix(normalize=0)
+      </div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>合成引擎</small></div>
+      <div class="layer-body"><span class="w">FFmpeg 6.0</span>（runtime/bin·essentials，无 ffprobe 用 -i stderr 探测时长/音轨）</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>✅ 最终成片</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;episodeId&gt;_final.mp4</span> · 720×1280 · 24fps · h264+aac · 内测水印 · meta（explicit/implicit 标记＋每场音乐许可快照）；真机交付实证 1:22.66 · 26.4MB</div></div>
+  </div>
+
+  </div>
+
+  <div class="next">
+    ▶ 从换壳分镜到 <b>final.mp4</b> 全部走完。模型权重总台账与贯穿每一幕的横切纪律见<b>图 4/4</b>（查阅面）。
+  </div>
+
+  <div class="foot"><b>MINIMAX H3 线 · 图3/4 声音·拍摄·成片</b> · 依据 X-Theater 工作区实测代码整理（2026-11-21）</div>
+
+</div>
+</body>
+</html>

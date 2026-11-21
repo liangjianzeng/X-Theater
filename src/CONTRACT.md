@@ -12,7 +12,7 @@ src/server/core/util.js      core      工具：uid/hash/token/cas
 src/server/core/bus.js       core      SSE 事件总线
 src/server/core/router.js    core      迷你路由
 src/server/dag/engine.js     core      队列/DAG 推进/预算护栏/自动补拍
-src/server/dag/workers/*.js  workers   七类引擎（stub，见 §4）
+src/server/dag/workers/*.js  workers   九 lane 引擎（含 aireview 规则机检，见 §4）
 src/server/rules/*.js        workers   langlint/quant/license/moderation/budget 纯函数库
 src/server/l2/*.js           l2        AgentRuntimeAdapter·双模式·治理·工具面
 src/server/api/*.js          api       REST + SSE 路由模块
@@ -30,7 +30,8 @@ test/*.js                    tests     自动化验收套件（只经 HTTP＋账
                 paused:false, estimate_ver:null, shoot_confirmed_ver:null, est:{time_min,cents,shots}}},
   scenes:{},                       // {id,episodeId,name,mood,seq}
   shots:{},                        // {id,sceneId,episodeId,seq,name,sec,status,takes:[{id,engine,cost_cents,art,license}],rerolls,flags:{stale:false}}
-  cards:{},                        // {id,episodeId,type:"C1..C9",payload,status:"pending|decided|expired",ver,decided_by,decided_at}
+  cards:{},                        // {id,episodeId,type:"C1..C9＋C2S（试妆试镜拍板，2026-11-21）",payload,status:"pending|decided|expired",ver,decided_by,decided_at}
+  viewRefs:{},                     // {episodeId:{role:[{art,t,score,angle}]}} 试妆抽帧参考库——C2S 拍板固化（score≥0.6 硬线），分镜「换背景壳」的身份输入源（2026-11-21）
   music_lib:[],                    // {id,title,mood,sec,engine,license:{model:"MIT",usage:"ok|missing"},shadow_cents,sceneId|null}
   review_q:[],                     // {id,shotId,reason,status:"pending|pass|reject|offline",sla_left}
   alerts:[],                       // {id,kind,msg,ts,acked}
@@ -61,7 +62,7 @@ router.useAuth(fn)                   // fn(req)→user|null；路由 opts {auth:
 router.handle(req,res)               // 未匹配→404 JSON {error:{code,message}}；静态由 index.js 兜底
 router.json(res,code,obj)
 // engine.js —— createEngine({store,bus,cfg})  （index.js 装配，注入 api ctx）
-engine.enqueue(type,payload,opts)    // opts:{episodeId,initiated_by:"user|system",free:false} → job；type∈§4 七类
+engine.enqueue(type,payload,opts)    // opts:{episodeId,initiated_by:"user|system",free:false,tier?} → job；任务类型集合见 §4 lane 表（2026-11-21 起含 cast_init/screen_test/aireview）
                                    // 入队即写 job 账本；lane 内串行、lane 间并行（每 lane 并发 1）
 engine.retry(jobId) engine.stop(jobId) engine.queueState()
 // 失败梯子：worker.run throw → 自动补拍（initiated_by:"system",free）≤2 次，仍败→job failed＋告警
@@ -75,10 +76,14 @@ engine.retry(jobId) engine.stop(jobId) engine.queueState()
 | 组 | 端点 | 行为要点 |
 |---|---|---|
 | 认证 | POST /login {code} | 邀请码∈invites → {token,user}（sign） |
+| 项目 | POST /api/projects {title,style_pkg?} · GET /api/projects | 用户自助建项目（影调/画比/音乐开关），不再依赖运营开通（2026-11-21 新增） |
 | 总览 | GET /state | projects/episodes/shots(按集)/cards pending 摘要/队列态。**用户面禁词过滤在此兜底跑 langlint（命中→替换为语言表层文案并记告警）** |
-| 链路 | POST /episodes {projectId,title,brief,kind:"one_liner|novel"} | 触发 C1 卡（job c1plan）→ 完成后 cards 增 C1；其余卡按决策链式派生 |
-| | GET /cards?episodeId=&status= | 卡列表（含 C9 配乐卡，music_enabled=false 的项目不出 C9） |
-| | POST /cards/:id/decide {action:"accept|edit|reject",payload?,ver} | **cas(card,ver)** 409；accept→decisions++（C9 例外不加）＋派生下一批 job/卡；reject→重出（新 ver） |
+| 链路 | POST /episodes {projectId,title,brief,kind:"one_liner|novel",script?} | 触发 C1 卡（job c1plan）→ 完成后 cards 增 C1；其余卡按决策链式派生；script.scenes/cast 为结构化源头（sec/tier/宽高/台词全链透传） |
+| | POST /episodes/:id/castref/upload?role=X | **初始定妆入口①**：raw PNG/JPG ≤16MB（router raw body）→ var/assets/cast/（2026-11-21 试妆试镜新增） |
+| | POST /episodes/:id/castref/generate {role,prompt} | **入口②**：job cast_init → H3-Image 纯 t2i 864×1536 精确 9:16 → onCastInitDone 追加为该角色候选 |
+| | POST /episodes/:id/castref/confirm {role,file} | facegate 人脸存在性机检（no_face 拒绝确认）→ 固化 cast.refImage；**全员确认齐 → 自动派 screen_test**（每角色 1 条，engine.activeOf 防重派） |
+| | GET /cards?episodeId=&status= | 卡列表（含 C9 配乐卡，music_enabled=false 的项目不出 C9；含 **C2S 试妆试镜卡**） |
+| | POST /cards/:id/decide {action:"accept|edit|reject",payload?,ver} | **cas(card,ver)** 409；accept→decisions++（C9/C2S/C3/C4/C5 例外不加）＋派生下一批 job/卡；reject→重出（新 ver）；**C2S accept→score≥0.6 硬线固化 viewRefs→自动派 storyboard_char；C2S reject→带 note 重出 screen_test** |
 | 预估/开机 | GET /episodes/:id/estimate | 预估卡 {shots,time_min,cents,breakdown[]}，带 ver |
 | | POST /episodes/:id/shoot {ver} | cas(estimate_ver)→ 批量 enqueue video；写 job 账本 initiated_by:"user" |
 | 任务 | GET /jobs?episodeId=&status= · POST /jobs/:id/retry · POST /jobs/:id/stop | |
@@ -102,14 +107,15 @@ engine.retry(jobId) engine.stop(jobId) engine.queueState()
 
 | lane | 段位 | 引擎 stub 行为（确定性！同输入同输出，hash 种子） |
 |---|---|---|
-| img5060 | qwen-image-2.1-turbo-Q5_K_M · W-B ComfyUI :8188 | job c1plan/storyboard 出图占位＋cost 3–8 分 |
-| imgspark | MiniMax-H3-Image · int8_convrot（Spark ComfyUI :8188，published:["int8","MXFP8+FP8"]，unavail:["nvfp4"]） | 高价值出图 20 分（stub 15–25 分）；THEATER_COMFY_SPARK=1 真引擎，仅 casting 类型 |
+| img5060 | qwen-image-2.1-turbo-Q5_K_M · W-B ComfyUI :8188 | job c1plan/storyboard/casting 出图占位＋cost 3–8 分；storyboard_char 编辑输入优先剧本 refImage（用户原图＝定妆终稿，2026-11-21） |
+| imgspark | MiniMax-H3-Image / H3 · int8_convrot（Spark ComfyUI :8188，published:["int8","MXFP8+FP8"]，unavail:["nvfp4"]） | 高价值出图 20 分（stub 15–25 分）；THEATER_COMFY_SPARK=1 真引擎。**2026-11-21 试妆试镜修订：tier=high 时生图全族路由至此**（c1plan 海报 t2i / casting / storyboard_char / storyboard / cast_init / screen_test）——cast_init＝初始图 t2i 864×1536；screen_test＝初始图作 FL2VA 首帧 5.17s/124 帧多角度视频→抽帧 ~13 张→逐帧 ArcFace 打分→C2S 卡；storyboard_char＝shotAngleNeed→pickView(viewRefs) 选角度帧→h3-image-edit **只换背景壳**（人物完全不变）＋facegate 门控（<0.6 → /swap 换回源脸，2 次尝试）；storyboard 在 H3 线为 no-op 壳任务（分镜首帧全由 storyboard_char 产出） |
 | vid5060 | LTX-2.5 UD-Q4_K_XL | video job：cost 80 分/5s，art=占位 mp4（写 var/out/<takeId>.mp4 二进制 stub＋.meta.json） |
 | vidspark | MiniMax-H3 int8_convrot（Spark ComfyUI :8188，nvfp4 可切） | 高价值档 150 分；真模式 fl2va（分镜首帧）/ref2va（定妆 refs）声画直出，turbo 4step，timeout 1800s；夜间闲时标记 peak_valley 时排队慢档 |
 | music | ACE-Step 1.5 · W-M :8190 | music job：30–60s 占位 mp3 stub＋license{model:"MIT",usage 由曲库策略确定性给：标题含"未许可"→missing}，5–15 分 |
 | tts | CosyVoice2 | voice job stub |
 | compose | FFmpeg stub | 成片 stub＋显式/隐式标识写入 meta（explicit_mark:true） |
 | moderate | 规则码＋抽帧 stub | 输出 pass/fail_review；shotId 尾号 7 → 必送复审（V6 演示路径） |
+| aireview | 规则机检·多人格视角（编剧/观众/制片/选角导演/造型师/统筹/摄影/配音导演） | **2026-11-21 新增**：pending 的 C1/C2/C4/C6 自动进审（free 不计影子成本·在途防重派·启动自愈补派），结果回写 card.payload.ai_review{verdict,personas}；真 LLM 到位后同 lane 换 prompt 实现，人格骨架不变 |
 
 rules.quant 硬规则：tier 序 nvfp4→int8→MXFP8+FP8；registry[engineId].unavail 含该 tier→throw QUANT_RULE；选兜底档且 reason 缺失→throw QUANT_RULE("需理由")；成功兜底→store.log("audit",{action:"quant_fallback",audit_id})。
 rules.langlint：禁词表（take/seed/prompt/i2v/LoRA/stale/超分/补帧/路由/worker/模型名正则表，从 [U] §7 抄）；`lint(text,{exempt:false})` → {clean,hits[]}；豁免面＝/admin/registry 渲染字段（exempt:true）。

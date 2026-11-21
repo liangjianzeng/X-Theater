@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>图4/4 · MINIMAX H3 线 · 模型台账与横切纪律</title>
+<style>
+  :root{
+    --biz:#7c3aed; --biz-bg:#f5f3ff; --biz-bd:#ddd6fe;
+    --orch:#2563eb; --orch-bg:#eff6ff; --orch-bd:#bfdbfe;
+    --tmpl:#0d9488; --tmpl-bg:#f0fdfa; --tmpl-bd:#99f6e4;
+    --model:#ea580c; --model-bg:#fff7ed; --model-bd:#fed7aa;
+    --art:#475569;  --art-bg:#f8fafc;  --art-bd:#e2e8f0;
+    --ink:#1e293b; --weak:#64748b; --gold:#b45309;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; background:#eef1f6; color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{width:1280px; margin:0 auto; background:#fff; box-shadow:0 0 24px rgba(15,23,42,.12);}
+  .head{background:linear-gradient(135deg,#14532d 0%,#166534 55%,#15803d 100%); color:#fff; padding:40px 56px 34px;}
+  .head .series{font-size:13px; color:#bbf7d0; letter-spacing:2px; margin-bottom:10px;}
+  .head h1{font-size:30px; letter-spacing:1px;}
+  .head h1 .hl{color:#86efac;}
+  .head .sub{margin-top:10px; font-size:15px; color:#bbf7d0; line-height:1.7;}
+  .head .sub b{color:#fff;}
+  .crumbs{display:flex; gap:8px; padding:16px 56px 0;}
+  .crumbs .c{flex:1; text-align:center; font-size:13px; padding:8px 6px; border-radius:10px; border:1.5px solid var(--art-bd); color:var(--weak); background:#f8fafc;}
+  .crumbs .c b{display:block; font-size:14px;}
+  .crumbs .c.on{border-color:#16a34a; color:#166534; background:#f0fdf4; box-shadow:0 2px 10px rgba(22,163,74,.15);}
+  .tbl-sec{padding:8px 56px 0;}
+  .tbl-sec h2{font-size:22px; margin:16px 0 6px;}
+  .tbl-sec .sub{font-size:13px; color:var(--weak); margin-bottom:14px;}
+  table{width:100%; border-collapse:collapse; font-size:12.8px;}
+  th{background:#1e293b; color:#f1f5f9; text-align:left; padding:9px 12px; font-size:12.5px; letter-spacing:.5px;}
+  td{border-bottom:1px solid #e2e8f0; padding:9px 12px; vertical-align:top; line-height:1.7;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  td .w, td .file{margin-right:4px;}
+  .w{font-family:Consolas,monospace; font-size:12px; color:#9a3412; background:var(--model-bg); border:1px solid var(--model-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .file{font-family:Consolas,monospace; font-size:12px; color:#334155; background:var(--art-bg); border:1px solid var(--art-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .pill{border-radius:999px; padding:1px 9px; font-size:11.5px; white-space:nowrap;}
+  .p-img{background:var(--model-bg); color:#9a3412; border:1px solid var(--model-bd);}
+  .p-vid{background:#ecfeff; color:#155e75; border:1px solid #a5f3fc;}
+  .p-gate{background:#fdf2f8; color:#9d174d; border:1px solid #fbcfe8;}
+  .p-aux{background:var(--art-bg); color:#475569; border:1px solid var(--art-bd);}
+  .rules{padding:30px 56px 10px;}
+  .rules h2{font-size:22px; margin-bottom:14px;}
+  .rule-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
+  .rule{border:1.5px solid #e2e8f0; border-left:4px solid var(--orch); border-radius:10px; padding:10px 14px; font-size:12.8px; line-height:1.7; background:#f8fafc;}
+  .rule b{display:block; font-size:13.5px; color:var(--ink); margin-bottom:2px;}
+  .rule.gold{border-left-color:#f59e0b;}
+  .rule.green{border-left-color:#10b981;}
+  .src{margin:20px 56px 26px; border:1.5px solid var(--art-bd); border-radius:14px; padding:16px 24px; background:#f8fafc;}
+  .src h3{font-size:15px; margin-bottom:8px;}
+  .src .files{font-family:Consolas,monospace; font-size:12.5px; line-height:2.1; color:#334155;}
+  .foot{background:#0f172a; color:#94a3b8; padding:16px 56px; font-size:12.5px; line-height:1.8;}
+  .foot b{color:#e2e8f0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="series">系列竖图 4 / 4 · 查阅面</div>
+    <h1>图4 · <span class="hl">模型权重总台账 ＋ 横切纪律</span></h1>
+    <div class="sub">
+      全链路 14 项模型/引擎的<b>规格、服务位置、输入输出</b>一览 ＋ 贯穿每一幕的 8 条工程纪律。
+      流程部分见：图1 全景立项 → 图2 身份链★ → 图3 拍摄成片。
+    </div>
+  </div>
+
+  <div class="crumbs">
+    <div class="c"><b>图1 · 全景立项</b>总路线·剧本·C1</div>
+    <div class="c"><b>图2 · 身份链 ★</b>定妆→试镜→换壳分镜</div>
+    <div class="c"><b>图3 · 拍摄成片</b>声音·逐镜·机审·导出</div>
+    <div class="c on"><b>图4 · 台账纪律</b>权重表·横切护栏</div>
+  </div>
+
+  <div class="tbl-sec">
+    <h2>▶ 模型权重总台账（谁在哪个层次干什么、输入什么输出什么）</h2>
+    <table>
+      <tr><th style="width:150px">层次</th><th style="width:330px">模型 / 权重</th><th style="width:150px">规格</th><th style="width:250px">服务哪一步</th><th>输入 → 输出</th></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">minimax_h3_image_pruned_int8_convrot</span></td><td>DiT 20.98G</td>
+        <td>①海报 t2i · ②初始图 t2i · ④分镜 edit img2img</td>
+        <td>prompt（＋参考图/参考帧 latent）→ 1024²~864×1536 PNG</td></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">qwen3vl_32b_nvfp4_awq</span>（TE）</td><td>15.69G</td>
+        <td>H3 全家族共用编码器</td>
+        <td>IR prompt ＋ 参考图 → 正/负条件（CLIPLoader type=minimax）</td></tr>
+      <tr><td><span class="pill p-img">生图族</span></td>
+        <td><span class="w">minimax_h3_image_vae_fp16</span></td><td>1.17G</td>
+        <td>生图 VAE</td><td>像素 ↔ latent（edit 模式靠它编码参考帧）</td></tr>
+      <tr><td><span class="pill p-aux">备用</span></td>
+        <td><span class="w">qwen3.5_9b_w4a8_gptq</span></td><td>7.34G</td>
+        <td>官方 prompt 扩写分支（产品未启用）</td>
+        <td>—（h3ir 规则拼装替代，可选 llama-server 重写钩子）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_fl2va_pruned_int8_convrot</span></td><td>DiT 20.97G</td>
+        <td>③试镜视频 · ⑥有首帧拍摄</td>
+        <td>首帧＋IR＋17k+5 帧网格 → mp4 原生声画（口型同步）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_ref2va_pruned_int8_convrot</span></td><td>DiT 20.97G</td>
+        <td>⑥无首帧拍摄的保脸兜底</td>
+        <td>≤3 张定妆 refs ＋ 六段式 IR → mp4 原生声画</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">minimax_h3_video_vae_fp16</span> ＋ <span class="w">audio_vae_fp32</span></td><td>5.21G＋0.61G</td>
+        <td>视频/音频联合解码</td><td>联合 latent → 视频帧 ＋ 同步波形（台词＋环境声）</td></tr>
+      <tr><td><span class="pill p-vid">视频族</span></td>
+        <td><span class="w">fl2v/ref2v_turbo_4step LoRA ×3</span></td><td>各 1.96G</td>
+        <td>蒸馏加速</td><td>40+ 步采样 → <b>4 步</b>（strength=1）</td></tr>
+      <tr><td><span class="pill p-gate">门控</span></td>
+        <td><span class="w">buffalo_l</span>（insightface）</td><td>CPU</td>
+        <td>②人脸存在性机检 · ③逐帧打分/角度 · ④身份门控</td>
+        <td>图像 → ArcFace 余弦 score（门限 0.6）＋ yaw/pitch 姿态</td></tr>
+      <tr><td><span class="pill p-gate">门控</span></td>
+        <td><span class="w">inswapper_128.onnx</span></td><td>CPU</td>
+        <td>④生成图分数不达标 → 换回锁定源脸</td>
+        <td>生成图＋源脸 → 保真图（再打分复核）</td></tr>
+      <tr><td><span class="pill p-aux">声音</span></td>
+        <td><span class="w">CosyVoice2</span> :9880</td><td>自部署</td>
+        <td>⑤台词配音</td><td>台词文本＋音色 → wav（供对位混流）</td></tr>
+      <tr><td><span class="pill p-aux">声音</span></td>
+        <td><span class="w">ACE-Step 1.5</span> :8190</td><td>自部署 MIT</td>
+        <td>⑤场景 BGM</td><td>mood＋时长 → wav（采用后 -13dB 垫底）</td></tr>
+      <tr><td><span class="pill p-aux">合成</span></td>
+        <td><span class="w">FFmpeg 6.0</span></td><td>essentials</td>
+        <td>③裁切/抽帧/网格 · ⑧成片合成</td><td>图/视频流 → mp4（drawtext/concat/amix/adelay）</td></tr>
+      <tr><td><span class="pill p-aux">并行线</span></td>
+        <td><span class="w">qwen-image-2.1 turbo / edit</span> · <span class="w">LTX-2.5 22B distill</span></td><td>5060 Ti</td>
+        <td>标准档（tier≠high）生图/生视频</td>
+        <td>同一卡流，按镜 tier 路由；共享 TTS/音乐/合成出口</td></tr>
+    </table>
+  </div>
+
+  <div class="rules">
+    <h2>▶ 横切纪律（每一幕都受约束）</h2>
+    <div class="rule-grid">
+      <div class="rule"><b>模板四元组锁定</b>sha16 × ComfyUI commit × 节点 commit × 权重清单，manifest 校验不过即拒跑（COMFY_TMPL_DRIFT）</div>
+      <div class="rule"><b>内存族常驻</b>h3video / h3image 同族连续出片不卸载；跨族才 POST /free；ram_free&lt;8G 才释放（Spark 统一内存纪律）</div>
+      <div class="rule gold"><b>身份门控 0.6</b>ArcFace ≥0.6 过审；不达标 swap 换回源脸复核；2 次重试仍不过 = 真错误进补拍梯子</div>
+      <div class="rule"><b>失败补拍梯子</b>worker 抛错 → 系统免费重试 ≤2 次（共 3 跑）→ failed＋告警；绝不静默回退造假</div>
+      <div class="rule"><b>预算护栏＋CAS</b>成本&gt;预算×120% 整集暂停；卡 ver / estimate_ver 不符 → 409 STALE 防并发拍板</div>
+      <div class="rule green"><b>aireview 拍板机检</b>C1/C2/C4/C6 每个拍板点多人格规则审查（编剧/观众/制片/选角/造型/统筹/摄影/配音）；真 LLM 到位换 lane 不换骨架</div>
+      <div class="rule"><b>影子记账</b>Σbilling == episode.cost_cents 对账不变量；免费任务不记不计；用户面只显示「自部署·高价值档」</div>
+      <div class="rule"><b>许可合规</b>MiniMax-H3 Community License：take.license attribution ＋ meta.ai_label「AI 生成内容」显著标注</div>
+    </div>
+  </div>
+
+  <div class="src">
+    <h3>▶ 源文件索引（本系列图的代码依据）</h3>
+    <div class="files">
+      编排引擎：<span class="file">src/server/dag/engine.js</span>（lane 路由 · activeOf 防重派 · 补拍梯子 · 预算护栏）<br>
+      Spark worker：<span class="file">src/server/dag/workers/imgspark.js</span>（cast_init · screen_test★ · 换壳分镜）　<span class="file">src/server/dag/workers/vidspark.js</span>（fl2va/ref2va 拍摄）<br>
+      适配层：<span class="file">src/server/dag/adapters/comfy.js</span>（模板四元组 · /prompt /history /view /upload /free）　<span class="file">src/server/dag/adapters/h3ir.js</span>（三字段/六段式 IR · 17k+5 帧网格）<br>
+      卡流与 API：<span class="file">src/server/api/cards.js</span>（C1-C9 卡状态机 · C2S★ · aireview）　<span class="file">src/server/api/episodes.js</span>（castref 三端点★ · shoot）　<span class="file">src/server/api/projects.js</span><br>
+      模板与门控：<span class="file">runtime/templates/manifest.json</span>（四元组登记）　<span class="file">runtime/facegate/server.py</span>（:8195 score/swap）
+    </div>
+  </div>
+
+  <div class="foot"><b>MINIMAX H3 线 · 图4/4 模型台账与横切纪律</b> · 依据 X-Theater 工作区实测代码整理（2026-11-21）· 系列完</div>
+
+</div>
+</body>
+</html>

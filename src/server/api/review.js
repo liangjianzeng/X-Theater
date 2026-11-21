@@ -27,14 +27,37 @@ function register(router, ctx) {
     return (st.review_q || []).filter((r) => r.id === id)[0] || null;
   }
 
-  // GET /api/review/queue
+  // GET /api/review/queue —— 2026-11-21 可读化：每项带真镜号/镜名/分镜首帧/成片链接，
+  // 批复时知道批的是哪镜什么画面（此前只有 shotId 尾数＋哈希色块，完全看不出是什么）
   router.add(
     "GET",
     "/api/review/queue",
     (req, res, body, params, auth) => {
       requireOps(auth);
       const st = store.get();
-      const queue = (st.review_q || []).slice();
+      const shots = st.shots || {};
+      const framesByShot = {}; // shotId → 最新 C2 分镜首帧 art
+      let latestC2Ver = -1, latestC2 = null;
+      Object.keys(st.cards || {}).forEach((k) => {
+        const c = st.cards[k];
+        if (c.type !== "C2") return;
+        if ((c.ver || 0) >= latestC2Ver) { latestC2Ver = c.ver || 0; latestC2 = c; }
+      });
+      ((latestC2 && latestC2.payload && latestC2.payload.images) || []).forEach((im) => {
+        if (im && im.shotId && im.art) framesByShot[im.shotId] = im.art;
+      });
+      const queue = (st.review_q || []).slice().map((r) => {
+        const sh = shots[r.shotId] || null;
+        const takes = (sh && sh.takes) || [];
+        const lastTake = takes.length ? takes[takes.length - 1] : null;
+        return Object.assign({}, r, {
+          seq: sh ? sh.seq : null,
+          shotName: sh ? sh.name : null,
+          sec: sh ? sh.sec : null,
+          frame: framesByShot[r.shotId] || null,
+          takeArt: lastTake && lastTake.art ? lastTake.art : null
+        });
+      });
       return router.json(res, 200, {
         queue,
         pending: queue.filter((r) => r.status === "pending").length

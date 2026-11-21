@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>图2/4 · MINIMAX H3 线 · 身份链（试妆试镜★）</title>
+<style>
+  :root{
+    --biz:#7c3aed; --biz-bg:#f5f3ff; --biz-bd:#ddd6fe;
+    --orch:#2563eb; --orch-bg:#eff6ff; --orch-bd:#bfdbfe;
+    --tmpl:#0d9488; --tmpl-bg:#f0fdfa; --tmpl-bd:#99f6e4;
+    --model:#ea580c; --model-bg:#fff7ed; --model-bd:#fed7aa;
+    --art:#475569;  --art-bg:#f8fafc;  --art-bd:#e2e8f0;
+    --ink:#1e293b; --weak:#64748b; --gold:#b45309;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; background:#eef1f6; color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{width:1280px; margin:0 auto; background:#fff; box-shadow:0 0 24px rgba(15,23,42,.12);}
+  .head{background:linear-gradient(135deg,#451a03 0%,#92400e 55%,#b45309 100%); color:#fff; padding:40px 56px 34px;}
+  .head .series{font-size:13px; color:#fcd34d; letter-spacing:2px; margin-bottom:10px;}
+  .head h1{font-size:30px; letter-spacing:1px;}
+  .head h1 .hl{color:#fde68a;}
+  .head .sub{margin-top:10px; font-size:15px; color:#fde68a; line-height:1.7;}
+  .head .sub b{color:#fff;}
+  .crumbs{display:flex; gap:8px; padding:16px 56px 0;}
+  .crumbs .c{flex:1; text-align:center; font-size:13px; padding:8px 6px; border-radius:10px; border:1.5px solid var(--art-bd); color:var(--weak); background:#f8fafc;}
+  .crumbs .c b{display:block; font-size:14px;}
+  .crumbs .c.on{border-color:#f59e0b; color:#b45309; background:#fffbeb; box-shadow:0 2px 10px rgba(245,158,11,.18);}
+  .lmini{padding:12px 56px 4px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .lmini .lg{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink); border:1.5px solid var(--art-bd); border-radius:999px; padding:4px 12px 4px 7px; background:#fff;}
+  .lmini .dot{width:12px; height:12px; border-radius:4px;}
+  .acts{padding:10px 56px 8px;}
+  .act{border:1.5px solid #e2e8f0; border-radius:16px; background:#fff; padding:20px 24px 16px;}
+  .act.new{border:2px solid #f59e0b; background:#fffdf7; box-shadow:0 4px 18px rgba(245,158,11,.14);}
+  .act-title{display:flex; align-items:baseline; gap:12px; margin-bottom:4px;}
+  .act-title .no{background:var(--ink); color:#fff; border-radius:8px; padding:3px 10px; font-size:13px; font-weight:700; letter-spacing:1px;}
+  .act.new .act-title .no{background:#b45309;}
+  .act-title h2{font-size:21px;}
+  .act.new .act-title h2{color:#92400e;}
+  .act-title .tagline{font-size:13px; color:var(--weak);}
+  .act-desc{font-size:13.5px; color:var(--weak); line-height:1.75; margin:4px 0 14px;}
+  .act-desc b{color:var(--ink);}
+  .layer-row{display:flex; gap:12px; margin-bottom:9px; align-items:stretch;}
+  .layer-tag{flex:0 0 118px; display:flex; flex-direction:column; justify-content:center; align-items:center; border-radius:10px; font-size:12.5px; font-weight:700; line-height:1.5; padding:8px 4px;}
+  .layer-tag small{font-weight:400; font-size:10.5px; opacity:.75;}
+  .t-biz{background:var(--biz-bg); color:var(--biz); border:1.5px solid var(--biz-bd);}
+  .t-orch{background:var(--orch-bg); color:var(--orch); border:1.5px solid var(--orch-bd);}
+  .t-tmpl{background:var(--tmpl-bg); color:var(--tmpl); border:1.5px solid var(--tmpl-bd);}
+  .t-model{background:var(--model-bg); color:var(--model); border:1.5px solid var(--model-bd);}
+  .t-art{background:var(--art-bg); color:var(--art); border:1.5px solid var(--art-bd);}
+  .layer-body{flex:1; border:1.5px solid var(--art-bd); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.8; background:#fff;}
+  .layer-body b{color:var(--ink);}
+  .layer-body .code{font-family:Consolas,"Courier New",monospace; font-size:12px; background:#0f172a; color:#e2e8f0; border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .api{font-family:Consolas,monospace; font-size:12px; color:#1d4ed8; background:var(--orch-bg); border:1px solid var(--orch-bd); border-radius:6px; padding:1px 7px; white-space:nowrap;}
+  .layer-body .w{font-family:Consolas,monospace; font-size:12px; color:#9a3412; background:var(--model-bg); border:1px solid var(--model-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .file{font-family:Consolas,monospace; font-size:12px; color:#334155; background:var(--art-bg); border:1px solid var(--art-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .layer-body .node{font-family:Consolas,monospace; font-size:12px; color:#0f766e; background:var(--tmpl-bg); border:1px solid var(--tmpl-bd); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .handoff{display:flex; align-items:center; gap:14px; padding:12px 56px;}
+  .handoff .arrow{font-size:26px; color:#94a3b8; line-height:1;}
+  .handoff .hl-label{font-size:13px; color:#475569; background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:999px; padding:6px 18px;}
+  .handoff .hl-label b{color:var(--gold);}
+  .next{margin:6px 56px 26px; background:linear-gradient(90deg,#fffbeb,#fff); border:1.5px solid #fcd34d; border-radius:14px; padding:16px 24px; font-size:14px; color:var(--ink); line-height:1.8;}
+  .next b{color:#b45309;}
+  .foot{background:#0f172a; color:#94a3b8; padding:16px 56px; font-size:12.5px; line-height:1.8;}
+  .foot b{color:#e2e8f0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="series">系列竖图 2 / 4 · 身份链 ★本次调整核心</div>
+    <h1>图2 · <span class="hl">身份链</span>：定妆 → 试镜 → 分镜换壳</h1>
+    <div class="sub">
+      <b>人是本体，背景只是壳</b>：一张定妆照只有一个角度，分镜需要的左右 3/4 侧脸、仰头、低头各有专属参考帧——
+      所以用初始图直接作首帧生成多角度试镜视频，逐帧打分挑帧固化，分镜环节人原封不动、只替换背景与环境。
+    </div>
+  </div>
+
+  <div class="crumbs">
+    <div class="c"><b>图1 · 全景立项</b>总路线·剧本·C1</div>
+    <div class="c on"><b>图2 · 身份链 ★</b>定妆→试镜→换壳分镜</div>
+    <div class="c"><b>图3 · 拍摄成片</b>声音·逐镜·机审·导出</div>
+    <div class="c"><b>图4 · 台账纪律</b>权重表·横切护栏</div>
+  </div>
+
+  <div class="lmini">
+    <div class="lg"><span class="dot" style="background:var(--biz)"></span>业务决策层</div>
+    <div class="lg"><span class="dot" style="background:var(--orch)"></span>编排层</div>
+    <div class="lg"><span class="dot" style="background:var(--tmpl)"></span>模板节点层</div>
+    <div class="lg"><span class="dot" style="background:var(--model)"></span>模型权重层</div>
+    <div class="lg"><span class="dot" style="background:var(--art)"></span>产物素材层</div>
+  </div>
+
+  <div class="acts">
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 2 幕</span><h2>初始定妆：确立「角色身份源」</h2><span class="tagline">业务场景 · 用户三入口确认制</span></div>
+    <div class="act-desc">身份从这里锁定：<b>用户上传的原图就是定妆终稿</b>（也可以让 H3 按提示词生成候选再挑）。此后所有环节（试镜、分镜、视频）都以这张图为身份根，<b>不再自动随机生成新脸</b>。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C2 卡</small></div>
+      <div class="layer-body">每个角色三选一：① <b>上传原图</b> ② <b>提示词生成</b>初始图 ③ <b>继承旧集</b>定妆（跨轮沿用，脸不重掷）→ 卡上点「确认」</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>REST API</small></div>
+      <div class="layer-body">
+        ① <span class="api">POST /api/episodes/:id/castref/upload?role=X</span>（raw PNG/JPG ≤16MB，router 支持 raw body）
+        ② <span class="api">POST …/castref/generate</span> {role, prompt} → <b>cast_init</b> job
+        ③ <span class="api">POST …/castref/confirm</span> {role, file}
+      </div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>生成入口</small></div>
+      <div class="layer-body">cast_init 走 <span class="node">h3-image-cast</span> 纯 t2i：<b>864×1536 精确 9:16</b>（32 倍数）· 半身景别·面部清晰锐利；产物追加为该角色候选「AI 初始图」</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>门控模型</small></div>
+      <div class="layer-body">confirm 时 <span class="w">facegate buffalo_l</span>（insightface，:8195）做<b>人脸存在性机检</b>——<span class="code">no_face</span> 拒绝确认；ArcFace embedding 即身份基准</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>固化</small></div>
+      <div class="layer-body"><span class="file">var/assets/cast/&lt;file&gt;.png</span> → 写入 <span class="file">cast.refImage</span>；<b>全员确认齐 → 自动派 screen_test</b>（每角色 1 条，engine.activeOf 防重派）</div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">全员 refImage 就位 → 自动派 <b>screen_test</b>（★ 本次调整核心幕）</span></div>
+
+  <div class="act new">
+    <div class="act-title"><span class="no">第 3 幕 ★</span><h2>试妆试镜（C2S）：一条视频锁死「脸＋体态」</h2><span class="tagline">业务场景 · 高保真身份采集</span></div>
+    <div class="act-desc"><b>为什么用视频不用照片：</b>一张定妆照只有一个角度；分镜需要的左右 3/4 侧脸、仰头、低头等姿态各有专属参考帧。用初始图直接作<b>首帧</b>生成一条多角度试镜视频，再逐帧打分挑帧——<b>背景和道具只是壳，人脸五官、体态、眼神、表情才是要高保真的本体</b>。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>C2S 卡</small></div>
+      <div class="layer-body">用户看：试镜视频 ＋ 7×2 抽帧网格 ＋ 逐帧分数/角度 ＋ 确认清单（五官脸型/身材体态/服装细节/多角度）→ <b>勾选拍板</b>；不满意 → reject 附意见 note → 自动重出试镜</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>screen_test job</small></div>
+      <div class="layer-body">lane 固定 <span class="code">imgspark</span>；流程：ffmpeg cover 裁切初始图 → 上传 Spark → FL2VA 真跑 → 抽帧 → 逐帧打分 → <span class="code">onScreenTestDone</span> 出 C2S 卡</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>h3-fl2va-video</small></div>
+      <div class="layer-body">节点链：<span class="node">LoadImage(FIRST_FRAME)</span>→<span class="node">MiniMaxH3ImageToVideo</span>→<span class="node">SamplerCustomAdvanced(res_multistep)</span>→<span class="node">VAEDecode</span>+<span class="node">VAEDecodeAudio</span>→<span class="node">CreateVideo(24fps)</span>→<span class="node">SaveVideo</span><br>
+      参数：<b>736×1312</b>（32 倍数等比裁切）· <b>124 帧 / 5.17s</b> · turbo <b>4 步</b> · timeout 1500s · 动作提示词＝正面→左 3/4→右 3/4→仰头闭眼→回眸微笑（覆盖分镜所需头部角度）· 用户 note 追加尾部</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>权重</small></div>
+      <div class="layer-body"><span class="w">minimax_h3_fl2va_pruned_int8 20.97G</span> 首帧→声画 DiT　＋　<span class="w">fl2v_turbo_4step LoRA 1.96G</span>（40+步→4步蒸馏）　＋　<span class="w">video VAE 5.21G</span> ＋ <span class="w">audio VAE 0.61G</span>（原生声画）　＋　<span class="w">qwen3vl_32b TE 15.7G</span></div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>抽帧＋固化</small></div>
+      <div class="layer-body">
+        <span class="file">&lt;jobId&gt;_screentest.mp4</span> → ffmpeg <span class="code">select=not(mod(n,10))</span> 抽 ~13 张全分辨率候选 → 逐帧 <b>facegate ArcFace 打分</b>（yaw/pitch 角度标签）→ <span class="file">&lt;jobId&gt;_grid.png</span> 7×2 缩略墙<br>
+        <b>accept C2S → score≥0.6 硬线过滤 → 拷贝 var/assets/cast/&lt;role&gt;/views/ → 固化 st.viewRefs[episodeId][role]</b>（分镜的身份输入源）
+      </div></div>
+  </div>
+
+  <div class="handoff"><span class="arrow">▼</span><span class="hl-label">viewRefs 固化 → 自动派 <b>storyboard_char</b>（分镜＝选角度帧＋换背景壳）</span></div>
+
+  <div class="act">
+    <div class="act-title"><span class="no">第 4 幕</span><h2>角色分镜＝「选角度参考帧 ＋ 只换背景壳」</h2><span class="tagline">业务场景 · 保脸分镜</span></div>
+    <div class="act-desc">分镜不再重新画人：每一镜先解析出需要的<b>头部角度</b>，从试妆帧库选最匹配的参考帧，然后 H3-Image edit <b>只替换背景与环境</b>——人（脸/五官/发型/体态/头部角度/服装）原封不动。</div>
+    <div class="layer-row"><div class="layer-tag t-biz">业务层<small>分镜可见</small></div>
+      <div class="layer-body">分镜首帧逐格出现在 C2/C4 卡（带 refAngle/refT 溯源：用了哪条试镜帧、什么角度）；用户 reject → 重出</div></div>
+    <div class="layer-row"><div class="layer-tag t-orch">编排层<small>storyboard_char job</small></div>
+      <div class="layer-body">逐镜：<span class="code">shotAngleNeed(镜desc＋角色anchor)</span> 关键词解析（仰头/低头/左侧脸/右侧脸/正面）→ <span class="code">pickView(viewRefs)</span> 选该角度最高分帧（缺角度→front→全局最高分兜底；旧集回退初始原图）；同图上传缓存不重传</div></div>
+    <div class="layer-row"><div class="layer-tag t-tmpl">模板层<small>h3-image-edit</small></div>
+      <div class="layer-body"><b>img2img</b>：KSampler 的 latent ← 参考帧 VAE 编码（身份像素级保真）· 宽高＝原图 /16 对齐<br>
+      提示词模板：「<b>人物保持完全不变</b>——脸、五官、发型、体态、头部角度与参考帧一致，服装：&lt;wardrobe 锁&gt;。<b>只替换背景与环境为</b>：&lt;该镜描述&gt;。单幅剧照，禁止分屏拼贴。实拍电影剧照质感，浅景深」</div></div>
+    <div class="layer-row"><div class="layer-tag t-model">模型层<small>门控闭环</small></div>
+      <div class="layer-body"><span class="w">H3-Image DiT 20.98G</span>（edit 模式）＋ <span class="w">facegate inswapper_128</span>：出图 → ArcFace 打分，<b>&lt;0.6 → /swap 换回锁定源脸再打分</b>；每镜 2 次尝试，仍不过 → <span class="code">IDENTITY_GATE_FAIL</span> 进自动补拍梯子</div></div>
+    <div class="layer-row"><div class="layer-tag t-art">产物层<small>分镜首帧</small></div>
+      <div class="layer-body"><span class="file">var/out/&lt;jobId&gt;_h3charN.png</span> → <span class="code">onStoryboardCharDone</span> 按 seq 绑 shotId → 回填 C2/C4 卡 → <b>即图 3 第 6 幕拍摄的首帧源</b></div></div>
+  </div>
+
+  </div>
+
+  <div class="next">
+    ▶ 身份链闭环：<b>初始图 → 试镜视频 → 帧库 → 换壳分镜 → 拍摄首帧</b>。接下来进入<b>图 3/4</b>：声音资产、逐镜「原生声画」拍摄、机审复审与 FFmpeg 成片导出。
+  </div>
+
+  <div class="foot"><b>MINIMAX H3 线 · 图2/4 身份链（试妆试镜★）</b> · 依据 X-Theater 工作区实测代码整理（2026-11-21）</div>
+
+</div>
+</body>
+</html>

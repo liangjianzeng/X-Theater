@@ -83,6 +83,54 @@
         const dec = arr.filter(c => c.status !== "pending").sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0));
         return pen.concat(dec);
       });
+
+      /* ---- 流程总览条（2026-11-21：多次重出后搞不清当前状态）---- */
+      const STAGE_ORDER = ["C1", "C2S", "C2", "C3", "C4", "C5", "C6", "C7", "C8"];
+      const stageSteps = computed(() => {
+        const l = list.value || [];
+        return STAGE_ORDER.map(t => {
+          const m = TYPE_META[t];
+          return { k: t, name: m ? m.name : t, done: l.some(c => c.type === t && c.status === "decided") };
+        });
+      });
+      const currentStep = computed(() => {
+        const s = stageSteps.value.find(x => !x.done);
+        return s ? s.k : null;
+      });
+      const currentStepName = computed(() => {
+        const s = stageSteps.value.find(x => !x.done);
+        return s ? s.name : "全镜已交付";
+      });
+      const pendingTypes = computed(() => {
+        const seen = [];
+        (list.value || []).filter(c => c.status === "pending").forEach(c => {
+          const name = TYPE_META[c.type] ? c.type + "·" + TYPE_META[c.type].name : c.type;
+          if (seen.indexOf(name) < 0) seen.push(name);
+        });
+        return seen;
+      });
+      const reviewCount = computed(() => {
+        const shots = (store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || [];
+        return shots.filter(s => s.status === "pending_review").length;
+      });
+      const shotDoneCount = computed(() => {
+        const shots = (store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || [];
+        return shots.filter(s => s.status === "ok" && (s.takes || []).length).length;
+      });
+      const shotTotal = computed(() => ((store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || []).length);
+
+      /* ---- 卡片折叠（同类旧卡收起，只展开 pending + 每个 type 最新 decided）---- */
+      const expanded = reactive({});
+      function isLatestDecided(card) {
+        if (card.status !== "decided") return false;
+        const same = (list.value || []).filter(c => c.type === card.type && c.status === "decided");
+        return same.every(c => (c.decided_at || 0) <= (card.decided_at || 0));
+      }
+      function isCompact(card) {
+        if (card.status === "pending") return false;
+        if (expanded[card.id]) return false;
+        return !(card.status === "decided" && isLatestDecided(card));
+      }
       /* C6 开机的前提：本集 C6 卡已拍板（后端 shoot 也强制校验） */
       const c6Decided = computed(() => (list.value || []).some(c => c.type === "C6" && c.status !== "pending"));
       const hasC6 = computed(() => (list.value || []).some(c => c.type === "C6"));
@@ -365,8 +413,72 @@
       function viewsOf(card) {
         return ((card.payload || {}).views || []).filter(v => v && v.art);
       }
+      /** 图组（灯箱左右切换用） */
+      function sbGroup(card) {
+        return ((card.payload || {}).images || []).filter(im => im && im.art)
+          .map(im => ({ src: '/' + im.art, title: '镜 ' + (im.seq || '') + (im.refAngle ? ' · ' + (angleCn(im.refAngle)) : '') }));
+      }
+      function previewViews(card) {
+        const g = viewsOf(card).map(v => ({ src: '/' + v.art, title: angleCn(v.angle) + ' · t=' + v.t + 's · ArcFace ' + v.score }));
+        if (g.length) openLb(g[0].src, '角度参考帧', g, 0);
+      }
       function toggleView(card, v) {
         v.selected = v.selected === false; // 默认勾选；点一次取消，再点恢复
+      }
+
+      /* ---- 产物总览（2026-11-21：产物散在卡片里看不出哪个是哪个/哪个最新）---- */
+      const productSummary = computed(() => {
+        const l = list.value || [];
+        const out = [];
+        const latest = (t) => l.filter(c => c.type === t && c.status === "decided")
+          .sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0))[0];
+        const c2s = latest("C2S");
+        if (c2s && (c2s.payload.video || {}).art) {
+          out.push({
+            name: "试妆试镜视频", kind: "video",
+            art: (c2s.payload.video || {}).art,
+            meta: ((c2s.payload.video || {}).sec || "") + "s · 抽帧 " + (c2s.payload.views || []).length + " 帧",
+            ts: c2s.decided_at
+          });
+        }
+        const c2list = l.filter(c => c.type === "C2");
+        const c2 = c2list.sort((a, b) => (b.ver || 0) - (a.ver || 0))[0];
+        const imgs = (c2 && c2.payload && c2.payload.images || []).filter(im => im && im.art);
+        if (imgs.length) out.push({ name: "分镜首帧", kind: "group", items: imgs.map(im => ({ src: '/' + im.art, title: '镜 ' + (im.seq || '') })), meta: imgs.length + " 张", ts: c2.updated_at });
+        const shots = (store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || [];
+        shots.filter(s => (s.takes || []).length).forEach(s => {
+          const tk = s.takes[s.takes.length - 1];
+          out.push({ name: "镜" + (s.seq % 100 || s.seq) + " 视频", kind: "video", art: tk.art, meta: "第 " + s.takes.length + " 版 take", ts: s.updated_at || null });
+        });
+        return out;
+      });
+      function prodSrc(it) { return it.kind === "video" ? ('/' + it.art) : null; }
+
+      /* ---- 批次号（2026-11-21）：同类型第几版；服务端新卡带 round，存量卡按创建序号兜底 ---- */
+      function cardRound(card) {
+        if (card.round) return card.round;
+        const same = (list.value || []).filter(c => c.type === card.type)
+          .sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+        const i = same.findIndex(c => c.id === card.id);
+        return i >= 0 ? i + 1 : 1;
+      }
+
+      /* ---- 时间线面板 ---- */
+      const tl = reactive({ shown: false, loading: false, items: [], err: null });
+      async function toggleTimeline() {
+        tl.shown = !tl.shown;
+        if (!tl.shown || tl.items.length || tl.loading) return;
+        tl.loading = true; tl.err = null;
+        try {
+          const d = await T.api.get("/episodes/" + props.epId + "/timeline");
+          tl.items = d.events || [];
+        } catch (e) { tl.err = T.humanErr(e).text; }
+        finally { tl.loading = false; }
+      }
+      function fmtTs(ts) {
+        const d = new Date(Number(ts));
+        const p = (n) => (n < 10 ? "0" + n : "" + n);
+        return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
       }
 
       function p(card) { return (card && card.payload) || {}; }
@@ -383,10 +495,24 @@
         return null;
       }
 
-      const lightbox = Vue.ref(null);
-      function openLb(src, title) { lightbox.value = { src, title }; }
+      const lightbox = Vue.ref(null); // {list:[{src,title}], idx} —— 支持图组左右切换
+      function openLb(src, title, group, idx) {
+        if (group && group.length) lightbox.value = { list: group, idx: Math.max(0, Math.min(idx || 0, group.length - 1)) };
+        else lightbox.value = { list: [{ src: src, title: title || "" }], idx: 0 };
+      }
+      function lbItem() {
+        const lb = lightbox.value;
+        return lb ? lb.list[lb.idx] : null;
+      }
+      function lbPrev() { const lb = lightbox.value; if (lb && lb.idx > 0) lb.idx--; }
+      function lbNext() { const lb = lightbox.value; if (lb && lb.idx < lb.list.length - 1) lb.idx++; }
       function closeLb() { lightbox.value = null; }
-      const onKey = (e) => { if (e.key === "Escape") lightbox.value = null; };
+      const onKey = (e) => {
+        if (!lightbox.value) return;
+        if (e.key === "Escape") closeLb();
+        else if (e.key === "ArrowLeft") lbPrev();
+        else if (e.key === "ArrowRight") lbNext();
+      };
       Vue.onMounted(() => global.addEventListener("keydown", onKey));
       Vue.onUnmounted(() => global.removeEventListener("keydown", onKey));
 
@@ -410,11 +536,15 @@
         playingId, playingSrc, audioErr, audioEl,
         list, loading, err, isEmpty, pendingCount, decidedCount, ordered, c6Decided,
         typeLabel, cardTitle, summary, c7Items, cands,
-        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, closeLb,
+        clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, lbItem, lbPrev, lbNext, closeLb,
         accept, reject, openNote, editSubmit,
         gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
         uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
-        castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView
+        castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView,
+        sbGroup, previewViews,
+        stageSteps, currentStep, currentStepName, pendingTypes, reviewCount, shotDoneCount, shotTotal,
+        isCompact, isLatestDecided, expanded, productSummary, prodSrc,
+        cardRound, tl, toggleTimeline, fmtTs
       };
     },
     template: `
@@ -427,6 +557,44 @@
           <button class="btn btn-ghost btn-sm" @click="reload">刷新卡片</button>
         </div>
 
+        <!-- 流程总览：当前在哪一步 / 待办 / 机审灰区 -->
+        <div class="v-flow-overview" v-if="stageSteps.length">
+          <div class="v-flow-steps" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <span v-for="(s, i) in stageSteps" :key="s.k"
+              :style="s.k === currentStep
+                ? 'background:#f5a623;color:#fff;padding:2px 10px;border-radius:12px;font-weight:600'
+                : (s.done ? 'color:#2a9d5c' : 'color:#9aa0a8')">{{ s.done ? '✓ ' : '' }}{{ s.name }}</span>
+          </div>
+          <div class="v-flow-now">
+            <span>当前：<b>{{ currentStepName }}</b></span>
+            <span class="weak" v-if="pendingTypes.length"> · 待你拍板：{{ pendingTypes.join("、") }}</span>
+            <span class="weak" v-if="shotTotal"> · 已拍 {{ shotDoneCount }}/{{ shotTotal }} 镜</span>
+            <a class="weak" v-if="reviewCount" href="#/review" style="text-decoration:underline"> · ⚠ {{ reviewCount }} 镜机审灰区待批复（去复审台）</a>
+          </div>
+          <div class="v-flow-products" v-if="productSummary.length">
+            <span class="weak">有效产物：</span>
+            <span v-for="(pr, pi) in productSummary" :key="pi" class="v-flow-prod">
+              <template v-if="pr.kind === 'video' && pr.art">
+                <a :href="'/' + pr.art" target="_blank" :title="'打开 ' + pr.name">▶ {{ pr.name }}</a><span class="weak">（{{ pr.meta }}）</span>
+              </template>
+              <template v-else-if="pr.kind === 'group'">
+                <span>{{ pr.name }}</span><span class="weak">（{{ pr.meta }}，点击下方分镜卡查看）</span>
+              </template>
+            </span>
+            <button class="btn btn-sm btn-ghost" style="margin-left:12px" @click="toggleTimeline">{{ tl.shown ? '收起时间线' : '📋 时间线' }}</button>
+          </div>
+          <!-- 时间线面板：全程事件倒序（成功绿/重试黄/失败红） -->
+          <div v-if="tl.shown" style="margin-top:8px;border-top:1px dashed #ddd;padding-top:8px;max-height:320px;overflow:auto">
+            <div v-if="tl.loading" class="weak">加载中…</div>
+            <div v-else-if="tl.err" class="weak">{{ tl.err }}</div>
+            <div v-else-if="!tl.items.length" class="weak">还没有事件</div>
+            <div v-else v-for="(ev, ei) in tl.items" :key="ei"
+              :style="'font-size:12px;padding:2px 0;color:' + (ev.level === 'err' ? '#c0392b' : ev.level === 'warn' ? '#b8860b' : ev.level === 'ok' ? '#2a9d5c' : '#555')">
+              <span class="weak">{{ fmtTs(ev.ts) }}</span> {{ ev.text }}
+            </div>
+          </div>
+        </div>
+
         <loading v-if="loading"></loading>
         <err-state v-else-if="err" :err="err" :on-retry="reload"></err-state>
         <empty-state v-else-if="isEmpty" icon="🎬" text="本集还没有创作卡"
@@ -436,10 +604,14 @@
 
         <div v-else class="list v-flow-list">
           <div v-for="card in ordered" :key="card.id" class="card pcard"
-            :class="{ 'v-flow-pending': card.status === 'pending', 'decided': card.status !== 'pending' }">
+            :class="{ 'v-flow-pending': card.status === 'pending', 'decided': card.status !== 'pending' }"
+            :style="card.status === 'rejected' ? 'opacity:.55' : ''">
             <div class="card-head">
               <span class="badge v-flow-badge" :class="'v-flow-t-' + card.type">{{ typeLabel(card.type) }}</span>
               <span class="card-title">{{ cardTitle(card) }}</span>
+              <span class="badge" style="background:#3b6ea5;color:#fff">第 {{ cardRound(card) }} 版</span>
+              <span class="badge" v-if="card.status === 'rejected'" style="background:#8a8f98;color:#fff">已废弃（被新版取代）</span>
+              <span class="badge badge-ok" v-else-if="card.status === 'decided' && isLatestDecided(card)">当前有效</span>
               <span class="badge" :class="card.status === 'pending' ? 'badge-warn' : 'badge-ok'">
                 {{ card.status === 'pending' ? '待拍板' : '已拍板' }}
               </span>
@@ -448,6 +620,15 @@
             </div>
 
             <div class="card-sub" v-if="summary(card)">{{ summary(card) }}</div>
+
+            <!-- 历史卡折叠行：非 pending 且非最新有效 → 一行带展开按钮 -->
+            <div class="v-flow-fold" v-if="isCompact(card)"
+              style="display:flex;align-items:center;gap:10px;padding:4px 0">
+              <span class="weak">这是一张历史卡（{{ card.status === 'rejected' ? '已废弃' : '已拍板 · 被新版取代' }}）</span>
+              <button class="btn btn-sm btn-ghost" @click="expanded[card.id] = true">展开查看</button>
+            </div>
+
+            <template v-if="!isCompact(card)">
 
             <!-- AI 节点审查：多人格机检意见（拍板前必读） -->
             <div class="v-flow-ai" v-if="(p(card).ai_review || {}).personas">
@@ -547,7 +728,7 @@
                 <div class="v-flow-cast-title"><b>分镜首帧</b><span class="badge badge-ok">每镜视频的 I2V 输入</span><span class="weak">拍摄阶段逐镜动起来</span></div>
                 <div class="v-flow-sb">
                   <div class="v-flow-sb-cell" v-for="(im, i) in p(card).images" :key="i">
-                    <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" :title="'点击看大图 · 镜 ' + (im.seq || i + 1)" @click="openLb('/' + im.art, '镜 ' + (im.seq || (i + 1)) + (im.shotId ? ' · 拍摄输入' : ''))" style="cursor:zoom-in" />
+                    <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" :title="'点击看大图 · 镜 ' + (im.seq || i + 1) + '（←/→ 翻镜）'" @click="openLb('/' + im.art, '镜 ' + (im.seq || (i + 1)) + (im.shotId ? ' · 拍摄输入' : ''), sbGroup(card), i)" style="cursor:zoom-in" />
                     <span class="weak" v-else>生成中</span>
                     <span class="v-flow-sb-tag">镜 {{ im.seq || i + 1 }}</span>
                   </div>
@@ -566,7 +747,7 @@
                 <div class="weak">抽帧网格 · 约 0.4 秒一帧 · 点开看大图</div>
               </div>
               <div v-if="viewsOf(card).length" class="v-flow-sb-wrap">
-                <div class="v-flow-cast-title"><b>角度参考帧</b><span class="badge badge-ok">点图取消/恢复勾选</span><span class="weak">拍板后固化为分镜身份参考（分镜只换背景）</span></div>
+                <div class="v-flow-cast-title"><b>角度参考帧</b><span class="badge badge-ok">点图取消/恢复勾选</span><span class="weak">拍板后固化为分镜身份参考（分镜只换背景）</span><button class="btn btn-sm btn-ghost" @click="previewViews(card)">👁 放大预览（←/→ 翻帧）</button></div>
                 <div class="v-flow-sb">
                   <div class="v-flow-sb-cell" v-for="(v, i) in viewsOf(card)" :key="i" :style="v.selected === false ? 'opacity:.3' : ''">
                     <img :src="'/' + v.art" loading="lazy" style="cursor:pointer" :title="'t=' + v.t + 's · ' + angleCn(v.angle) + ' · ArcFace ' + v.score" @click="toggleView(card, v)" />
@@ -631,6 +812,15 @@
               </template>
               <err-state v-else-if="est.err" :err="est.err" :on-retry="loadEstimate" compact></err-state>
             </div>
+            <!-- 开机批次快照：本次开机 = 用第几版试妆素材、每镜首帧来自哪个角度帧 -->
+            <div class="kv" v-if="card.type === 'C6' && (p(card).snapshot || {}).frames && (p(card).snapshot.frames || []).length"
+              style="margin-top:8px;border-top:1px dashed #ddd;padding-top:8px">
+              <div class="kv-row"><span><b>本次开机批次</b></span><span class="weak">试妆素材：第 {{ (p(card).snapshot.castRound) || '…' }} 版</span></div>
+              <div class="kv-row" v-for="(f, fi) in (p(card).snapshot.frames || [])" :key="'f' + fi">
+                <span>镜 {{ f.seq }}</span>
+                <span class="weak">首帧 = {{ f.angle ? (angleCn(f.angle) + ' @' + f.t + 's') : '初始定妆' }}（{{ f.file }}）</span>
+              </div>
+            </div>
             <div class="row wrap v-flow-cta" v-if="card.type === 'C6'">
               <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting || gpuBusy"
                 :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
@@ -658,15 +848,23 @@
                 <button class="btn btn-sm btn-ghost" @click="editing = ''">先不了</button>
               </div>
             </div>
+            </template>
+            <div class="v-flow-fold" v-else style="padding:2px 0 0">
+              <button class="btn btn-sm btn-ghost" @click="expanded[card.id] = false">收起历史卡</button>
+            </div>
           </div>
         </div>
 
         <audio ref="audioEl" :src="playingSrc" preload="none" style="display:none"
           @error="audioErr = '这条听不了：音频文件还没落盘'; playingId = ''"></audio>
-        <!-- 灯箱：看大图 -->
-        <div class="lightbox" v-if="lightbox" @click.self="closeLb">
-          <img :src="lightbox.src" alt="大图" />
-          <div class="lb-cap">{{ lightbox.title }} · 点击空白或按 Esc 关闭</div>
+        <!-- 灯箱：看大图（图组支持 ←/→ 或点击左右侧切换） -->
+        <div class="lightbox" v-if="lightbox && lbItem()" @click.self="closeLb">
+          <img :src="lbItem().src" alt="大图" />
+          <button v-if="lightbox.idx > 0" @click.stop="lbPrev"
+            style="position:absolute;left:16px;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:#fff;font-size:28px;cursor:pointer;line-height:1">‹</button>
+          <button v-if="lightbox.idx < lightbox.list.length - 1" @click.stop="lbNext"
+            style="position:absolute;right:16px;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:#fff;font-size:28px;cursor:pointer;line-height:1">›</button>
+          <div class="lb-cap">{{ lbItem().title }}<template v-if="lightbox.list.length > 1"> · {{ lightbox.idx + 1 }}/{{ lightbox.list.length }}（←/→ 或点两侧切换）</template> · 点空白或 Esc 关闭</div>
         </div>
       </div>`
   };

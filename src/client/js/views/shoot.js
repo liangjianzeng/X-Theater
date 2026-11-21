@@ -27,10 +27,12 @@
     return x.replace(/[ \t]{2,}/g, " ").replace(/\s+([）)）])/, "$1").trim();
   }
 
-  /* 任务类型的人话名（不上任何内部代号/型号） */
+  /* 任务类型的人话名（不上任何内部代号/型号）——表必须覆盖全部 type，漏一个就漏英文 */
   const JOB_TYPE_CN = {
-    c1plan: "故事策划", storyboard: "分镜绘制", video: "镜头拍摄",
-    moderate: "机审", compose: "合成", music: "配乐", voice: "配音"
+    c1plan: "故事策划", storyboard: "分镜绘制", storyboard_char: "分镜出图",
+    casting: "选角", cast_init: "角色定妆", screen_test: "试妆试镜",
+    video: "镜头拍摄", moderate: "机审", aireview: "AI 审查",
+    compose: "合成", music: "配乐", voice: "配音"
   };
 
   views.Shoot = {
@@ -70,7 +72,7 @@
         });
         return Array.from(map.values()).sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
       });
-      const jobOf = shot => jobRows.value.find(j => j.payload && j.payload.shotId === shot.id) || null;
+      const jobOf = shot => jobRows.value.find(j => j.live !== false && (j.shotId === shot.id || (j.payload && j.payload.shotId === shot.id))) || null;
       const jobFailed = shot => {
         const j = jobOf(shot);
         return !!j && j.status === "failed";
@@ -94,10 +96,24 @@
         cls[band] = true;
         return cls;
       }
-      /* 集级任务区：只列还在跑/排队/失败的（成功归档不打扰） */
-      const queueJobs = computed(() =>
-        jobRows.value.filter(j => ["queued", "pending", "running", "failed"].indexOf(String(j.status)) >= 0)
-      );
+      /* 集级任务区：只列**存活**任务（live!==false——引擎重启后账本里的 running/queued 是残影，
+         2026-11-21「僵死假象」修复）；成功归档不打扰，历史在时间线看。
+         排序＝真实执行顺序（2026-11-21「不知所谓」修复：原先按时间倒序，行序全反、
+         「前面还有 N 个」算反、下一步说错镜头）：running 在最上，queued/pending 同车道
+         内按入队时间升序（＝lane FIFO，车道间并行无先后），failed 垫底（最新在前）。 */
+      const STATUS_RANK = { running: 0, queued: 1, pending: 1, failed: 2 };
+      function jobTs(j) { return Number(j.ts != null ? j.ts : (j.at != null ? j.at : 0)); }
+      const queueJobs = computed(() => {
+        const act = jobRows.value.filter(j => j.live !== false && STATUS_RANK[String(j.status)] != null);
+        return act.slice().sort((a, b) => {
+          const ra = STATUS_RANK[String(a.status)] || 0, rb = STATUS_RANK[String(b.status)] || 0;
+          if (ra !== rb) return ra - rb;
+          if (ra === 2) return jobTs(b) - jobTs(a);
+          const la = String(a.lane || ""), lb = String(b.lane || "");
+          if (la !== lb) return la < lb ? -1 : 1;
+          return jobTs(a) - jobTs(b);
+        });
+      });
       const queuedN = computed(() => jobRows.value.filter(j => ["queued", "pending"].indexOf(String(j.status)) >= 0).length);
       const runningN = computed(() => jobRows.value.filter(j => String(j.status) === "running").length);
       const totalN = computed(() => (shots.value || []).length || 16);
@@ -114,6 +130,68 @@
         return JOB_TYPE_CN[String(j.type || "").toLowerCase()] || clean(j.type || "任务");
       }
       function jobId(j) { return String(j.job_id != null ? j.job_id : j.id); }
+
+      /* ---- 队列可读化（2026-11-21 二轮）：镜号＋镜名 / 排队第 N 位（同车道真实顺序） /
+         已等时长（活行 ts 由服务端从账本补齐，running 行＝开拍时刻） / 看片 ---- */
+      const EST_MIN_PER_SHOT = 7; // H3 单镜实测均值（187帧 ≈ 7 分钟）
+      function shotOf(j) {
+        const sid = j.shotId || (j.payload && j.payload.shotId) || null;
+        return sid ? (shots.value || []).find(s => s.id === sid) || null : null;
+      }
+      function jobShotTag(j) {
+        const s = shotOf(j);
+        if (!s) return jobLabel(j);
+        const nm = clean(s.name);
+        return "#" + (s.seq % 100 || s.seq) + " " + (nm || "镜") + " · " + (s.sec || 7.5) + " 秒";
+      }
+      function jobWaitMin(j) {
+        const ts = jobTs(j);
+        if (!ts) return 0;
+        return Math.max(0, Math.round((Date.now() - ts) / 60000));
+      }
+      /* 同车道排队位次（车道间并行，「前面还有」只数本车道；display 序＝真实 FIFO） */
+      function laneQueued(j) {
+        const lane = String(j.lane || "");
+        return queueJobs.value.filter(x => String(x.lane || "") === lane && ["queued", "pending"].indexOf(String(x.status)) >= 0);
+      }
+      function queuePos(j) {
+        const q = laneQueued(j);
+        return Math.max(0, q.findIndex(x => jobId(x) === jobId(j))) + 1;
+      }
+      function queuedAhead(j) { return queuePos(j) - 1; }
+      function jobStateCn(j) {
+        const st = String(j.status || "");
+        if (st === "running") {
+          const w = jobWaitMin(j);
+          return "拍摄渲染中 · 已 " + w + " 分钟" + (w > EST_MIN_PER_SHOT ? "（略慢于均值 " + EST_MIN_PER_SHOT + " 分钟/镜，继续等）" : "（预计约 " + EST_MIN_PER_SHOT + " 分钟/镜）");
+        }
+        /* 状态点已带「排队中/失败」标签，正文不再重复 */
+        if (st === "queued" || st === "pending") return "前面还有 " + queuedAhead(j) + " 个（自动依次渲染，约 " + EST_MIN_PER_SHOT + " 分钟/镜）";
+        if (st === "failed") return "原因：" + clean(String(j.error || "未知，可点「重拍」再试").slice(0, 80));
+        if (st === "cancelled") return "已取消";
+        return st;
+      }
+      function jobTakeArt(j) {
+        const s = shotOf(j);
+        const tk = s && s.takes && s.takes.length ? s.takes[s.takes.length - 1] : null;
+        return tk && tk.art ? "/" + tk.art : null;
+      }
+      /* 下一步（自动链预测）：渲染中 → 排队镜 → 自动机审 → 灰区批复 → 混流
+         （queueJobs 已按真实执行顺序排，q[0] 才是真正下一个） */
+      const nextStep = computed(() => {
+        const run = queueJobs.value.find(j => String(j.status) === "running");
+        const q = queueJobs.value.filter(j => ["queued", "pending"].indexOf(String(j.status)) >= 0);
+        const tag = (j) => {
+          const s = shotOf(j);
+          if (!s) return jobLabel(j);
+          return "#" + (s.seq % 100 || s.seq) + " " + (clean(s.name) || "镜");
+        };
+        if (run) return "正在拍 " + tag(run) + (q.length ? "；下一个自动排 " + tag(q[0]) : "");
+        if (q.length) return "下一个拍 " + tag(q[0]);
+        if (reviewN.value) return "等待你批复灰区镜（复审台）";
+        if (doneN.value >= totalN.value) return "全部镜头完成 → 自动混流成片（交付页）";
+        return "等待任务";
+      });
 
       async function stop(j) {
         if (opBusy.value) return;
@@ -147,7 +225,8 @@
       return {
         store, opBusy, shots, loading, err, isEmpty, wallErr,
         jobRows, queueJobs, queuedN, runningN, totalN, doneN, reviewN,
-        jobOf, jobFailed, cellCls, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean
+        jobOf, jobFailed, cellCls, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean,
+        jobShotTag, jobStateCn, jobTakeArt, jobWaitMin, nextStep, queuePos
       };
     },
     template: `
@@ -186,7 +265,11 @@
               </div>
               <div class="row v-shoot-meta" v-if="jobOf(s)">
                 <status-dot :status="jobOf(s).status"></status-dot>
+                <span class="muted">{{ jobStateCn(jobOf(s)) }}</span>
                 <span v-if="jobOf(s).attempts">第 <b class="num">{{ jobOf(s).attempts }}</b> 次尝试</span>
+              </div>
+              <div class="row v-shoot-acts" v-if="(s.takes || []).length && s.takes[s.takes.length - 1].art">
+                <a class="btn btn-sm" :href="'/' + s.takes[s.takes.length - 1].art" target="_blank">▶ 看最新片</a>
               </div>
               <div class="row v-shoot-acts" v-if="jobOf(s)">
                 <button class="btn btn-sm" v-if="['queued','running'].indexOf(String(jobOf(s).status)) >= 0"
@@ -197,18 +280,24 @@
             </div>
           </div>
 
-          <!-- 集级队列：账本任务带不上镜号时的兜底操作区（见文件头 BACKEND-ISSUE） -->
+          <!-- 集级队列：可读化（真实执行顺序 · 镜号＋镜名 · 排队位次 · 已等时长 · 看片） -->
           <err-state v-if="wallErr" :err="wallErr" :on-retry="reload" compact></err-state>
           <div class="panel" v-if="queueJobs.length">
-            <div class="panel-title">队列任务
-              <span class="weak">任务单暂未带镜号，这里统一给「停 / 重拍」</span>
+            <div class="panel-title">拍摄队列
+              <span class="badge badge-ok">下一步：{{ nextStep }}</span>
+              <span class="weak">从上往下依次自动拍摄；渲染完自动机审，灰区镜会送你批复</span>
             </div>
             <div class="list">
-              <div class="list-item row wrap v-shoot-q" v-for="j in queueJobs" :key="jobId(j)">
-                <span>{{ jobLabel(j) }}</span>
+              <div class="list-item row wrap v-shoot-q"
+                :class="{ 'v-shoot-q-run': String(j.status) === 'running', 'v-shoot-q-fail': String(j.status) === 'failed' }"
+                v-for="j in queueJobs" :key="jobId(j)">
                 <status-dot :status="j.status"></status-dot>
-                <span class="muted" v-if="j.attempts">第 <b class="num">{{ j.attempts }}</b> 次</span>
-                <time-ago :ts="j.ts"></time-ago>
+                <span class="v-shoot-q-pos is-run" v-if="String(j.status) === 'running'">正在拍</span>
+                <span class="v-shoot-q-pos" v-else-if="['queued','pending'].indexOf(String(j.status)) >= 0">第 {{ queuePos(j) }} 位</span>
+                <b>{{ jobShotTag(j) }}</b>
+                <span class="muted">{{ jobStateCn(j) }}</span>
+                <span class="muted" v-if="j.attempts > 0">（第 <b class="num">{{ j.attempts + 1 }}</b> 次尝试）</span>
+                <a v-if="jobTakeArt(j)" :href="jobTakeArt(j)" target="_blank" style="text-decoration:underline">▶ 看片</a>
                 <span class="grow"></span>
                 <button class="btn btn-sm"
                   v-if="['queued','running'].indexOf(String(j.status)) >= 0"
