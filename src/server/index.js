@@ -34,17 +34,26 @@ const store = openStore(varDir, { minimal: process.env.THEATER_SEED_MINIMAL === 
 const bus = createBus();
 // comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
 // comfySpark 通道：THEATER_COMFY_SPARK=1 启用 DGX Spark ComfyUI（H3 线 vidspark/imgspark 真引擎）
+// base 挂节点档案（state.nodes[id].comfy.base，运维台改端点热生效，单一事实源）；env 作首启种子与兜底
+const nodeBase = (id, envUrl, fallback) => {
+  try {
+    const st = store.get();
+    const b = st && st.nodes && st.nodes[id] && st.nodes[id].comfy && st.nodes[id].comfy.base;
+    if (b) return b;
+  } catch (e) { /* store 未就绪走 env */ }
+  return process.env[envUrl] || fallback;
+};
 const cfg = {
   outDir,
   seed: true,
   comfy: {
     enabled: process.env.THEATER_COMFY === "1",
-    base: process.env.THEATER_COMFY_URL || "http://127.0.0.1:8188",
-    inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input"
+    inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input",
+    get base() { return nodeBase("local", "THEATER_COMFY_URL", "http://127.0.0.1:8188"); }
   },
   comfySpark: {
     enabled: process.env.THEATER_COMFY_SPARK === "1",
-    base: process.env.THEATER_COMFY_SPARK_URL || "http://100.81.83.59:8188"
+    get base() { return nodeBase("dgx", "THEATER_COMFY_SPARK_URL", "http://100.81.83.59:8188"); }
   },
   h3ir: {
     llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装

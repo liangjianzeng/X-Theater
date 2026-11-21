@@ -49,7 +49,8 @@
   T.api = {
     get: p => call("GET", "/api" + p),
     post: (p, body) => call("POST", "/api" + p, body === undefined ? {} : body),
-    put: (p, body) => call("PUT", "/api" + p, body === undefined ? {} : body)
+    put: (p, body) => call("PUT", "/api" + p, body === undefined ? {} : body),
+    del: p => call("DELETE", "/api" + p)
   };
 
   /* SSE 地址（EventSource 走 ?token= 兜底，服务端仅 /api/events 接受） */

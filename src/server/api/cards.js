@@ -444,14 +444,11 @@ function advanceOnAccept(ctx, card, episode, operator) {
     }
   } else if (t === "C2S") {
     // 试妆试镜拍板 → 固化多角度抽帧参考（viewRefs＝分镜选帧的身份输入源）→ 派角色分镜
+    // （幂等：本次拍板已出过分镜卡/同款任务在跑 → 不重派，derived 里带 deduped 标记）
     const role = refineViewRefs(ctx, epId, card);
     if (role) {
-      const job = ctx.engine.enqueue(
-        "storyboard_char",
-        { episodeId: epId },
-        { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
-      );
-      derived.push({ kind: "job", job });
+      const r = enqueueStoryboardChar(ctx, epId, { initiated_by: "user" });
+      derived.push({ kind: r.deduped ? "deduped" : "job", job: r.job && r.job.id ? r.job : null, deduped: r.deduped });
     }
   } else if (t === "C9") {
     const st = ctx.store.get();
@@ -502,26 +499,96 @@ function refineViewRefs(ctx, episodeId, c2sCard) {
   return refs.length ? role : null;
 }
 
+/* scriptgen 入参组装（一句话/小说→剧本；节拍模板快照随行） */
+function scriptgenPayload(ctx, ep) {
+  const st = ctx.store.get();
+  const tpl = ep && ep.template_id && st.templates ? st.templates[ep.template_id] : null;
+  return {
+    episodeId: ep.id,
+    title: ep.title || "",
+    brief: ep.brief || "",
+    kind: ep.kind === "novel" ? "novel" : "one_liner",
+    template: tpl ? { genre: tpl.genre, beats: tpl.beats, style: tpl.style } : null
+  };
+}
+
+/** 幂等派单统一出口（2026-11-21「反复点击生成一大堆任务」根治）：
+ *  引擎有 enqueueOnce（内存+账本双重活任务判定，重启不破）则走幂等；返回统一形状
+ *  { deduped, job }——job 为新派任务或已在跑的同款任务（调用方 reJob.id/regenerating 均可用）。 */
+function idemEnqueue(ctx, type, payload, opts) {
+  if (ctx.engine.enqueueOnce) {
+    const r = ctx.engine.enqueueOnce(type, payload, opts);
+    return { deduped: !!r.deduped, job: r.job || r.existing || null };
+  }
+  return { deduped: false, job: ctx.engine.enqueue(type, payload, opts) };
+}
+/** job 快照附加 __deduped 标记（浅拷贝，不污染引擎内存对象）——前端据此提示「未重复派」 */
+function withDedup(r) {
+  if (!r || !r.job) return null;
+  return Object.assign({}, r.job, { __deduped: !!r.deduped });
+}
+
+/** 角色分镜（storyboard_char）幂等派单＋产物级防重（2026-11-21）：
+ *  ①产物级：本集已有 pending C2 且生成时间晚于最新拍板 C2S——本次拍板已派过且分镜卡已出（等用户拍板）
+ *    → 跳过不重派（除非 force，如 viewrefs/refresh 显式重出）。
+ *  ②任务级：enqueueOnce 同集活 storyboard_char（内存+账本）不重派。 */
+function enqueueStoryboardChar(ctx, epId, opts) {
+  const force = !!(opts && opts.force);
+  const initiatedBy = (opts && opts.initiated_by) || "user";
+  const st = ctx.store.get();
+  if (!force) {
+    const c2sDecided = Object.keys(st.cards || {}).map((k) => st.cards[k])
+      .filter((c) => c.episodeId === epId && c.type === "C2S" && c.status === "decided")
+      .sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0))[0];
+    if (c2sDecided) {
+      const freshPendingC2 = Object.keys(st.cards || {}).map((k) => st.cards[k])
+        .find((c) => c.episodeId === epId && c.type === "C2" && c.status === "pending"
+          && (c.created_at || 0) >= (c2sDecided.decided_at || 0));
+      if (freshPendingC2) return { deduped: true, job: freshPendingC2, existingCard: freshPendingC2 };
+    }
+  }
+  const r = idemEnqueue(
+    ctx,
+    "storyboard_char",
+    { episodeId: epId },
+    { episodeId: epId, initiated_by: initiatedBy, tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+  );
+  return r;
+}
+
 function reEnqueueOnReject(ctx, card, body) {
   const epId = card.episodeId;
   const opts = { episodeId: epId, initiated_by: "user" };
   switch (card.type) {
-    case "C1":
-      return ctx.engine.enqueue("c1plan", { episodeId: epId }, opts);
+    case "C1": {
+      // 无剧本集（一句话/小说/纯 brief）驳回重出＝重派 LLM 剧本生成——不再反复落占位结构；
+      // scriptgen 出的剧本驳回＝重新生成一版（用户要的是新方向，不是重贴同一剧本）
+      const st = ctx.store.get();
+      const ep = (st.episodes || {})[epId];
+      const hasScript = ep && ep.script && Array.isArray(ep.script.scenes) && ep.script.scenes.length;
+      if (ep && (!hasScript || ep.script_source === "scriptgen")) {
+        return ctx.engine.enqueue("scriptgen", scriptgenPayload(ctx, ep), Object.assign(opts, { free: true }));
+      }
+      // tier 随 Spark 通道（对齐 C2/C3 分支）：LLM 在线时缺 tier 会让 c1plan 落本机 img5060 被 GPU 闸 409
+      return withDedup(idemEnqueue(ctx, "c1plan", { episodeId: epId }, Object.assign(opts, {
+        tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined
+      })));
+    }
     case "C2":
-      // 分镜图由 storyboard_char 产出（试妆抽帧换背景壳）——驳回重出＝重跑角色分镜
-      return ctx.engine.enqueue("storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }));
+      // 分镜图由 storyboard_char 产出（试妆抽帧换背景壳）——驳回重出＝重跑角色分镜（幂等：活任务不重派）
+      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined })));
     case "C3":
-      return ctx.engine.enqueue("storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }));
+      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined })));
     case "C2S": {
-      // 试妆重出：驳回意见（edit 留的 note / 本次 reject 附言）→ 试妆动作提示
+      // 试妆重出：驳回意见（edit 留的 note / 本次 reject 附言）→ 试妆动作提示（幂等：同角色活任务不重派）
       const p = card.payload || {};
       const note = ((body && body.payload && body.payload.note) || p.note || "").trim() || undefined;
-      return ctx.engine.enqueue(
+      return withDedup(idemEnqueue(
+        ctx,
         "screen_test",
         { episodeId: epId, role: p.role || undefined, note },
         opts
-      );
+      ));
     }
     case "C4": {
       // 配音重出：重派全场景 voice（真 TTS 重渲染，产物落盘并持久化）
@@ -661,11 +728,10 @@ function onStoryboardDone(ctx, job, episodeId) {
   // 试妆试镜流程（2026-11-21）：初始定妆齐 → 派试妆试镜（C2S 拍板后才进分镜）；
   // 初始图只能「上传」或「cast_init 生成后确认」，不再自动派 casting 生成定妆
   if (comfyOn && cast.length && cast.every((cc) => cc.refImage)) {
-    if (ctx.engine.activeOf && ctx.engine.activeOf("screen_test", episodeId).length === 0) {
-      cast.forEach((cc) => {
-        ctx.engine.enqueue("screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
-      });
-    }
+    // 幂等派试妆（2026-11-21）：逐角色活任务防重（内存+账本），重复触发不再堆同款任务
+    cast.forEach((cc) => {
+      idemEnqueue(ctx, "screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
+    });
   }
   return true;
 }
@@ -769,11 +835,10 @@ function onCastingDone(ctx, job, episodeId) {
     const ep2 = (st2.episodes || {})[episodeId] || {};
     const cast2 = (ep2.script && ep2.script.cast) || [];
     const castList = cast2.length ? cast2 : [{ role: (art.actor || {}).role || "主角色" }];
-    if (ctx.engine.activeOf && ctx.engine.activeOf("screen_test", episodeId).length === 0) {
-      castList.forEach((cc) => {
-        ctx.engine.enqueue("screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
-      });
-    }
+    // 幂等派试妆（2026-11-21）：逐角色活任务防重（内存+账本），重复触发不再堆同款任务
+    castList.forEach((cc) => {
+      idemEnqueue(ctx, "screen_test", { episodeId: episodeId, role: cc.role }, { episodeId: episodeId, initiated_by: "system" });
+    });
   }
   c2.ver += 1;
   c2.updated_at = ctx.util.now();
@@ -950,6 +1015,31 @@ function handleJobDone(ctx, evt) {
   if (!episodeId || !(st.episodes || {})[episodeId]) return;
   let touched = false;
   switch (job.type) {
+    case "scriptgen": {
+      // 一句话/小说→剧本（2026-11-21 补全）：剧本写回源头 → C1 卡立即呈现（不等海报）；
+      // 海报 c1plan 降级为可选增强——本机 LLM 在线时 GPU 闸会拒（GPU_BUSY），缺席无妨。
+      const res = job.art || job.result || {};
+      const ep = (st.episodes || {})[episodeId];
+      if (ep && res.script && Array.isArray(res.script.scenes) && res.script.scenes.length) {
+        ep.script = res.script;
+        ep.script_source = "scriptgen"; // 来源标记：驳回时按「重新生成」处理（不是重贴同一剧本）
+        ctx.store.commit();
+      }
+      try {
+        ctx.engine.enqueue(
+          "c1plan",
+          { episodeId },
+          {
+            episodeId,
+            initiated_by: "system",
+            free: true,
+            tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined
+          }
+        );
+      } catch (e) { /* GPU_BUSY 等：海报缺席不阻断 C1 卡 */ }
+      touched = onPlanDone(ctx, job, episodeId);
+      break;
+    }
     case "c1plan":
       touched = onPlanDone(ctx, job, episodeId);
       break;
@@ -1141,15 +1231,79 @@ function register(router, ctx) {
       if (!card) throw { code: "NOT_READY", message: "本集尚无已拍板的试妆试镜卡（C2S）" };
       const role = refineViewRefs(ctx, epId, card);
       if (!role) throw { code: "NOT_READY", message: "固化后参考库为空（帧缺失或全部被勾选取消）" };
-      const job = engine.enqueue(
-        "storyboard_char",
-        { episodeId: epId },
-        { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
-      );
+      // 幂等（force＝显式重出：跳过产物级判断，仅活任务防重——同一拍板下重复点不再堆任务）
+      const r = enqueueStoryboardChar(ctx, epId, { force: true, initiated_by: "user" });
       const vr = (st.viewRefs || {})[epId] || {};
-      audit(auth, "viewrefs_refresh", epId, { role, frames: (vr[role] || []).length, job_id: job && job.id });
+      audit(auth, "viewrefs_refresh", epId, { role, frames: (vr[role] || []).length, job_id: r.job && r.job.id, deduped: r.deduped });
       store.commit();
-      return router.json(res, 200, { role, frames: (vr[role] || []).length, job });
+      return router.json(res, 200, { role, frames: (vr[role] || []).length, job: r.job, deduped: r.deduped });
+    },
+    { auth: true }
+  );
+
+  // DELETE /api/cards/:id — 垃圾批次清理（2026-11-21）：仅允许删未拍板（pending/rejected）卡，
+  // 已拍板卡是版本档案不在此删（历史区自动收档）。同时清理卡引用的过程产物（var/out 下
+  // art/grid/views/images），防垃圾帧堆积（用户纪律：垃圾数据及时删除）。audit 留痕。
+  router.add(
+    "DELETE",
+    "/api/cards/:id",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const card = (st.cards || {})[params.id];
+      if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
+      if (card.status === "decided") throw { code: "PROTECTED", message: "已拍板卡是版本档案，不能删除（历史区自动收档）" };
+      const fs = require("fs");
+      const path = require("path");
+      const outs = [];
+      const collect = (rel) => { if (rel && String(rel).indexOf("var/out/") === 0 && outs.indexOf(String(rel)) < 0) outs.push(String(rel)); };
+      collect(card.art);
+      const p = card.payload || {};
+      collect(p.grid);
+      (p.views || []).forEach((v) => { if (v && v.art) collect(v.art); });
+      (p.images || []).forEach((v) => { if (v && v.art) collect(v.art); });
+      outs.forEach((rel) => {
+        try { fs.unlinkSync(path.join(process.cwd(), rel)); } catch (e) {}
+        try { fs.unlinkSync(path.join(process.cwd(), rel + ".meta.json")); } catch (e) {}
+      });
+      delete st.cards[card.id];
+      store.commit();
+      store.log("audit", { operator: (auth && (auth.uid || auth.id)) || null, action: "card_delete", target: card.id, card_type: card.type, round: card.round || null, files_removed: outs.length });
+      try { ctx.bus.publish("cards", { event: "deleted", id: card.id }); } catch (e) {}
+      return router.json(res, 200, { deleted: card.id, files_removed: outs.length });
+    },
+    { auth: true }
+  );
+
+  // POST /api/cards/:id/views/select {sel:{art:bool}} — C2S 角度帧勾选落库。
+  // 修「根本没法勾」bug（2026-11-21）：此前勾选是纯内存态，flow 视图 5s 轮询/SSE cards 事件
+  // 重拉卡片即被服务端旧数据覆盖——点击视觉一闪即逝。现按 art 匹配写 payload.views[i].selected
+  //（不用 index：viewsOf 过滤了无 art 帧，index 会错位）。不 ver++：勾选是操作态，last-write-win，
+  // 不与 decide 的 CAS 竞争；不 publish cards 事件：避免自己触发重拉闪烁。accept 时 payload.views
+  // 随决策打包固化（单一真相落库）。
+  router.add(
+    "POST",
+    "/api/cards/:id/views/select",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const card = (st.cards || {})[params.id];
+      if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
+      if (card.type !== "C2S") throw { code: "BAD_REQUEST", message: "仅试妆试镜卡（C2S）支持帧勾选" };
+      if (card.status !== "pending") throw { code: "ALREADY_DECIDED", message: "卡片已决策，勾选不可再改" };
+      const sel = (body || {}).sel || {};
+      const views = (card.payload || {}).views || [];
+      let n = 0;
+      views.forEach((v) => {
+        if (v && v.art && Object.prototype.hasOwnProperty.call(sel, v.art)) {
+          v.selected = sel[v.art] === false ? false : undefined; // undefined＝默认勾选（JSON 落盘时省略）
+          n++;
+        }
+      });
+      if (!n) throw { code: "BAD_REQUEST", message: "sel 中没有匹配到任何帧（按 art 匹配）" };
+      card.updated_at = ctx.util.now();
+      store.commit();
+      return router.json(res, 200, { saved: n, ver: card.ver });
     },
     { auth: true }
   );

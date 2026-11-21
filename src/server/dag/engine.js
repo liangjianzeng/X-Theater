@@ -20,8 +20,10 @@ function llmBlocked(cfg) {
   try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
 }
 
-const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate", "aireview"];
+const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate", "aireview", "scriptgen"];
 const TYPE_LANE = {
+  // 一句话/小说→结构化剧本（2026-11-21 补全）：纯 LLM 车道，不占显存、不受 GPU/LLM 互斥闸
+  scriptgen: "scriptgen",
   c1plan: "img5060",
   casting: "img5060",
   storyboard_char: "img5060",
@@ -109,7 +111,9 @@ function createEngine({ store, bus, cfg }) {
           attempts: job.attempts,
           // 可读化（2026-11-21）：账本行带镜号与时长——拍摄页队列/时间线能显示「镜 N」与进度
           shotId: (job.payload && job.payload.shotId) || null,
-          sec: (job.payload && job.payload.sec) || null
+          sec: (job.payload && job.payload.sec) || null,
+          // 幂等防重（2026-11-21）：账本行带 payload 关键标识（role），重启后 enqueueOnce 靠账本兜底防重派
+          role: (job.payload && job.payload.role) || null
         },
         extra || {}
       )
@@ -295,7 +299,7 @@ function createEngine({ store, bus, cfg }) {
       let lane = laneFor(type, opts);
       if (driver === "dgx") {
         if (type === "video") lane = "vidspark";
-        else if (type !== "compose" && type !== "moderate" && type !== "aireview" && type !== "voice" && type !== "music") lane = "imgspark";
+        else if (type !== "compose" && type !== "moderate" && type !== "aireview" && type !== "scriptgen" && type !== "voice" && type !== "music") lane = "imgspark";
       }
       // 显存互斥硬闸（2026-11-21）：本机 LLM 在线＝16G 卡装不下两家——**本机渲染车道**（img5060/vid5060）
       // 拒绝入队（Huihui35B attention 占 ~14.4GB）。Spark 远程车道（imgspark/vidspark）渲染在 DGX 上，
@@ -393,6 +397,29 @@ function createEngine({ store, bus, cfg }) {
         if (["queued", "running"].indexOf(job.status) >= 0) out.push(job);
       }
       return out;
+    },
+
+    // 幂等派单（2026-11-21「反复点击生成一大堆任务」根治）：
+    // 同 type + episodeId + payload 关键标识（role/shotId）已有活任务（queued/running）→ 不再派，
+    // 返回 { deduped:true, existing }；无活任务才真派。活任务判定＝内存 Map（热路径）＋账本兜底
+    //（守护频繁重启会清内存——从 log-job.jsonl 每 job_id 最新行恢复 queued/running 判断，防重不失效）。
+    enqueueOnce(type, payload, opts) {
+      const p = payload || {};
+      const epId = (opts && opts.episodeId) || p.episodeId || null;
+      const keyOf = (x) => String((x && x.role) || "") + "|" + String((x && x.shotId) || "");
+      // —— 内存活任务 ——
+      for (const j of jobs.values()) {
+        if (j.type !== type) continue;
+        if (epId && j.episodeId !== epId) continue;
+        if (keyOf(j.payload || {}) !== keyOf(p)) continue;
+        if (["queued", "running"].indexOf(j.status) >= 0) return { deduped: true, existing: j, job: null };
+      }
+      // —— 账本兜底已删除（2026-11-21 二次修正）：跨实例账本判定本质上不成立——旧实例被杀后
+      //    其 queued/running 行是孤儿（任务已断），重派＋接续池领回产物才是正确恢复路径；
+      //    账本拦它们反而造成「重派永远被拦」（实测：守护反复杀实例 → 每次重派全 deduped）。
+      //    防重只信当前实例内存 Map（enqueue 同步写入，连点防重完整覆盖）。 ——
+      const job = this.enqueue(type, payload, opts);
+      return { deduped: false, existing: null, job };
     },
 
     getJob(jobId) {

@@ -105,5 +105,23 @@
     return { code: code || String(err.status || "ERR"), text, retriable };
   };
 
+  /* ---------------- 统一镜号规范（2026-11-21「编号乱」根治） ----------------
+     全链唯一口径：seq=场景编码+镜序（101→「镜 01」）；name 剥掉尾部机械序号（卧室·夜-镜1→卧室·夜）；
+     显示统一「镜 03 · 卧室·夜 · 7.5s」；重拍条次单独标「第 N 条」，绝不混入镜号。
+     拍摄墙/队列/复审台/卡流/时间线一律走这几个助手，禁止各自拼 seq%100 或 shotId 尾哈希。 */
+  T.pad2 = function (n) {
+    const x = Number(n);
+    if (!Number.isFinite(x) || x <= 0) return "—";
+    return x < 100 ? ("0" + x).slice(-2) : String(x);
+  };
+  T.shotNo = function (s) { return T.pad2(Number(s && s.seq) % 100 || (s && s.seq)); };
+  T.shotScene = function (s) { return String((s && s.name) || "").replace(/[-_·\s]*镜\s*\d+\s*$/, "").trim(); };
+  T.shotLabel = function (s) { return "镜 " + T.shotNo(s); };
+  T.shotFull = function (s) {
+    return "镜 " + T.shotNo(s)
+      + (T.shotScene(s) ? " · " + T.shotScene(s) : "")
+      + (s && s.sec ? " · " + s.sec + "s" : "");
+  };
+
   global.__T = T;
 })(window);

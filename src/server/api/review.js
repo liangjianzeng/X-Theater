@@ -50,12 +50,28 @@ function register(router, ctx) {
         const sh = shots[r.shotId] || null;
         const takes = (sh && sh.takes) || [];
         const lastTake = takes.length ? takes[takes.length - 1] : null;
+        // 受控链透明化（2026-11-21）：从 take 的 meta.json 读最终 IR 提示词与首帧——复审时知道这条片怎么被控制
+        let prompt = null, firstFrame = null, irUsed = null;
+        if (lastTake && lastTake.art) {
+          try {
+            const fs = require("fs");
+            const path = require("path");
+            const mf = path.join(process.cwd(), "var", "out", String(lastTake.art).replace(/^.*[\\/]/, "") + ".meta.json");
+            const mj = JSON.parse(fs.readFileSync(mf, "utf8"));
+            prompt = mj.prompt || null;
+            firstFrame = mj.first_frame || null;
+            irUsed = mj.ir_llm_used != null ? !!mj.ir_llm_used : null;
+          } catch (e) { /* meta 缺失（旧 take）则不显示 */ }
+        }
         return Object.assign({}, r, {
           seq: sh ? sh.seq : null,
           shotName: sh ? sh.name : null,
           sec: sh ? sh.sec : null,
+          // 统一镜号+条次（2026-11-21）：同镜多条送审可区分（第 N 条 · 送审时间 · 真帧缩略）
+          takeNo: takes.length || null,
           frame: framesByShot[r.shotId] || null,
-          takeArt: lastTake && lastTake.art ? lastTake.art : null
+          takeArt: lastTake && lastTake.art ? lastTake.art : null,
+          prompt, first_frame: firstFrame, ir_llm_used: irUsed
         });
       });
       return router.json(res, 200, {

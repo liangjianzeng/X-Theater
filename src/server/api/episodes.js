@@ -117,6 +117,7 @@ function register(router, ctx) {
         brief: b.brief,
         kind,
         script,
+        template_id: b.templateId && (st.templates || {})[b.templateId] ? b.templateId : null,
         stage: 1,
         decisions: 0,
         budget_cents: typeof b.budget_cents === "number" ? b.budget_cents : DEFAULT_BUDGET_CENTS,
@@ -139,6 +140,84 @@ function register(router, ctx) {
       audit(auth, "episode_create", ep.id, { job_id: job && job.id, kind });
       try { bus.publish("cards", { event: "episode_created", episode: ep }); } catch (e) {}
       return router.json(res, 201, { episode: ep, job });
+    },
+    { auth: true }
+  );
+
+  // POST /api/quickstart {brief, mode?, templateId?, projectId?, title?, driver?}
+  // 一句话成片/模板跟拍一站式直跑（2026-11-21 补全 FR-201 最短路径）：
+  //   输入一句 → 自动建项目（可显式指定，模板风格预设落 style_pkg）→ 建集 →
+  //   派 scriptgen（纯 LLM 车道，不受 GPU/LLM 互斥闸）→ 完成后 cards.js 直接产 C1 卡。
+  //   长文本（>150 字）自动按小说改编（kind:"novel"）处理；模板节拍作为展开骨架随行。
+  router.add(
+    "POST",
+    "/api/quickstart",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const b = body || {};
+      const st = store.get();
+      const brief = String(b.brief || "").trim();
+      if (!brief) throw { code: "BAD_REQUEST", message: "先写一句话：想拍什么？" };
+      if (brief.length > 20000) throw { code: "BAD_REQUEST", message: "文本太长（上限 2 万字），先拆一集贴进来" };
+      const kind = b.mode === "novel" || brief.length > 150 ? "novel" : "one_liner";
+      const titleIn = String(b.title || "").trim().slice(0, 40);
+
+      st.templates = st.templates || {};
+      const tpl = b.templateId ? st.templates[b.templateId] : null;
+      if (b.templateId && !tpl) throw { code: "NOT_FOUND", message: "模板不存在: " + b.templateId };
+
+      // 项目：显式指定 or 自动新建（模板 style 预设落到项目 style_pkg）
+      let project = null;
+      if (b.projectId) {
+        project = (st.projects || {})[b.projectId];
+        if (!project) throw { code: "NOT_FOUND", message: "项目不存在: " + b.projectId };
+      } else {
+        const style = tpl && tpl.style
+          ? { look: String(tpl.style.look || "写实电影感").slice(0, 30), palette: String(tpl.style.palette || "青橙").slice(0, 20), ratio: String(tpl.style.ratio || "9:16").slice(0, 10) }
+          : { look: "写实电影感", palette: "青橙", ratio: "9:16" };
+        project = {
+          id: util.uid("pj"),
+          title: titleIn || (tpl ? tpl.name : brief.slice(0, 12) + "…"),
+          style_pkg: style,
+          music_enabled: true
+        };
+        st.projects = st.projects || {};
+        st.projects[project.id] = project;
+        store.log("audit", { operator: (auth && (auth.uid || auth.id)) || null, action: "project_create", target: project.id, title: project.title, via: "quickstart" });
+      }
+
+      const ep = {
+        id: util.uid("ep"),
+        projectId: project.id,
+        title: titleIn || brief.slice(0, 20),
+        brief,
+        kind,
+        script: null,
+        template_id: tpl ? tpl.id : null,
+        stage: 1,
+        decisions: 0,
+        budget_cents: DEFAULT_BUDGET_CENTS,
+        driver: b.driver === "dgx" ? "dgx" : "local",
+        cost_cents: 0,
+        paused: false,
+        estimate_ver: null,
+        shoot_confirmed_ver: null,
+        est: null
+      };
+      st.episodes = st.episodes || {};
+      st.episodes[ep.id] = ep;
+      store.commit();
+
+      // 派 LLM 剧本生成（scriptgen 完成后 cards.js 直接产 C1 卡；LLM 离线则落占位结构，流程不卡死）
+      const tplSnap = tpl ? { genre: tpl.genre, beats: tpl.beats, style: tpl.style } : null;
+      const job = engine.enqueue(
+        "scriptgen",
+        { episodeId: ep.id, title: ep.title, brief, kind, template: tplSnap },
+        { episodeId: ep.id, initiated_by: "user", free: true }
+      );
+      audit(auth, "quickstart", ep.id, { job_id: job && job.id, kind, template_id: tpl ? tpl.id : null, project_id: project.id });
+      try { bus.publish("cards", { event: "episode_created", episode: ep }); } catch (e) {}
+      return router.json(res, 201, { project, episode: ep, job });
     },
     { auth: true }
   );
@@ -186,22 +265,32 @@ function register(router, ctx) {
         throw { code: "NOT_READY", message: "镜头未生成，无法开机" };
       }
       const jobs = [];
+      let dedupedN = 0;
       const only = Array.isArray(body && body.shotIds) ? body.shotIds.map(String) : null; // 局部重拍（复审 stale 镜）
       shots.forEach((sh) => {
         if (only && only.indexOf(sh.id) < 0) return;
-        const job = engine.enqueue(
-          "video",
-          { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
-          { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
-        );
-        jobs.push(job);
+        // 幂等派单（2026-11-21）：同镜 video 活任务（内存+账本，账本行带 shotId）在跑 → 不重派。
+        // 连点「开机」/重复提交不再为每镜堆多条渲染任务（每条 ≈7 分钟 GPU）；已完成镜重拍不受影响。
+        const r = engine.enqueueOnce
+          ? engine.enqueueOnce(
+              "video",
+              { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
+              { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+            )
+          : { deduped: false, job: engine.enqueue(
+              "video",
+              { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
+              { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+            ) };
+        if (r.job) jobs.push(r.job);
+        if (r.deduped) dedupedN++;
       });
       ep.shoot_confirmed_ver = ep.estimate_ver;
       ep.stage = Math.max(ep.stage || 1, 7);
       store.commit();
-      audit(auth, "shoot", ep.id, { shots: shots.length, estimate_ver: ep.estimate_ver });
+      audit(auth, "shoot", ep.id, { shots: shots.length, estimate_ver: ep.estimate_ver, deduped_n: dedupedN });
       try { bus.publish("cards", { event: "shot_start", episodeId: ep.id, jobs: jobs.length }); } catch (e) {}
-      return router.json(res, 202, { episodeId: ep.id, jobs, started: jobs.length });
+      return router.json(res, 202, { episodeId: ep.id, jobs, started: Math.max(0, jobs.length - dedupedN), deduped_n: dedupedN });
     },
     { auth: true }
   );
@@ -288,13 +377,21 @@ function register(router, ctx) {
       const role = String(b.role || "").trim();
       const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
       if (!cur) throw { code: "NOT_FOUND", message: "角色不存在: " + role };
-      const job = engine.enqueue(
-        "cast_init",
-        { episodeId: ep.id, role, prompt: String(b.prompt || "").slice(0, 400) },
-        { episodeId: ep.id, initiated_by: "user" }
-      );
-      audit(auth, "castref_generate", ep.id, { role, job_id: job && job.id });
-      return router.json(res, 202, { job, role });
+      // 幂等派单（2026-11-21）：同角色 cast_init 活任务（内存+账本）在跑 → 不重派，防连点堆任务
+      const r = engine.enqueueOnce
+        ? engine.enqueueOnce(
+            "cast_init",
+            { episodeId: ep.id, role, prompt: String(b.prompt || "").slice(0, 400) },
+            { episodeId: ep.id, initiated_by: "user" }
+          )
+        : { deduped: false, job: engine.enqueue(
+            "cast_init",
+            { episodeId: ep.id, role, prompt: String(b.prompt || "").slice(0, 400) },
+            { episodeId: ep.id, initiated_by: "user" }
+          ) };
+      const job = r.job;
+      audit(auth, "castref_generate", ep.id, { role, job_id: job && job.id, deduped: r.deduped });
+      return router.json(res, 202, { job, role, deduped: r.deduped });
     },
     { auth: true }
   );
@@ -355,22 +452,22 @@ function register(router, ctx) {
           try { ctx.bus.publish("cards", { event: "updated", card: c2 }); } catch (e) {}
         }
       }
-      // 全员初始定妆齐 → 自动派试妆试镜（每角色一条；已有在队/在跑的不重派）
+      // 全员初始定妆齐 → 自动派试妆试镜（幂等 2026-11-21：逐角色活任务防重，内存+账本兜底，
+      // 守护重启清内存也不会重复堆任务；重复 confirm/连点不再生成一堆同款试镜）
       const jobs = [];
+      let dedupedN = 0;
       const allCast = ep.script.cast || [];
-      const dupScreenTest = engine.activeOf("screen_test", ep.id).length > 0;
-      if (!dupScreenTest && allCast.every((c) => c.refImage)) {
+      if (allCast.every((c) => c.refImage)) {
         allCast.forEach((c) => {
-          const job = engine.enqueue(
-            "screen_test",
-            { episodeId: ep.id, role: c.role },
-            { episodeId: ep.id, initiated_by: "system" }
-          );
-          jobs.push(job);
+          const r = engine.enqueueOnce
+            ? engine.enqueueOnce("screen_test", { episodeId: ep.id, role: c.role }, { episodeId: ep.id, initiated_by: "system" })
+            : { deduped: false, job: engine.enqueue("screen_test", { episodeId: ep.id, role: c.role }, { episodeId: ep.id, initiated_by: "system" }) };
+          if (r.deduped) dedupedN++;
+          if (r.job) jobs.push(r.job);
         });
       }
       try { ctx.bus.publish("episodes", { event: "castref_confirm", episodeId: ep.id, role }); } catch (e) {}
-      return router.json(res, 200, { cast: ep.script.cast, confirmed: role, screen_tests: jobs });
+      return router.json(res, 200, { cast: ep.script.cast, confirmed: role, screen_tests: jobs, deduped: dedupedN > 0, deduped_n: dedupedN });
     },
     { auth: true }
   );
@@ -436,22 +533,31 @@ function register(router, ctx) {
           }).filter(Boolean);
         } catch (e) { return []; }
       };
+      // 统一镜号（2026-11-21）：shotId → 「镜 03」（seq 模 100 补零）——时间线不再显示哈希尾数
+      const shotsMap = store.get().shots || {};
+      const shotNoOf = (sid) => {
+        const s = shotsMap[sid];
+        const n = s && s.seq ? (Number(s.seq) % 100 || Number(s.seq)) : null;
+        return n ? (n < 10 ? "0" + n : String(n)) : null;
+      };
       readJsonl("log-job.jsonl").forEach((r) => {
         if (r.episodeId !== epId) return;
         const cn = JOB_CN[r.type] || r.type;
         const at = r.attempts ? ("（第 " + (r.attempts + 1) + " 次）") : "";
-        if (r.status === "done") events.push({ ts: r.ts, level: "ok", text: "✓ " + cn + at + " 完成" + (r.cost_cents ? "（" + r.cost_cents + " 分）" : ""), job: r.job_id });
-        else if (r.status === "failed") events.push({ ts: r.ts, level: "err", text: "✗ " + cn + " 失败" + (r.error ? "：" + String(r.error).slice(0, 120) : ""), job: r.job_id });
-        else if (r.status === "retry") events.push({ ts: r.ts, level: "warn", text: "⟳ " + cn + " 自动重试：" + String(r.error || "").slice(0, 100), job: r.job_id });
-        else if (r.status === "running") events.push({ ts: r.ts, level: "info", text: "▶ " + cn + " 开始渲染", job: r.job_id });
-        else if (r.status === "cancelled") events.push({ ts: r.ts, level: "warn", text: "■ " + cn + " 已取消", job: r.job_id });
+        const sn = r.shotId && shotNoOf(r.shotId) ? " · 镜 " + shotNoOf(r.shotId) : "";
+        if (r.status === "done") events.push({ ts: r.ts, level: "ok", text: "✓ " + cn + sn + at + " 完成" + (r.cost_cents ? "（" + r.cost_cents + " 分）" : ""), job: r.job_id });
+        else if (r.status === "failed") events.push({ ts: r.ts, level: "err", text: "✗ " + cn + sn + " 失败" + (r.error ? "：" + String(r.error).slice(0, 120) : ""), job: r.job_id });
+        else if (r.status === "retry") events.push({ ts: r.ts, level: "warn", text: "⟳ " + cn + sn + " 自动重试：" + String(r.error || "").slice(0, 100), job: r.job_id });
+        else if (r.status === "running") events.push({ ts: r.ts, level: "info", text: "▶ " + cn + sn + " 开始渲染", job: r.job_id });
+        else if (r.status === "cancelled") events.push({ ts: r.ts, level: "warn", text: "■ " + cn + sn + " 已取消", job: r.job_id });
       });
       readJsonl("log-audit.jsonl").forEach((r) => {
         const cn = AUDIT_CN[r.action];
         if (!cn) return;
         if (r.action === "review_decide") {
-          if (r.decision === "pass") events.push({ ts: r.ts, level: "ok", text: "✓ 复审批复：镜通过（" + String(r.shotId || "").slice(-6) + "）" });
-          else events.push({ ts: r.ts, level: "warn", text: "↺ 复审批复：镜重拍（" + String(r.shotId || "").slice(-6) + "）" });
+          const sn = r.shotId && shotNoOf(r.shotId) ? "镜 " + shotNoOf(r.shotId) : String(r.shotId || "").slice(-6);
+          if (r.decision === "pass") events.push({ ts: r.ts, level: "ok", text: "✓ 复审批复：" + sn + " 通过" });
+          else events.push({ ts: r.ts, level: "warn", text: "↺ 复审批复：" + sn + " 重拍" });
           return;
         }
         // 卡片类审计带批次号（从 state 里取该卡 round）
@@ -503,6 +609,8 @@ function register(router, ctx) {
           shots
         };
       });
+      store.commit();
+      e.script_source = "user"; // 用户修订过剧本 → C1 驳回不再自动重新生成（保护用户改动）
       store.commit();
       audit(auth, "script_scenes_revise", e.id, { scenes: e.script.scenes.length });
       // 剧本源头变更 → pending C1 重导出＋重审（AI 建议片采纳链的落地点）

@@ -24,9 +24,11 @@ const STYLE_SUFFIX = "实拍电影剧照质感，真实摄影，自然皮肤纹�
 // 试妆试镜视频规格：与原图 720×1280 等比例最近的 32 倍数画幅（736×1312，比例误差 0.27%）；
 // 10 秒档＝243 帧（17k+5 网格：243/24≈10.1s，训练范围 124-362 内），turbo 4 步。
 const ST_W = 736, ST_H = 1312, ST_LEN = 243, ST_STEPS = 4, ST_SEC = 10.13;
-// 试妆试镜动作设计（2026-11-21 v2）：动作序列与段落表同源生成——抽帧按时间轴标注动作段
-// （几何 yaw/pitch 对低头等姿态不敏感，kps 5 点估不准；段落表+停顿设计才是可靠标注）。
-// 动作集按本集分镜角度需求动态拼装；每个姿态明确 hold，段边界清晰。
+const ST_STEP = 8; // 抽帧步长：243/8≈30 帧（场景巡游段多，加密抽帧保证每段 3~4 帧可用）
+// 试妆试镜动作设计（2026-11-21 v3 场景巡游）：动作序列与段落表同源生成——抽帧按时间轴标注
+// 「场景×动作段」（几何 yaw/pitch 对低头等姿态不敏感，kps 5 点估不准；段落表+停顿设计才是可靠标注）。
+// 一条视频内由人物走位完成场景转场（床头→阳台落地窗城市夜景）：帧池获得真实转场的多场景素材，
+// 人脸同源零合成零漂移——这正是「背景只是壳、人脸才是关键」的取材方式。
 function screenTestPlan(script) {
   const needs = new Set(["front", "left", "right", "up", "down"]); // 兜底全集
   (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => {
@@ -34,39 +36,42 @@ function screenTestPlan(script) {
     if (a) needs.add(a);
   }));
   const acts = [];          // 英文动作序列（拼 prompt）
-  const segs = [];          // 段落表 {tag, w}——w=时长权重（hold 1 / 过渡 0.4）
-  acts.push("she faces the camera and holds still for a moment"); segs.push({ tag: "front", w: 1.2 });
-  if (needs.has("left")) { acts.push("then slowly turns her head into a left three-quarter profile and holds"); segs.push({ tag: "left", w: 1.2 }); }
-  acts.push("turns back to the front briefly"); segs.push({ tag: "front", w: 0.4 });
-  if (needs.has("right")) { acts.push("then slowly turns into a right three-quarter profile and holds"); segs.push({ tag: "right", w: 1.2 }); }
-  acts.push("returns to the front"); segs.push({ tag: "front", w: 0.4 });
-  if (needs.has("up")) { acts.push("gently tilts her head up with eyes closed"); segs.push({ tag: "up", w: 1 }); }
-  if (needs.has("down")) { acts.push("then lowers her head with eyes cast down and a soft smile"); segs.push({ tag: "down", w: 1 }); }
-  // 望窗段（2026-11-21 用户要求取景多样性）：转头望窗＋镜头轻摇带出夜窗与月光——不走位（大位移易身份漂移），
-  // 抽帧库获得「窗边侧脸/月光光影」素材；分镜 desc 含「窗」关键词时自动匹配
-  acts.push("then turns her head to gaze toward the window while the camera gently pans to reveal the night window beside the bed with soft moonlight on her face"); segs.push({ tag: "window", w: 1.2 });
-  acts.push("finally returns to the front and holds, looking at the camera with a natural expression"); segs.push({ tag: "front", w: 1.2 });
+  const segs = [];          // 段落表 {tag, w, scene}——w=时长权重；scene 供后续按镜场景选帧
+  // —— 场景一：床头（初始图环境）——
+  acts.push("she sits at the bedside facing the camera and holds still for a moment"); segs.push({ tag: "front", w: 1.1, scene: "bedside" });
+  acts.push("then slowly turns her head into a left three-quarter profile and holds"); segs.push({ tag: "left", w: 0.9, scene: "bedside" });
+  acts.push("then slowly turns into a right three-quarter profile and holds"); segs.push({ tag: "right", w: 0.9, scene: "bedside" });
+  acts.push("then lowers her head with eyes cast down and a soft smile"); segs.push({ tag: "down", w: 0.9, scene: "bedside" });
+  if (needs.has("up")) { acts.push("gently tilts her head up with eyes closed"); segs.push({ tag: "up", w: 0.9, scene: "bedside" }); }
+  // —— 场景巡游转场：起身走向落地窗阳台（走位即转场，镜头轻跟）。prod:false＝转场段仅用于
+  //    「新背景定场首帧」的取材（用户裁决 2026-11-21）：转场帧不进生产内容、选帧直出时跳过，
+  //    生产价值在转场两端两个场景块的干净 hold 段——相当于「11 秒产出＝1 秒转场＋两端干净内容」。——
+  acts.push("then rises from the bed and slowly walks to the floor-to-ceiling window of the balcony, the camera gently following her, revealing the glittering city night view outside the glass"); segs.push({ tag: "walk", w: 1.0, scene: "balcony", prod: false });
+  // —— 场景二：阳台落地窗（城市夜景）——
+  acts.push("stands by the window facing the camera with the city lights bokeh behind her and holds"); segs.push({ tag: "wfront", w: 1.1, scene: "balcony" });
+  acts.push("slowly turns into a left three-quarter profile by the window with city light rim light on her face and holds"); segs.push({ tag: "wleft", w: 0.9, scene: "balcony" });
+  acts.push("finally turns her head to gaze out at the city night view with soft glow on her face and holds"); segs.push({ tag: "wgaze", w: 1.1, scene: "balcony" });
   const prompt = [
-    "Beauty screen test, one continuous static shot, no camera movement.",
+    "Beauty screen test, one continuous shot, the camera stays close to her and gently follows her movement.",
     acts.join(", then ") + ".",
     "Each pose holds clearly and distinctly so every head angle is easy to see.",
-    "Keep her face, facial features, hairstyle, eyes and outfit exactly consistent throughout.",
-    "Soft diffused candle glow kept low-key, matte skin with natural fine texture and no oily shine, subtle hair movement, shallow depth of field.",
+    "Keep her face, facial features, hairstyle, eyes and outfit exactly consistent throughout the scene change.",
+    "Soft diffused bedside lamp glow at first, then cool blue city night light with warm street light bokeh through the glass, matte skin with natural fine texture and no oily shine, subtle hair movement, shallow depth of field.",
     "No dialogue."
   ].join(" ");
   return { prompt, segments: segs };
 }
 
-/** 按段落表把帧时间戳映射到动作段标签（权重均分总时长） */
+/** 按段落表把帧时间戳映射到段落对象（权重均分总时长）；返回 {tag, scene} */
 function segmentAngle(segments, t, secTotal) {
   if (!segments || !segments.length) return null;
   const wSum = segments.reduce((a, s) => a + (s.w || 1), 0);
   let acc = 0;
   for (const s of segments) {
     acc += (s.w || 1) / wSum * secTotal;
-    if (t <= acc) return s.tag;
+    if (t <= acc) return s;
   }
-  return segments[segments.length - 1].tag;
+  return segments[segments.length - 1];
 }
 const PNG_1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -242,13 +247,16 @@ function shotAngleNeed(desc) {
 
 /** 从试妆抽帧参考里挑分镜首帧：目标动作段内按镜序轮换（同段多帧时相邻镜取不同帧）。
  *  段内无合格帧 → 正面段轮换 → 全局最优。
+ *  角度别名（2026-11-21 场景巡游）：窗前段（wfront/wleft/wgaze）与床头同名段等价——
+ *  分镜按角度需求选帧时不区分场景（场景选择维度待巡游验收后系统化）。
  *  角度门：仅正面帧要求 |yaw|≤0.8（防深侧帧混入正面池）；侧脸/仰/低头帧的 yaw 本就偏移，
  *  不设 yaw 门（选帧直出时代——帧已过用户拍板与 0.45 身份线，edit 时代的崩脸守门退役）。 */
+const ANGLE_ALIAS = { front: ["front", "wfront"], left: ["left", "wleft"], right: ["right", "wright"], window: ["window", "wgaze"] };
 function pickView(views, need, shotIdx) {
-  const ok = (views || []).filter((v) => v && v.art && (v.score == null || v.score >= 0.45));
+  const ok = (views || []).filter((v) => v && v.art && v.prod !== false && (v.score == null || v.score >= 0.45));
   if (!ok.length) return null;
   const near = (tag) => ok.filter((v) => {
-    if (v.angle !== tag) return false;
+    if ((ANGLE_ALIAS[tag] || [tag]).indexOf(v.angle) < 0) return false;
     if (tag === "front") return Math.abs(Number(v.yaw) || 0) <= 0.8;
     return true;
   }).sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -261,7 +269,7 @@ function pickView(views, need, shotIdx) {
 /** cast_init：初始定妆图生成（用户提示词＋角色人设 → H3-Image t2i，864×1536 精确 9:16） */
 async function runSparkCastInit(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { cast: [] };
@@ -308,7 +316,7 @@ async function runSparkCastInit(ctx, job, p, seed, cents) {
 /** screen_test：试妆试镜——初始图为首帧 → FL2VA 10.1 秒等比例视频 → ffmpeg 抽帧 → ArcFace 打分＋角度标签 */
 async function runSparkScreenTest(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { cast: [] };
@@ -319,6 +327,9 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
 
   // 1) 孤儿产物接续（断点续跑，2026-11-21）：服务重启/重派时，Spark 上已渲染成功的同规格
   //    试妆产物直接领回续跑（抽帧/打分/出卡），不再重渲浪费 GPU。已消费的 prompt_id 落账防重复。
+  //    计划代际校验（2026-11-21 v3）：领回前比对产物 prompt 与当前段落计划——计划换代（如床头→
+  //    阳台巡游）后的同规格旧产物不领，防「旧动作视频按新段落表错位标注」。
+  const plan = screenTestPlan(script);
   const st0c = ctx.store.get();
   st0c.settings = st0c.settings || {};
   const usedPool = st0c.settings.spark_reuse_pool || (st0c.settings.spark_reuse_pool = []);
@@ -330,11 +341,15 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
       if (usedPool.indexOf(pid) >= 0) continue;
       const rec = hist[pid] || {};
       if ((rec.status || {}).status_str !== "success") continue;
-      let isST = false, artNode = null;
+      let isST = false, artNode = null, promptTxt = "";
       Object.values((rec.prompt && rec.prompt[2]) || {}).forEach((n) => {
-        if (n && n.class_type === "MiniMaxH3ImageToVideo" && n.inputs && n.inputs.length === ST_LEN && n.inputs.width === ST_W && n.inputs.height === ST_H) isST = true;
+        if (n && n.class_type === "MiniMaxH3ImageToVideo") {
+          if (n.inputs && n.inputs.length === ST_LEN && n.inputs.width === ST_W && n.inputs.height === ST_H) isST = true;
+          if (n.inputs && typeof n.inputs.prompt === "string") promptTxt = n.inputs.prompt;
+        }
       });
       if (!isST) continue;
+      if (promptTxt.indexOf(plan.prompt.slice(0, 120)) < 0) { log2(j, "reuse skip " + pid.slice(0, 8) + ": 计划已换代（旧产物不领）"); continue; }
       for (const nid of Object.keys(rec.outputs || {})) {
         const arr = rec.outputs[nid].videos || rec.outputs[nid].gifs || rec.outputs[nid].images || [];
         if (arr.length && (arr[0].videos !== undefined || true)) artNode = arr[0];
@@ -363,7 +378,6 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
     const ffName = await comfy.uploadAsset(base, fitBytes, "screentest_ff_" + seed.slice(0, 6) + ".png");
     await comfy.ensureFree(base, 8);
     const sd = numFrom(hash12(ctx, { jobId: j.id, note: p.note || "", role: p.role })) % 18446744073709551615;
-    const plan = screenTestPlan(script);
     const prompt = plan.prompt + (p.note ? " Additional direction: " + String(p.note).slice(0, 160) : "");
     log2(j, "screen test start seed=" + sd + " segments=" + plan.segments.map((s) => s.tag).join("/"));
     const r = await comfy.runTemplate(ctx, j, {
@@ -376,8 +390,7 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
     mp4Bytes = r.bytes;
     renderMeta = r.meta;
   }
-  // 段落表始终按当前剧本生成（接续/渲染同源标注）
-  const plan = screenTestPlan(script);
+  // 段落表与渲染/接续同源（plan 在接续前已按当前剧本生成）
   const mp4Name = safeSeg(j.id) + "_screentest.mp4";
   if (reusedPid) {
     log2(j, "接续孤儿产物 prompt_id=" + reusedPid + "（" + mp4Bytes.length + " bytes，免重渲）");
@@ -388,34 +401,37 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
   }
   const mp4Path = writeOut(ctx, mp4Name, mp4Bytes);
 
-  // 3) 抽帧（每 10 帧取 1 → 约 24 帧全分辨率候选，736×1312）
+  // 3) 抽帧（每 8 帧取 1 → 约 30 帧全分辨率候选，736×1312；巡游段多，加密抽帧）
   const outDir = path.join(process.cwd(), "var", "out");
   const prefix = safeSeg(j.id) + "_view_";
   const viewPat = path.join(outDir, prefix + "%02d.png");
-  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\,10))", "-vsync", "vfr", viewPat]);
+  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\," + ST_STEP + "))", "-vsync", "vfr", viewPat]);
   const viewFiles = fs.readdirSync(outDir).filter((f) => f.indexOf(prefix) === 0 && f.endsWith(".png")).sort();
 
-  // 4) 逐帧 ArcFace 打分＋动作段标注（段落表为主，几何 yaw 仅留档交叉参考）
+  // 4) 逐帧 ArcFace 打分＋「场景×动作段」标注（段落表为主，几何 yaw 仅留档交叉参考）
   const views = [];
   for (let i = 0; i < viewFiles.length; i++) {
     const fp = path.join(outDir, viewFiles[i]);
     const sc = await faceGateScore(fs.readFileSync(fp), castDef.refImage);
-    const t = Math.round((i * 10) / 24 * 100) / 100;
-    const seg = segmentAngle(plan.segments, t, ST_SEC);
+    const t = Math.round((i * ST_STEP) / 24 * 100) / 100;
+    const sg = segmentAngle(plan.segments, t, ST_SEC);
     views.push({
       art: "var/out/" + viewFiles[i],
       t: t,
       score: sc.score,
       yaw: sc.yaw,
       pitch: sc.pitch,
-      angle: seg || (sc.yaw != null ? angleTag(sc.yaw, sc.pitch) : null)
+      angle: sg ? sg.tag : (sc.yaw != null ? angleTag(sc.yaw, sc.pitch) : null),
+      scene: sg ? (sg.scene || "bedside") : null,
+      prod: sg ? (sg.prod !== false) : true, // 转场段仅取材
+      selected: sg && sg.prod === false ? false : undefined // 转场帧默认不勾（用户可手动恢复）
     });
-    log2(j, "view " + (i + 1) + "/" + viewFiles.length + " t=" + t + "s angle=" + views[i].angle + " yaw=" + sc.yaw + " pitch=" + sc.pitch + " score=" + sc.score);
+    log2(j, "view " + (i + 1) + "/" + viewFiles.length + " t=" + t + "s " + (sg ? (sg.scene + "/" + sg.tag) : "no-seg") + " yaw=" + sc.yaw + " pitch=" + sc.pitch + " score=" + sc.score);
   }
 
   // 5) contact grid（5×5 缩略，卡片一眼看全）
   const gridName = safeSeg(j.id) + "_grid.png";
-  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\,10)),scale=184:328,tile=5x5", "-vsync", "vfr", "-frames:v", "1", path.join(outDir, gridName)]);
+  await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\," + ST_STEP + ")),scale=184:328,tile=5x5", "-vsync", "vfr", "-frames:v", "1", path.join(outDir, gridName)]);
 
   const meta = {
     kind: "video-comfy-spark-screentest", lane: NAME, engine: ENGINE + " fl2va first-frame", engine_user: ENGINE_USER,
@@ -429,7 +445,7 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
     ok: true, cents, art: "var/out/" + mp4Name, meta, engine: ENGINE_USER,
     role: castDef.role, views, grid: "var/out/" + gridName, sec: ST_SEC, frames: ST_LEN,
     refImage: castDef.refImage,
-    checklist: ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按本集分镜需求）"]
+    checklist: ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按本集分镜需求）", "场景巡游（床头→阳台落地窗）转场自然度"]
   };
   j.result = bag; j.art = bag;
   return bag;
@@ -484,7 +500,7 @@ async function runSparkCharShots(ctx, job, p, seed, cents) {
 /** C1 策划：封面海报（H3-Image t2i）＋剧本 plan（场景=剧本源头） */
 async function runSparkC1Plan(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
@@ -530,7 +546,7 @@ function log2(job, msg) { try { console.log("[imgspark " + String(job.id || "").
 
 async function runSparkComfy(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const cast = castOf(ctx, p.episodeId);
   const actor = cast[p.castIdx] || { desc: p.prompt || "", refImage: null, role: "", name: "" };
   const prompt = [actor.name, actor.role, actor.desc, "定妆照", "Use <Picture 1> as identity reference; keep facial identity consistent.", STYLE_SUFFIX].filter(Boolean).join(" ");

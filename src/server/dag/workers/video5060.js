@@ -195,7 +195,7 @@ function shotDesc(ctx, episodeId, shot) {
 }
 
 async function freeComfy(ctx) {
-  const base = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "http://127.0.0.1:8188").replace(/\/+$/, "");
+  const base = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   try {
     await fetch(base + "/free", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
   } catch (e) { /* 无 /free 或不可达：下游真错误会暴露 */ }

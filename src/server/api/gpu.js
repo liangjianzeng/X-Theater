@@ -4,7 +4,7 @@
  * GET  /api/gpu → {llm:{online,model,configured}, comfy:{online,vram_total_mib,vram_free_mib}, gpu_busy}
  *                数据来自 llm-gw 3s 监视缓存（同步快照，不现场探测）。
  * POST /api/gpu/llm/stop → 一键让路：停本机 llama-server 释放独显（审计留痕；不自动重启——
- *                重启由用户跑 E:\MyLLM\8090_huihui35b_q4k_cpu19.bat）。
+ *                重启脚本路径随当前 LLM 节点档案（state.nodes[llm_node].llm.bat）在 restart_hint 返回）。
  */
 
 const fs = require("fs");
@@ -28,7 +28,7 @@ function register(router, ctx) {
         },
         comfy: llm.comfy || { online: false },
         gpu_busy: !!(llm.configured && llm.llmOnline), // LLM 在线＝本机 Comfy 生图/拍摄被闸
-        restart_hint: "E:\\MyLLM\\8090_huihui35b_q4k_cpu19.bat"
+        restart_hint: (cfg.llm && cfg.llm.bat) || "" // 拉起脚本跟随当前 LLM 节点档案，不硬编码
       });
     },
     { auth: true }

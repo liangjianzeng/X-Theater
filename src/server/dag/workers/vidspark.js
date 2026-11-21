@@ -126,7 +126,8 @@ function shotScript(ctx, episodeId, shot) {
   out.castDefs = (sh.cast || []).map((role) => cast.find((x) => x.role === role || x.name === role)).filter(Boolean);
   return out;
 }
-/** 分镜首帧：C2 payload.images 按 shotId 绑定的真图（同 video5060.sbFileForShot） */
+/** 分镜首帧：C2 payload.images 按 shotId 绑定的真图（同 video5060.sbFileForShot）。
+ *  返回 { bytes, art }——art 供 meta 落盘（UI 展示每镜「首帧来源」与提示词受控链）。 */
 function sbArtForShot(ctx, episodeId, shotId) {
   try {
     const st = ctx.store.get();
@@ -136,7 +137,7 @@ function sbArtForShot(ctx, episodeId, shotId) {
     if (!im) return null;
     const local = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(im.art.replace(/^.*[\\/]/, "")));
     if (!fs.existsSync(local)) return null;
-    return fs.readFileSync(local);
+    return { bytes: fs.readFileSync(local), art: im.art };
   } catch (e) {
     return null;
   }
@@ -175,7 +176,7 @@ function castRefArts(ctx, episodeId, castDefs) {
 
 async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "http://100.81.83.59:8188").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const shotId = p.shotId || null;
   const st = ctx.store.get();
   const shot = (st.shots || {})[shotId] || {};
@@ -191,7 +192,9 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const seedNum = parseInt(String(seed).slice(0, 8), 16) % 18446744073709551615;
 
   // 素材上传到 Spark input
-  const sbBytes = sbArtForShot(ctx, episodeId, shotId);
+  const sb = sbArtForShot(ctx, episodeId, shotId);
+  const sbBytes = sb && sb.bytes;
+  const sbArt = sb && sb.art;
   const refs = castRefArts(ctx, episodeId, scr.castDefs);
   let tmplId, params, irLlmUsed = false, rMeta = null, mp4Bytes = null, reusedPid = null;
   if (sbBytes) {
@@ -288,6 +291,9 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     kind: "video-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER, tier: TIER,
     tmpl_id: tmplId, ir_llm_used: irLlmUsed,
     sec, length, shotId, episodeId,
+    // 受控链透明化（2026-11-21）：最终下发 IR 提示词＋首帧来源——UI 可展示每镜「怎么被控制」
+    prompt: params && params.PROMPT ? String(params.PROMPT) : null,
+    first_frame: sbArt || null,
     prompt_id: rMeta ? rMeta.promptId : (reusedPid || null),
     tmpl_sha16: rMeta ? rMeta.tmpl_sha16 : null, comfy_commit: rMeta ? rMeta.comfy_commit : null, cn_commits: rMeta ? rMeta.cn_commits : null, weights: rMeta ? rMeta.weights : null,
     reused: !!reusedPid,

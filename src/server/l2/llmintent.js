@@ -71,7 +71,7 @@ function systemPrompt(ctx, session, chips) {
     '- query_music {} 查配乐挂接与候选',
     '- query_gpu {} 查本机 LLM/GPU 占用',
     '- create_project {"title":"项目名","look":"写实电影感|柔光唯美|冷冽悬疑"} 新建项目（用户指定了影调就必须放进 look 参数）',
-    '- create_episode {"project_id":"pj_..." 或 "project_name":"项目名","title":"集标题","brief":"一句话故事"} 新建集（自动出 C1 故事卡）',
+    '- create_episode {"project_id":"pj_..." 或 "project_name":"项目名","title":"集标题","brief":"一句话故事"} 新建集（自动生成结构化剧本＋C1 故事卡）',
     '- suggest_card {"card_id":"card_...","note":"修改意见"} 对 C1 出 AI 修改建议（只建议，不改）',
     '- adopt_music {"candidate_id":"mus_...","scene_id":"sc_..."} 采用配乐候选',
     '- revise_scenes {"episode_id":"ep_...","scenes":[完整新分场分镜表]} 修订剧本（改源头，会出确认卡；scenes 结构必须与 query_scenes 的一致，场数/镜数不变）',

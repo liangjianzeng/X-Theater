@@ -84,7 +84,8 @@
         return pen.concat(dec);
       });
 
-      /* ---- 流程总览条（2026-11-21：多次重出后搞不清当前状态）---- */
+      /* ---- 制片流水线（2026-11-21 产品化重构）：7 个业务阶段为唯一主轴，
+         每阶段=状态+产物+下一步动作；9 张卡按用户视角归并为 7 步（美术/样片/预算=制作确认）---- */
       const STAGE_ORDER = ["C1", "C2S", "C2", "C3", "C4", "C5", "C6", "C7", "C8"];
       const stageSteps = computed(() => {
         const l = list.value || [];
@@ -119,6 +120,123 @@
       });
       const shotTotal = computed(() => ((store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || []).length);
 
+      /* 流水线节点（用户视角 7 步） */
+      const pipeline = computed(() => {
+        const l = list.value || [];
+        const latest = (t) => l.filter(c => c.type === t)
+          .sort((a, b) => (b.round || b.ver || 0) - (a.round || a.ver || 0))[0] || null;
+        const shots = (store.state && store.state.shots_by_episode && store.state.shots_by_episode[props.epId]) || [];
+        const c6dec = l.some(c => c.type === "C6" && c.status === "decided");
+        const allShotOk = shotTotal.value > 0 && shotDoneCount.value >= shotTotal.value;
+        const c2s = latest("C2S");
+        const c2 = latest("C2");
+        const pendC2S = l.some(c => c.type === "C2S" && c.status === "pending");
+        const pendC2 = l.some(c => c.type === "C2" && c.status === "pending");
+        const prodC2S = c2s && (c2s.payload.video || {}).art ? "/" + c2s.payload.video.art : null;
+        const viewN = c2s ? (c2s.payload.views || []).length : 0;
+        const imgN = (c2 && c2.payload && c2.payload.images || []).filter(im => im && im.art).length;
+        const c6card = latest("C6");
+        const snap = c6card && c6card.payload && c6card.payload.snapshot || null;
+
+        const steps = [
+          {
+            k: "s1", name: "① 方向策划", done: l.some(c => c.type === "C1" && c.status === "decided"),
+            status: null, prod: null, cta: null,
+            note: l.some(c => c.type === "C1" && c.status === "decided") ? "剧本与分场分镜已确认" : "等待方向卡"
+          },
+          {
+            k: "s2", name: "② 定妆试镜", done: l.some(c => c.type === "C2S" && c.status === "decided"),
+            status: pendC2S ? "wait-you" : null,
+            prod: prodC2S ? { text: "试妆视频 ▶", href: prodC2S } : null,
+            note: prodC2S ? ("第 " + ((c2s && c2s.round) || 1) + " 版 · 10s 试妆 + 抽帧 " + viewN + " 帧") : "上传或生成初始图后试妆",
+            cta: pendC2S ? { text: "去验收试妆", type: "C2S" } : null
+          },
+          {
+            k: "s3", name: "③ 分镜画面", done: l.some(c => c.type === "C2" && c.status === "decided") && imgN >= shotTotal.value && !!l.some(c => c.type === "C2" && c.status === "decided"),
+            status: pendC2 ? "wait-you" : null,
+            prod: null,
+            note: imgN ? ("分镜首帧 " + imgN + "/" + (shotTotal.value || "…") + " 张（试妆帧直选）") : "试妆拍板后自动生成",
+            cta: pendC2 ? { text: "去确认分镜", type: "C2" } : null
+          },
+          {
+            k: "s4", name: "④ 制作确认", done: ["C3", "C4", "C5"].every(t => l.some(c => c.type === t && c.status === "decided")),
+            status: null,
+            prod: null,
+            note: ["C3", "C4", "C5"].every(t => l.some(c => c.type === t && c.status === "decided")) ? "演员表/样片画面/预算已确认" : "美术·样片·预算连拍三卡",
+            cta: null
+          },
+          {
+            k: "s5", name: "⑤ 开机拍摄", done: c6dec && allShotOk,
+            status: c6dec && !allShotOk ? "auto-running" : null,
+            prod: null,
+            note: c6dec
+              ? (allShotOk ? "全镜拍摄完成" : "拍摄中：已出片 " + (shots.filter(s => (s.takes || []).length).length) + "/" + (shotTotal.value || 8) + " 镜（Spark 自动逐镜）")
+              : "待开机（预算确认后）",
+            cta: null
+          },
+          {
+            k: "s6", name: "⑥ 机审复审", done: l.some(c => c.type === "C7" && c.status === "decided") && reviewCount.value === 0,
+            status: reviewCount.value ? "wait-you" : (shotDoneCount.value > 0 ? "auto-running" : null),
+            prod: null,
+            note: reviewCount.value ? (reviewCount.value + " 镜机审灰区等你批复（复审台）") : (shotDoneCount.value ? "机审自动进行，灰区镜会送审" : "拍摄完成后自动机审"),
+            cta: reviewCount.value ? { text: "去复审台批复", href: "#/review" } : null
+          },
+          {
+            k: "s7", name: "⑦ 成片交付", done: l.some(c => c.type === "C8" && c.status === "decided"),
+            status: null,
+            prod: null,
+            note: l.some(c => c.type === "C8" && c.status === "decided") ? "全镜放行，可导出成片" : "复审通过后自动汇聚交付",
+            cta: null
+          }
+        ];
+        const cur = steps.find(s => !s.done) || steps[steps.length - 1];
+        cur.isCurrent = true;
+        return { steps: steps, current: cur };
+      });
+      function scrollToCard(type) {
+        const nodes = document.querySelectorAll(".pcard .v-flow-badge.v-flow-t-" + type);
+        if (nodes && nodes.length) {
+          const cardEl = nodes[0].closest(".pcard");
+          if (cardEl) { cardEl.scrollIntoView({ behavior: "smooth", block: "start" }); }
+        }
+      }
+      function pipelineGo(step) {
+        if (!step || !step.cta) return;
+        if (step.cta.href) { global.location.hash = step.cta.href; return; }
+        scrollToCard(step.cta.type);
+      }
+      function nodeDot(s) {
+        if (s.done) return { background: "#2a9d5c", color: "#fff", borderRadius: "50%", width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", flexShrink: 0 };
+        if (s.status === "wait-you") return { background: "#f5a623", color: "#fff", borderRadius: "50%", width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 };
+        if (s.status === "auto-running") return { background: "#3b6ea5", color: "#fff", borderRadius: "50%", width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", flexShrink: 0 };
+        return { border: "2px solid #c9cdd6", color: "#c9cdd6", borderRadius: "50%", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", flexShrink: 0 };
+      }
+
+      /* ---- 单一真相（2026-11-21）：每个阶段只显示一个当前版本——
+         主列表 = pending 卡 + 每个 type 最新 decided 卡；打回再出的历史全部收进折叠区 ---- */
+      const historyOpen = ref(false);
+      const visibleCards = computed(() => {
+        const l = list.value || [];
+        const pending = l.filter(c => c.status === "pending")
+          .sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+        const latest = {};
+        l.filter(c => c.status === "decided").forEach(c => {
+          if (!latest[c.type] || (c.decided_at || 0) > (latest[c.type].decided_at || 0)) latest[c.type] = c;
+        });
+        const dec = Object.values(latest).sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0));
+        return pending.concat(dec);
+      });
+      const historyCards = computed(() => {
+        const vis = new Set(visibleCards.value.map(c => c.id));
+        return (list.value || []).filter(c => !vis.has(c.id))
+          .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      });
+      function historyLine(c) {
+        const name = TYPE_META[c.type] ? c.type + "·" + TYPE_META[c.type].name : c.type;
+        const t = c.created_at ? new Date(Number(c.created_at)).toTimeString().slice(0, 5) : "";
+        return name + " · 第 " + cardRound(c) + " 版 · " + (c.status === "rejected" ? "已废弃" : "被新版取代") + (t ? " · " + t : "");
+      }
+
       /* ---- 卡片折叠（同类旧卡收起，只展开 pending + 每个 type 最新 decided）---- */
       const expanded = reactive({});
       function isLatestDecided(card) {
@@ -131,6 +249,13 @@
         if (expanded[card.id]) return false;
         return !(card.status === "decided" && isLatestDecided(card));
       }
+      /* 多版本语义（2026-11-21）：pending 新版存在时，旧 decided 卡不再挂「当前有效」——
+         明示「拍板第 N 版后取代」，消除「批的是哪版/哪版生效」的困惑 */
+      function pendingSameType(card) {
+        return (list.value || []).find(c => c.episodeId === card.episodeId && c.type === card.type && c.status === "pending") || null;
+      }
+      function hasPendingSameType(card) { return !!pendingSameType(card); }
+      function pendingSameTypeRound(card) { const c = pendingSameType(card); return c ? cardRound(c) : "?"; }
       /* C6 开机的前提：本集 C6 卡已拍板（后端 shoot 也强制校验） */
       const c6Decided = computed(() => (list.value || []).some(c => c.type === "C6" && c.status !== "pending"));
       const hasC6 = computed(() => (list.value || []).some(c => c.type === "C6"));
@@ -213,7 +338,7 @@
             return clean(p.summary || p.note || "");
         }
       }
-      /* C7 复审清单：镜号＋理由（镜号尽力从 state 里查 seq，查不到退到短号） */
+      /* C7 复审清单：统一镜号＋理由（2026-11-21 不再退哈希短号——镜号查不到显示「镜 ?」并带 reason） */
       function c7Items(card) {
         const p = card.payload || {};
         const items = Array.isArray(p.items) ? p.items : [];
@@ -222,7 +347,7 @@
           const sh = shots.find(x => x.id === it.shotId);
           return {
             seq: sh ? sh.seq : null,
-            short: String(it.shotId || "").slice(-4),
+            label: sh ? T.shotLabel(sh) : "镜 ?（" + String(it.shotId || "").slice(-4) + "）",
             reason: clean(it.reason || "机审建议人工复审")
           };
         });
@@ -241,6 +366,17 @@
       }
       const accept = card => decide(card, "accept", card.type === "C2S" ? { views: viewsOf(card) } : undefined);
       const reject = card => decide(card, "reject");
+      /** 垃圾批次清理：删未拍板卡＋其 var/out 过程产物（服务端 DELETE /api/cards/:id） */
+      async function delCard(card) {
+        if (!window.confirm("删除该批次卡及其过程产物文件？\n（仅未拍板卡可删；已拍板卡是版本档案，历史区自动收档）")) return;
+        busyId.value = "del_" + card.id;
+        try {
+          const r = await T.api.del("/cards/" + card.id);
+          store.toast("已删除批次卡，清理产物 " + ((r && r.files_removed) || 0) + " 个", "ok");
+          await store.loadCards(props.epId).catch(() => {});
+        } catch (e) { store.toast(T.humanErr ? T.humanErr(e).text : ((e && e.message) || "删除失败"), "err"); }
+        finally { busyId.value = ""; }
+      }
       function openNote(card) {
         if (editing.value === card.id) { editing.value = ""; return; }
         editing.value = card.id;
@@ -379,8 +515,10 @@
         const key = castKey(card, a);
         busyId.value = "gen-" + key;
         try {
-          await T.api.post("/episodes/" + props.epId + "/castref/generate", { role: a.role, prompt: genPrompt[key] || "" });
-          store.toast("初始图生成中（Spark 出图十几秒），完成后这张卡会出现候选");
+          const r = await T.api.post("/episodes/" + props.epId + "/castref/generate", { role: a.role, prompt: genPrompt[key] || "" });
+          store.toast(r && r.deduped
+            ? "这个角色的初始图任务已在跑，未重复派——等候选流进来即可"
+            : "初始图生成中（Spark 出图十几秒），完成后这张卡会出现候选");
         } catch (e) { store.toast(T.humanErr(e).text, "err"); }
         finally { busyId.value = ""; }
       }
@@ -399,8 +537,10 @@
         if (!file) return;
         busyId.value = "cf-" + key;
         try {
-          await T.api.post("/episodes/" + props.epId + "/castref/confirm", { role: a.role, file: String(file).replace(/^.*[\\/]/, "") });
-          store.toast("初始定妆已确认 · 试妆试镜生成中（约 8-12 分钟，出片后 C2S 卡会流进来）");
+          const r = await T.api.post("/episodes/" + props.epId + "/castref/confirm", { role: a.role, file: String(file).replace(/^.*[\\/]/, "") });
+          store.toast(r && r.deduped
+            ? "试妆试镜已在跑（同角色任务未重复派），出片后 C2S 卡会流进来"
+            : "初始定妆已确认 · 试妆试镜生成中（约 8-12 分钟，出片后 C2S 卡会流进来）");
           await store.loadCards(props.epId);
         } catch (e) { store.toast(T.humanErr(e).text, "err"); }
         finally { busyId.value = ""; }
@@ -408,22 +548,37 @@
 
       /* ---- C2S 试妆试镜卡：角度帧勾选 ---- */
       function angleCn(a) {
-        return { front: "正面", left: "左侧脸", right: "右侧脸", up: "仰头", down: "低头" }[a] || "角度?";
+        return { front: "正面", left: "左侧脸", right: "右侧脸", up: "仰头", down: "低头",
+                 window: "望窗", walk: "转场·仅取材", wfront: "窗前正面", wleft: "窗前侧脸", wgaze: "望夜景" }[a] || "角度?";
       }
       function viewsOf(card) {
         return ((card.payload || {}).views || []).filter(v => v && v.art);
       }
-      /** 图组（灯箱左右切换用） */
+      /** 图组（灯箱左右切换用）——统一镜号口径（C2 images seq=1..8 → 镜 01..08，与镜头墙 101→镜 01 同模 100） */
       function sbGroup(card) {
         return ((card.payload || {}).images || []).filter(im => im && im.art)
-          .map(im => ({ src: '/' + im.art, title: '镜 ' + (im.seq || '') + (im.refAngle ? ' · ' + (angleCn(im.refAngle)) : '') }));
+          .map(im => ({ src: '/' + im.art, title: T.shotLabel({ seq: im.seq }) + (im.refAngle ? ' · ' + (angleCn(im.refAngle)) : '') }));
       }
       function previewViews(card) {
         const g = viewsOf(card).map(v => ({ src: '/' + v.art, title: angleCn(v.angle) + ' · t=' + v.t + 's · ArcFace ' + v.score }));
         if (g.length) openLb(g[0].src, '角度参考帧', g, 0);
       }
+      let selTimer = null;
+      /** 勾选落库（修「没法勾」bug：勾选曾为纯内存态，5s 轮询/SSE 重拉即覆盖）。
+       *  乐观更新内存立即反馈，300ms 防抖批量同步服务端（按 art 匹配，服务端 last-write-win）。 */
+      function syncSel(card) {
+        clearTimeout(selTimer);
+        selTimer = setTimeout(() => {
+          const sel = {};
+          viewsOf(card).forEach(v => { sel[v.art] = v.selected !== false; });
+          T.api.post("/cards/" + card.id + "/views/select", { sel }).catch(() => {
+            store.toast("勾选同步失败，稍后会自动重试（点击其他帧也会重同步）", "warn");
+          });
+        }, 300);
+      }
       function toggleView(card, v) {
         v.selected = v.selected === false; // 默认勾选；点一次取消，再点恢复
+        syncSel(card);
       }
 
       /* ---- 产物总览（2026-11-21：产物散在卡片里看不出哪个是哪个/哪个最新）---- */
@@ -541,10 +696,13 @@
         gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
         uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
         castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView,
-        sbGroup, previewViews,
+        sbGroup, previewViews, nodeDot,
         stageSteps, currentStep, currentStepName, pendingTypes, reviewCount, shotDoneCount, shotTotal,
-        isCompact, isLatestDecided, expanded, productSummary, prodSrc,
-        cardRound, tl, toggleTimeline, fmtTs
+        pipeline, pipelineGo, scrollToCard,
+        isCompact, isLatestDecided, hasPendingSameType, pendingSameTypeRound, expanded, productSummary, prodSrc,
+        shotLabelOf: s => T.shotLabel(s),
+        cardRound, tl, toggleTimeline, fmtTs, delCard,
+        visibleCards, historyCards, historyOpen, historyLine
       };
     },
     template: `
@@ -557,31 +715,37 @@
           <button class="btn btn-ghost btn-sm" @click="reload">刷新卡片</button>
         </div>
 
-        <!-- 流程总览：当前在哪一步 / 待办 / 机审灰区 -->
-        <div class="v-flow-overview" v-if="stageSteps.length">
-          <div class="v-flow-steps" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-            <span v-for="(s, i) in stageSteps" :key="s.k"
-              :style="s.k === currentStep
-                ? 'background:#f5a623;color:#fff;padding:2px 10px;border-radius:12px;font-weight:600'
-                : (s.done ? 'color:#2a9d5c' : 'color:#9aa0a8')">{{ s.done ? '✓ ' : '' }}{{ s.name }}</span>
+        <!-- 制片流水线：唯一主轴（7 阶段垂直时间线）——节点=状态+产物+下一步动作 -->
+        <div class="v-flow-pipe" style="border:1px solid #e8e8ee;border-radius:10px;padding:12px 16px;margin-bottom:12px;background:#fff">
+          <div v-for="(s, i) in pipeline.steps" :key="s.k" style="display:flex;gap:12px">
+            <div style="display:flex;flex-direction:column;align-items:center">
+              <span :style="nodeDot(s)">{{ s.done ? "✓" : (s.status === "wait-you" ? "!" : (s.status === "auto-running" ? "▶" : "")) }}</span>
+              <span v-if="i < pipeline.steps.length - 1" style="flex:1;width:2px;background:#e2e2ea;min-height:20px"></span>
+            </div>
+            <div :style="'flex:1;padding-bottom:' + (i < pipeline.steps.length - 1 ? '16px' : '0')">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <b :style="pipeline.current && pipeline.current.k === s.k ? 'color:#e07b00;font-size:15px' : 'color:#3a3f47'">{{ s.name }}</b>
+                <span v-if="s.status === 'wait-you'" class="badge badge-warn">待你操作</span>
+                <span v-else-if="s.status === 'auto-running'" class="badge badge-ok">自动进行中</span>
+                <a v-if="s.prod" :href="s.prod.href" target="_blank" style="text-decoration:underline">{{ s.prod.text }}</a>
+                <button v-if="s.cta" class="btn btn-sm btn-primary" @click="pipelineGo(s)">{{ s.cta.text }}</button>
+              </div>
+              <div class="weak" style="margin-top:2px">{{ s.note }}</div>
+            </div>
           </div>
-          <div class="v-flow-now">
-            <span>当前：<b>{{ currentStepName }}</b></span>
-            <span class="weak" v-if="pendingTypes.length"> · 待你拍板：{{ pendingTypes.join("、") }}</span>
-            <span class="weak" v-if="shotTotal"> · 已拍 {{ shotDoneCount }}/{{ shotTotal }} 镜</span>
-            <a class="weak" v-if="reviewCount" href="#/review" style="text-decoration:underline"> · ⚠ {{ reviewCount }} 镜机审灰区待批复（去复审台）</a>
-          </div>
-          <div class="v-flow-products" v-if="productSummary.length">
+          <div style="border-top:1px dashed #e2e2ea;margin-top:6px;padding-top:8px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
             <span class="weak">有效产物：</span>
             <span v-for="(pr, pi) in productSummary" :key="pi" class="v-flow-prod">
               <template v-if="pr.kind === 'video' && pr.art">
                 <a :href="'/' + pr.art" target="_blank" :title="'打开 ' + pr.name">▶ {{ pr.name }}</a><span class="weak">（{{ pr.meta }}）</span>
               </template>
               <template v-else-if="pr.kind === 'group'">
-                <span>{{ pr.name }}</span><span class="weak">（{{ pr.meta }}，点击下方分镜卡查看）</span>
+                <span>{{ pr.name }}</span><span class="weak">（{{ pr.meta }}）</span>
               </template>
             </span>
-            <button class="btn btn-sm btn-ghost" style="margin-left:12px" @click="toggleTimeline">{{ tl.shown ? '收起时间线' : '📋 时间线' }}</button>
+            <span class="weak" v-if="shotTotal">· 已拍 {{ shotDoneCount }}/{{ shotTotal }} 镜</span>
+            <a class="weak" v-if="reviewCount" href="#/review" style="text-decoration:underline">· ⚠ {{ reviewCount }} 镜待批复</a>
+            <button class="btn btn-sm btn-ghost" style="margin-left:auto" @click="toggleTimeline">{{ tl.shown ? '收起时间线' : '📋 时间线' }}</button>
           </div>
           <!-- 时间线面板：全程事件倒序（成功绿/重试黄/失败红） -->
           <div v-if="tl.shown" style="margin-top:8px;border-top:1px dashed #ddd;padding-top:8px;max-height:320px;overflow:auto">
@@ -603,19 +767,22 @@
         </empty-state>
 
         <div v-else class="list v-flow-list">
-          <div v-for="card in ordered" :key="card.id" class="card pcard"
-            :class="{ 'v-flow-pending': card.status === 'pending', 'decided': card.status !== 'pending' }"
-            :style="card.status === 'rejected' ? 'opacity:.55' : ''">
+          <div v-for="card in visibleCards" :key="card.id" class="card pcard"
+            :class="{ 'v-flow-pending': card.status === 'pending', 'decided': card.status !== 'pending' }">
             <div class="card-head">
               <span class="badge v-flow-badge" :class="'v-flow-t-' + card.type">{{ typeLabel(card.type) }}</span>
               <span class="card-title">{{ cardTitle(card) }}</span>
               <span class="badge" style="background:#3b6ea5;color:#fff">第 {{ cardRound(card) }} 版</span>
               <span class="badge" v-if="card.status === 'rejected'" style="background:#8a8f98;color:#fff">已废弃（被新版取代）</span>
-              <span class="badge badge-ok" v-else-if="card.status === 'decided' && isLatestDecided(card)">当前有效</span>
+              <span class="badge badge-ok" v-else-if="card.status === 'decided' && isLatestDecided(card) && !hasPendingSameType(card)">当前有效</span>
+              <span class="badge" v-else-if="card.status === 'decided'" style="background:#6b7aa8;color:#fff">拍板第 {{ pendingSameTypeRound(card) }} 版后取代本版</span>
               <span class="badge" :class="card.status === 'pending' ? 'badge-warn' : 'badge-ok'">
-                {{ card.status === 'pending' ? '待拍板' : '已拍板' }}
+                {{ card.status === 'pending' ? '待拍板 · 拍板后生效' : '已拍板' }}
               </span>
               <span class="grow"></span>
+              <button class="btn btn-sm btn-ghost" v-if="card.status === 'pending' || card.status === 'rejected'"
+                :disabled="busyId === 'del_' + card.id" :aria-busy="busyId === 'del_' + card.id"
+                @click="delCard(card)" title="删除该批次及其过程产物（垃圾批次清理）">🗑 删除</button>
               <time-ago v-if="card.status !== 'pending' && card.decided_at" :ts="card.decided_at"></time-ago>
             </div>
 
@@ -728,9 +895,9 @@
                 <div class="v-flow-cast-title"><b>分镜首帧</b><span class="badge badge-ok">每镜视频的 I2V 输入</span><span class="weak">拍摄阶段逐镜动起来</span></div>
                 <div class="v-flow-sb">
                   <div class="v-flow-sb-cell" v-for="(im, i) in p(card).images" :key="i">
-                    <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" :title="'点击看大图 · 镜 ' + (im.seq || i + 1) + '（←/→ 翻镜）'" @click="openLb('/' + im.art, '镜 ' + (im.seq || (i + 1)) + (im.shotId ? ' · 拍摄输入' : ''), sbGroup(card), i)" style="cursor:zoom-in" />
+                    <img v-if="im.art" :src="'/' + im.art" loading="lazy" alt="分镜" :title="'点击看大图 · ' + shotLabelOf({ seq: im.seq || i + 1 }) + '（←/→ 翻镜）'" @click="openLb('/' + im.art, shotLabelOf({ seq: im.seq || i + 1 }) + (im.shotId ? ' · 拍摄输入' : ''), sbGroup(card), i)" style="cursor:zoom-in" />
                     <span class="weak" v-else>生成中</span>
-                    <span class="v-flow-sb-tag">镜 {{ im.seq || i + 1 }}</span>
+                    <span class="v-flow-sb-tag">{{ shotLabelOf({ seq: im.seq || i + 1 }) }}</span>
                   </div>
                 </div>
               </div>
@@ -767,7 +934,7 @@
             <!-- C7：复审清单（镜号＋理由） -->
             <div class="kv v-flow-c7" v-if="card.type === 'C7'">
               <div class="kv-row" v-for="(it, i) in c7Items(card)" :key="i">
-                <span>镜 #{{ it.seq != null ? it.seq : ('…' + it.short) }}</span>
+                <span>{{ it.label }}</span>
                 <span class="weak">{{ it.reason }}</span>
               </div>
             </div>
@@ -817,8 +984,8 @@
               style="margin-top:8px;border-top:1px dashed #ddd;padding-top:8px">
               <div class="kv-row"><span><b>本次开机批次</b></span><span class="weak">试妆素材：第 {{ (p(card).snapshot.castRound) || '…' }} 版</span></div>
               <div class="kv-row" v-for="(f, fi) in (p(card).snapshot.frames || [])" :key="'f' + fi">
-                <span>镜 {{ f.seq }}</span>
-                <span class="weak">首帧 = {{ f.angle ? (angleCn(f.angle) + ' @' + f.t + 's') : '初始定妆' }}（{{ f.file }}）</span>
+                <span>{{ shotLabelOf({ seq: f.seq }) }}</span>
+                <span class="weak">首帧 = {{ f.angle ? (angleCn(f.angle) + ' @' + f.t + 's') : '初始定妆' }}</span>
               </div>
             </div>
             <div class="row wrap v-flow-cta" v-if="card.type === 'C6'">
@@ -851,6 +1018,19 @@
             </template>
             <div class="v-flow-fold" v-else style="padding:2px 0 0">
               <button class="btn btn-sm btn-ghost" @click="expanded[card.id] = false">收起历史卡</button>
+            </div>
+          </div>
+
+          <!-- 历史版本收档：打回再出的旧批次全部收进这里（默认收起），主列表只呈现当前版本 -->
+          <div class="card pcard" v-if="historyCards.length" style="opacity:.85">
+            <div class="card-head">
+              <span class="badge" style="background:#8a8f98;color:#fff">🗄 历史版本（{{ historyCards.length }}）</span>
+              <span class="weak">打回再出的旧批次统一收档——当前有效版本只看上方流水线与对应卡</span>
+              <span class="grow"></span>
+              <button class="btn btn-sm btn-ghost" @click="historyOpen = !historyOpen">{{ historyOpen ? "收起" : "展开" }}</button>
+            </div>
+            <div v-if="historyOpen" style="padding:6px 4px">
+              <div v-for="c in historyCards" :key="'h' + c.id" class="weak" style="padding:2px 0;border-bottom:1px dashed #f0f0f0">{{ historyLine(c) }}</div>
             </div>
           </div>
         </div>

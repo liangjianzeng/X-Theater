@@ -27,7 +27,7 @@ const TOOLS = {
   query_music: { expensive: false, desc: "查询配乐挂接与候选状态" },
   query_gpu: { expensive: false, desc: "查询本机 LLM/GPU 占用状态" },
   create_project: { expensive: false, desc: "新建短剧项目（零成本，审计留痕）" },
-  create_episode: { expensive: false, desc: "在项目下新建集（触发故事策划卡）" },
+  create_episode: { expensive: false, desc: "在项目下新建集（LLM 自动生成结构化剧本＋故事方向卡）" },
   suggest_card: { expensive: false, desc: "对 C1 卡出 AI 修改建议（只建议不落盘）" },
   adopt_music: { expensive: false, desc: "采用某条配乐候选挂接到场次" },
   reroll_shot: { expensive: true, desc: "重拍指定镜头（花真金白银，必答门）" },

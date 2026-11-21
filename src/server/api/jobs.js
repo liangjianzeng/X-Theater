@@ -52,6 +52,11 @@ function listJobs(ctx) {
     if (last.error && !o.error) o.error = last.error;
     o.shotId = (j.payload && j.payload.shotId) || null;
     o.sec = (j.payload && j.payload.sec) || null;
+    // 受控链透明化（2026-11-21）：内存活行带最终 IR 提示词与首帧来源——拍摄墙/复审台可展示每镜「怎么被控制」
+    const rMeta = (j.result && j.result.meta) || null;
+    o.prompt = rMeta && rMeta.prompt ? String(rMeta.prompt) : null;
+    o.first_frame = rMeta && rMeta.first_frame ? rMeta.first_frame : null;
+    o.tmpl_id = rMeta && rMeta.tmpl_id ? rMeta.tmpl_id : null;
     return o;
   });
   const liveKeys = new Set(live.map(function (j) { return String(j.id); }));

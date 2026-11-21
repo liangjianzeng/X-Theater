@@ -119,12 +119,51 @@
       const totalN = computed(() => (shots.value || []).length || 16);
       const doneN = computed(() => (shots.value || []).filter(s => String(s.status) === "ok").length);
       const reviewN = computed(() => (shots.value || []).filter(s => String(s.status) === "pending_review").length);
+      const failedN = computed(() => jobRows.value.filter(j => j.live !== false && String(j.status) === "failed").length);
+
+      /* ---- 状态过滤（2026-11-21「点不住」修复）：toolbar 统计原是纯展示数字，用户当 tab 点
+         点不动。现做成真过滤器：点状态 chip → 镜头墙与队列按状态过滤；再点一次取消。 ---- */
+      const filter = ref("");
+      function setFilter(f) { filter.value = filter.value === f ? "" : f; }
+      function matchShot(s) {
+        const f = filter.value;
+        if (!f) return true;
+        const j = jobOf(s);
+        if (f === "queued") return !!j && ["queued", "pending"].indexOf(String(j.status)) >= 0;
+        if (f === "running") return !!j && String(j.status) === "running";
+        if (f === "failed") return (!!j && String(j.status) === "failed") || !!(s.flags && s.flags.stale);
+        if (f === "review") return String(s.status) === "pending_review";
+        if (f === "ok") return String(s.status) === "ok";
+        return true;
+      }
+      const wallShots = computed(() => (shots.value || []).filter(matchShot));
+      const queueJobsF = computed(() => {
+        const f = filter.value;
+        if (!f || f === "review" || f === "ok") return queueJobs.value; // 全部/复审/完成态下队列保持全览
+        return queueJobs.value.filter(j => String(j.status) === f || (f === "queued" && ["queued", "pending"].indexOf(String(j.status)) >= 0));
+      });
 
       function takeCost(shot) {
         const tk = shot.takes || [];
         let sum = 0;
         tk.forEach(t => { sum += Number(t && t.cost_cents) || 0; });
         return sum;
+      }
+      /* 受控要素弹窗（2026-11-21「视频怎么受控」）：首帧（锁人脸/构图）＋模板＋种子＋最终 IR 提示词 */
+      function esc(s) { return String(s || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])); }
+      function showPrompt(j, s) {
+        const m = (j.result && j.result.meta) || {};
+        store.openSheet({
+          title: (s ? T.shotLabel(s) : jobId(j)) + " · 受控要素",
+          rows: [
+            "首帧（I2V 输入 · 锁人脸/构图/服装）：" + (j.first_frame || "无（参考图模式）"),
+            "渲染模板：" + (j.tmpl_id || m.tmpl_id || "—") + (m.ir_llm_used === true ? " · IR 经 LLM 重写" : " · IR 规则拼装"),
+            "种子：" + (m.seed || "—")
+          ],
+          html: "<div style='font-size:12px;margin-top:6px'><b>最终下发的提示词（IR）</b></div>" +
+            "<pre style='white-space:pre-wrap;font-size:12px;line-height:1.5;background:#f6f7f9;padding:10px;border-radius:8px;max-height:320px;overflow:auto'>" + esc(j.prompt) + "</pre>",
+          actions: [{ label: "知道了", kind: "btn-ghost", onClick: c => c() }]
+        });
       }
       function jobLabel(j) {
         return JOB_TYPE_CN[String(j.type || "").toLowerCase()] || clean(j.type || "任务");
@@ -141,8 +180,7 @@
       function jobShotTag(j) {
         const s = shotOf(j);
         if (!s) return jobLabel(j);
-        const nm = clean(s.name);
-        return "#" + (s.seq % 100 || s.seq) + " " + (nm || "镜") + " · " + (s.sec || 7.5) + " 秒";
+        return T.shotFull(s) + ((s.takes || []).length > 1 ? " · 第 " + (s.takes || []).length + " 条" : "");
       }
       function jobWaitMin(j) {
         const ts = jobTs(j);
@@ -224,23 +262,28 @@
 
       return {
         store, opBusy, shots, loading, err, isEmpty, wallErr,
-        jobRows, queueJobs, queuedN, runningN, totalN, doneN, reviewN,
+        jobRows, queueJobs, queueJobsF, wallShots, filter, setFilter, failedN,
+        queuedN, runningN, totalN, doneN, reviewN,
         jobOf, jobFailed, cellCls, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean,
-        jobShotTag, jobStateCn, jobTakeArt, jobWaitMin, nextStep, queuePos
+        jobShotTag, jobStateCn, jobTakeArt, jobWaitMin, nextStep, queuePos, showPrompt,
+        shotLabel: s => T.shotLabel(s)
       };
     },
     template: `
       <div class="v-shoot">
         <div class="toolbar">
-          <span>完成 <b class="num">{{ doneN }}</b><span class="muted">/</span><b class="num">{{ totalN }}</b></span>
+          <button class="btn btn-sm" :class="filter === '' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('')">全部 <b class="num">{{ doneN }}</b><span class="muted">/</span><b class="num">{{ totalN }}</b></button>
           <span class="tb-sep"></span>
-          <span>排队 <b class="num">{{ queuedN }}</b></span>
+          <button class="btn btn-sm" :class="filter === 'queued' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('queued')">排队 <b class="num">{{ queuedN }}</b></button>
           <span class="tb-sep"></span>
-          <span>在拍 <b class="num">{{ runningN }}</b></span>
+          <button class="btn btn-sm" :class="filter === 'running' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('running')">在拍 <b class="num">{{ runningN }}</b></button>
           <span class="tb-sep"></span>
-          <span>待复审 <b class="num">{{ reviewN }}</b></span>
+          <button class="btn btn-sm" :class="filter === 'review' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('review')">待复审 <b class="num">{{ reviewN }}</b></button>
+          <span class="tb-sep"></span>
+          <button class="btn btn-sm" :class="filter === 'ok' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('ok')">已完成 <b class="num">{{ doneN }}</b></button>
+          <button class="btn btn-sm" v-if="failedN" :class="filter === 'failed' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('failed')">失败 <b class="num">{{ failedN }}</b></button>
           <span class="grow"></span>
-          <span class="weak">灰区镜头自动送复审台</span>
+          <span class="weak">点状态过滤镜头与队列 · 再点一次取消 · 灰区镜头自动送复审台</span>
         </div>
 
         <loading v-if="loading"></loading>
@@ -252,9 +295,9 @@
 
         <template v-else>
           <div class="wall">
-            <div v-for="s in shots" :key="s.id" class="card v-shoot-cell" :class="cellCls(s)">
+            <div v-for="s in wallShots" :key="s.id" class="card v-shoot-cell" :class="cellCls(s)">
               <div class="row">
-                <b class="num v-shoot-seq">#{{ s.seq }}</b>
+                <b class="num v-shoot-seq">{{ shotLabel(s) }}</b>
                 <span class="grow v-shoot-name" :title="clean(s.name)">{{ clean(s.name) }}</span>
                 <span class="muted"><b class="num">{{ s.sec }}</b> 秒</span>
               </div>
@@ -272,6 +315,7 @@
                 <a class="btn btn-sm" :href="'/' + s.takes[s.takes.length - 1].art" target="_blank">▶ 看最新片</a>
               </div>
               <div class="row v-shoot-acts" v-if="jobOf(s)">
+                <button class="btn btn-sm btn-ghost" v-if="jobOf(s).prompt" @click="showPrompt(jobOf(s), s)">📋 受控要素</button>
                 <button class="btn btn-sm" v-if="['queued','running'].indexOf(String(jobOf(s).status)) >= 0"
                   :disabled="opBusy === ('stop-' + jobId(jobOf(s)))" @click="stop(jobOf(s))">停</button>
                 <button class="btn btn-sm btn-danger" v-if="String(jobOf(s).status) === 'failed'"
@@ -282,7 +326,7 @@
 
           <!-- 集级队列：可读化（真实执行顺序 · 镜号＋镜名 · 排队位次 · 已等时长 · 看片） -->
           <err-state v-if="wallErr" :err="wallErr" :on-retry="reload" compact></err-state>
-          <div class="panel" v-if="queueJobs.length">
+          <div class="panel" v-if="queueJobsF.length">
             <div class="panel-title">拍摄队列
               <span class="badge badge-ok">下一步：{{ nextStep }}</span>
               <span class="weak">从上往下依次自动拍摄；渲染完自动机审，灰区镜会送你批复</span>
@@ -290,7 +334,7 @@
             <div class="list">
               <div class="list-item row wrap v-shoot-q"
                 :class="{ 'v-shoot-q-run': String(j.status) === 'running', 'v-shoot-q-fail': String(j.status) === 'failed' }"
-                v-for="j in queueJobs" :key="jobId(j)">
+                v-for="j in queueJobsF" :key="jobId(j)">
                 <status-dot :status="j.status"></status-dot>
                 <span class="v-shoot-q-pos is-run" v-if="String(j.status) === 'running'">正在拍</span>
                 <span class="v-shoot-q-pos" v-else-if="['queued','pending'].indexOf(String(j.status)) >= 0">第 {{ queuePos(j) }} 位</span>
@@ -298,6 +342,7 @@
                 <span class="muted">{{ jobStateCn(j) }}</span>
                 <span class="muted" v-if="j.attempts > 0">（第 <b class="num">{{ j.attempts + 1 }}</b> 次尝试）</span>
                 <a v-if="jobTakeArt(j)" :href="jobTakeArt(j)" target="_blank" style="text-decoration:underline">▶ 看片</a>
+                <button class="btn btn-sm btn-ghost" v-if="j.prompt" @click="showPrompt(j, shotOf(j))">📋</button>
                 <span class="grow"></span>
                 <button class="btn btn-sm"
                   v-if="['queued','running'].indexOf(String(j.status)) >= 0"

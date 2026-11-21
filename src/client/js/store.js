@@ -19,6 +19,7 @@
     jobs: { list: null, loading: false, error: null, epId: null },
     review: { queue: null, pending: 0, loading: false, error: null },
     music: { library: null, loading: false, error: null },
+    templates: { list: null, loading: false, error: null },
     costs: { data: null, loading: false, error: null, epId: null },
     gpu: { data: null, loading: false, error: null },
     billing: { rows: null, total: 0, cents: 0, loading: false, error: null },
@@ -131,7 +132,11 @@
     if (card.ver != null) body.ver = card.ver;
     try {
       const r = await T.api.post("/cards/" + encodeURIComponent(card.id) + "/decide", body);
-      store.toast(action === "reject" ? "已重出一版（影子成本照常入账）" : action === "edit" ? "修改意见已带给制片组" : "已拍板，下游任务已派生");
+      if (r && r.job && r.job.__deduped) {
+        store.toast("同款任务已在跑或已生成（" + (r.job.id || "").slice(0, 14) + "…），未重复派——不用再点", "ok");
+      } else {
+        store.toast(action === "reject" ? "已重出一版（影子成本照常入账）" : action === "edit" ? "修改意见已带给制片组" : "已拍板，下游任务已派生");
+      }
       if (store.cards.epId) store.loadCards(store.cards.epId).catch(() => {});
       refreshStateSoon();
       return r;
@@ -362,6 +367,49 @@
       store.toast("新集已建，卡流开始进来了");
       refreshStateSoon();
       return r.episode || r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+
+  /* ---------------- 一句话成片 / 题材节拍模板（2026-11-21 补全） ---------------- */
+  /* 一站式直跑：自动建项目（可指定）→建集→派 LLM 剧本生成→进卡流看 C1 卡 */
+  store.quickstart = async function (spec) {
+    try {
+      const r = await T.api.post("/quickstart", spec);
+      store.toast("已开机：剧本组正在拆策划案，卡流马上进来");
+      refreshStateSoon();
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.loadTemplates = async function () {
+    store.templates.loading = true; store.templates.error = null;
+    try {
+      const r = await T.api.get("/templates");
+      store.templates.list = T.sanitizeDeep(r.templates || []);
+    } catch (e) { store.templates.error = e; }
+    finally { store.templates.loading = false; }
+    return store.templates.list;
+  };
+  store.saveTemplate = async function (t) {
+    try {
+      const r = await T.api.post("/admin/templates", t);
+      store.toast(t.id ? "模板已保存（v" + (r.template && r.template.ver) + "）" : "模板已新建");
+      store.loadTemplates().catch(() => {});
+      return r.template;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeTemplate = async function (id, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "删除模板（不可撤销）",
+        okLabel: "确认删除"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.post("/admin/templates/remove", { id, confirmed: !!confirmed });
+      store.toast("模板已删除");
+      store.loadTemplates().catch(() => {});
+      return r;
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
 

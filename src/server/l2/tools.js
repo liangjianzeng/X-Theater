@@ -306,7 +306,9 @@ async function execute(tool, args, ctx, session, auth, opts) {
         shoot_confirmed_ver: null,
         est: null
       };
-      const job = ctx.engine.enqueue("c1plan", { episodeId: ep.id, title: ep.title, brief: ep.brief, kind: "one_liner" }, { episodeId: ep.id, initiated_by: "user" });
+      // 2026-11-21 接通「对话一键成片」：派 scriptgen（LLM 结构化剧本）而非裸 c1plan——
+      // 与首页 /api/quickstart 同链；完成后 cards.js 直接产 C1 真剧本卡（LLM 离线落占位，fail-open）
+      const job = ctx.engine.enqueue("scriptgen", { episodeId: ep.id, title: ep.title, brief: ep.brief, kind: "one_liner", template: null }, { episodeId: ep.id, initiated_by: "user", free: true });
       st.episodes = st.episodes || {};
       st.episodes[ep.id] = ep;
       job_id = job ? job.id : null;

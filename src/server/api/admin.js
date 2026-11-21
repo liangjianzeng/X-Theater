@@ -41,7 +41,7 @@ function parseQuery(req) {
 }
 
 function register(router, ctx) {
-  const { store, util, bus } = ctx;
+  const { store, util, bus, cfg } = ctx;
 
   function audit(auth, action, target, extra) {
     const obj = { operator: (auth && (auth.uid || auth.id)) || null, action, target };
@@ -54,6 +54,32 @@ function register(router, ctx) {
     st.settings = st.settings || {};
     st.settings.registry = st.settings.registry || {};
     return st.settings.registry;
+  }
+
+  // 引擎→实际服务归属解析（与 dag/workers 的通道接线一致，映射住后端、前端零写死）：
+  //   img5060/vid5060 → cfg.comfy（＝ local 节点档案的渲染端点，getter 动态读）；
+  //   imgspark/vidspark → cfg.comfySpark（＝ dgx 节点档案）；
+  //   music/tts → cfg.music/tts.url 独立服务（可空＝未配置/stub）；其余 → 服务器进程内。
+  // 返回 serve＝workers 实际拨号的地址；node＝归属节点 id（不挂节点的服务为 null）。
+  function resolveServe(lane) {
+    const l = String(lane || "").toLowerCase();
+    if (l === "img5060" || l === "vid5060") return { node: "local", serve: String(cfg.comfy.base || "") };
+    if (l === "imgspark" || l === "vidspark") return { node: "dgx", serve: String(cfg.comfySpark.base || "") };
+    if (l === "music") return { node: null, serve: String((cfg.music && cfg.music.url) || "") };
+    if (l === "tts") return { node: null, serve: String((cfg.tts && cfg.tts.url) || "") };
+    return { node: null, serve: "in-proc" };
+  }
+
+  // 只读下发视图：附加 node/serve 字段；不回写 state（registry 是 quant 规则的裁决数据源）
+  function registryView() {
+    const reg = getRegistry();
+    const out = {};
+    Object.keys(reg).forEach((id) => {
+      const e = reg[id] || {};
+      const r = resolveServe(e.lane);
+      out[id] = Object.assign({}, e, { node: r.node, serve: r.serve });
+    });
+    return out;
   }
 
   // GET /api/admin/registry — 渲染字段 langlint 豁免（exempt:true，原样透出）
@@ -71,7 +97,7 @@ function register(router, ctx) {
           exempted = true;
         }
       }
-      return router.json(res, 200, { registry: getRegistry(), langlint_exempt: exempted });
+      return router.json(res, 200, { registry: registryView(), langlint_exempt: exempted });
     },
     { auth: true }
   );
@@ -85,7 +111,8 @@ function register(router, ctx) {
       const reg = getRegistry();
       const e = reg[params.engineId];
       if (!e) throw { code: "NOT_FOUND", message: "引擎不存在: " + params.engineId };
-      return router.json(res, 200, { engineId: params.engineId, entry: e });
+      const r = resolveServe(e.lane);
+      return router.json(res, 200, { engineId: params.engineId, entry: Object.assign({}, e, { node: r.node, serve: r.serve }) });
     },
     { auth: true }
   );
@@ -102,8 +129,15 @@ function register(router, ctx) {
       const epId = params.id;
       if (!(st.episodes || {})[epId]) throw { code: "NOT_FOUND", message: "剧集不存在: " + epId };
       const drop = (obj) => { Object.keys(obj || {}).forEach((k) => { if ((obj[k] || {}).episodeId === epId) delete obj[k]; }); };
-      drop(st.cards); drop(st.jobs); drop(st.scenes); drop(st.shots); drop(st.review_q); drop(st.alerts);
-      (st.music_library || []).forEach((m) => { if ((m || {}).episodeId === epId) m.episodeId = null; });
+      drop(st.cards); drop(st.scenes); drop(st.shots); drop(st.review_q); drop(st.alerts);
+      (st.music_lib || []).forEach((m) => { if ((m || {}).episodeId === epId) m.episodeId = null; });
+      // 活队列在引擎内存（不在 state）：排队中的任务随 purge 停掉；在跑的由 engine.stop 语义自然收尾
+      const engine = ctx.engine;
+      if (engine && typeof engine.listJobs === "function") {
+        (engine.listJobs({ episodeId: epId }) || []).forEach((j) => {
+          if (j.status === "queued") { try { engine.stop(j.id); } catch (e) { /* 已被调度则收尾时自行失败 */ } }
+        });
+      }
       delete st.episodes[epId];
       store.commit();
       audit(auth, "episode_purge", epId, { confirmed: true });
