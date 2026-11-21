@@ -18,7 +18,6 @@
  */
 const governance = require("./governance.js");
 
-const ALLOWED_ARG_KEYS = ["shot_id", "shot_no", "scene_id", "scene_no", "mood"];
 const MOODS = ["释然", "离别", "压抑", "温馨", "紧张", "悬疑", "欢快", "悲伤", "伤感", "治愈", "平静", "热烈"];
 
 function stateSummary(ctx, session) {
@@ -59,15 +58,33 @@ function systemPrompt(ctx, session, chips) {
     '- music_candidates {"scene_no":N,"mood":"中文情绪词"} 生成配乐候选（花钱，会出确认卡）',
     '- set_mood {"scene_no":N,"mood":"中文情绪词"} 设定场次情绪',
     "",
+    "全流程工具（都能直接代办）：",
+    '- query_cards {} 查本集创作卡（待拍板/已拍板）',
+    '- query_card {"card_id":"card_..."} 查单卡详情',
+    '- query_projects {} 查项目列表',
+    '- query_episodes {"project_id":"pj_..."} 查项目下的集',
+    '- query_scenes {} 查剧本分场分镜表（画面与台词）',
+    '- query_music {} 查配乐挂接与候选',
+    '- query_gpu {} 查本机 LLM/GPU 占用',
+    '- create_project {"title":"项目名","look":"写实电影感|柔光唯美|冷冽悬疑"} 新建项目（用户指定了影调就必须放进 look 参数）',
+    '- create_episode {"project_id":"pj_..." 或 "project_name":"项目名","title":"集标题","brief":"一句话故事"} 新建集（自动出 C1 故事卡）',
+    '- suggest_card {"card_id":"card_...","note":"修改意见"} 对 C1 出 AI 修改建议（只建议，不改）',
+    '- adopt_music {"candidate_id":"mus_...","scene_id":"sc_..."} 采用配乐候选',
+    '- revise_scenes {"episode_id":"ep_...","scenes":[完整新分场分镜表]} 修订剧本（改源头，会出确认卡；scenes 结构必须与 query_scenes 的一致，场数/镜数不变）',
+    '- decide_card {"card_id":"card_..." 或 "card_type":"C1","action":"accept|reject"} 拍板卡（card_id 见上下文「待拍板卡」清单；会出确认卡，用户确认后才执行）',
+    '- shoot_episode {"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）',
+    '- export_episode {"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）',
+    "",
     "上下文：",
     stateSummary(ctx, session),
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",
-    "1. 意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 键位只许 shot_no/shot_id/scene_no/scene_id/mood；用户说「第N镜」→ shot_no:N，「第N场」「场N」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。",
-    "2. 与工具无关的一般问题（问剧情、要建议、闲聊）→ {\"say\":\"...\"}：用制片人口吻基于上下文直接回答，120 字以内，不编造数据。",
-    "3. 危险/越权/导出成片之类不归助手办的 → {\"refusal\":\"一句话拒答并指路\"}。",
-    "4. 无法理解 → {\"say\":\"我可以帮你：查进度、问成本、重拍第N镜、择优、设情绪、出配乐候选。想做什么直接说。\"}",
+    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。",
+    "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
+    "3. 与工具无关的一般问题（问剧情、要创作建议、闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内。",
+    "4. 数据引用纪律（防幻觉）：镜头/任务状态必须逐字引用上下文里的标记——✓=已通过，⚠=待复审，无标记=还没拍；禁止把「未拍」说成「已就绪」，禁止编造成本/进度数字。所有 ID（card_id/project_id/shot_id 等）只能从上下文复制，绝不许编造——上下文没有就改用 card_type/project_name 等名称定位。",
+    "5. 完全剧场外且不该代办的事 → {\"refusal\":\"一句话拒答并指路\"}；无法理解 → {\"say\":\"我可以帮你：建项目建集、查进度成本、看卡拍板、改剧本、重拍镜头、择优、配乐、开机、导出。想做什么直接说。\"}",
     "只输出 JSON，不要解释。"
   ].join("\n");
 }
@@ -102,8 +119,24 @@ function resolveSceneNo(ctx, session, n) {
   return scenes[n - 1] ? scenes[n - 1].id : null;
 }
 
+/** 各工具允许的 args 键位（防幻觉注入：schema 外的键一律剥除，租户面由 governance 把关） */
+const TOOL_ARG_KEYS = {
+  default: ["shot_id", "shot_no", "scene_id", "scene_no", "mood"],
+  query_card: ["card_id"],
+  decide_card: ["card_id", "card_type", "action"],
+  suggest_card: ["card_id", "note"],
+  create_project: ["title", "look"],
+  create_episode: ["project_id", "project_name", "title", "brief"],
+  revise_scenes: ["episode_id", "scenes"],
+  adopt_music: ["candidate_id", "scene_id"],
+  shoot_episode: ["episode_id"],
+  export_episode: ["episode_id"],
+  query_episodes: ["project_id"]
+};
+const TEXT_KEYS = { title: 60, brief: 300, note: 300 };
+
 /** LLM 输出 → intent；非法/越界键位剥除（治理面之前的第一道清洗） */
-function toIntent(ctx, session, out, epId) {
+function toIntent(ctx, session, out, epId, text) {
   if (!out || typeof out !== "object") return null;
   if (typeof out.refusal === "string" && out.refusal.trim()) {
     return { refusal: String(out.refusal).trim().slice(0, 200), name: "llm_refusal" };
@@ -115,7 +148,7 @@ function toIntent(ctx, session, out, epId) {
   if (!tool || !governance.WHITELIST.some(function (t) { return t === tool; })) return null;
   const raw = out.args && typeof out.args === "object" ? out.args : {};
   const args = {};
-  ALLOWED_ARG_KEYS.forEach(function (k) {
+  (TOOL_ARG_KEYS[tool] || TOOL_ARG_KEYS.default).forEach(function (k) {
     const v = raw[k];
     if (v == null) return;
     if (k === "shot_no" || k === "scene_no") {
@@ -124,6 +157,13 @@ function toIntent(ctx, session, out, epId) {
     } else if (k === "mood") {
       const m = String(v).slice(0, 20);
       if (m) args[k] = m;
+    } else if (k === "action") {
+      if (v === "accept" || v === "reject") args[k] = v;
+    } else if (k === "scenes") {
+      if (Array.isArray(v) && v.length) args[k] = v;
+    } else if (TEXT_KEYS[k] != null) {
+      const t = String(v).trim().slice(0, TEXT_KEYS[k]);
+      if (t) args[k] = t;
     } else {
       const id = String(v).replace(/[^A-Za-z0-9_\-]/g, "");
       if (id) args[k] = id;
@@ -140,7 +180,26 @@ function toIntent(ctx, session, out, epId) {
     if (id) args.scene_id = id;
     delete args.scene_no;
   }
-  if (epId) args.episode_id = epId;
+  // create_episode：LLM 忘传项目定位时，用原文匹配项目名兜底（真实项目名出现在用户话里）
+  if (tool === "create_episode" && args.project_id == null && args.project_name == null) {
+    const st2 = ctx.store.get();
+    const hit = Object.keys(st2.projects || {}).map(function (k) { return st2.projects[k]; })
+      .filter(function (p) { return p.title && String(text || "").indexOf(p.title) >= 0; });
+    if (hit.length === 1) args.project_name = hit[0].title;
+  }
+  // card_id 幻觉清理（decide_card/suggest_card/query_card 通用）：state 无此 ID → 按类型/唯一 pending 补全
+  if (["decide_card", "suggest_card", "query_card"].indexOf(tool) >= 0 && args.card_id && !(ctx.store.get().cards || {})[args.card_id]) {
+    delete args.card_id;
+    const st3 = ctx.store.get();
+    const pend3 = Object.keys(st3.cards || {}).map(function (k) { return st3.cards[k]; })
+      .filter(function (c) { return c.status === "pending"; });
+    const wanted = args.card_type || (/C1/.test(String(text || "")) ? "C1" : null);
+    const hit = wanted ? pend3.filter(function (c) { return c.type === wanted; }) : pend3;
+    if (hit.length === 1) args.card_id = hit[0].id;
+    else if (pend3.length === 1) args.card_id = pend3[0].id;
+    if (tool === "decide_card" && !args.card_type && args.card_id) args.card_type = (ctx.store.get().cards || {})[args.card_id].type;
+  }
+  if (epId && args.episode_id == null) args.episode_id = epId; // 默认绑定本集（显式给的尊重 LLM/清洗结果）
   return { tool: tool, args: args };
 }
 
@@ -157,7 +216,7 @@ async function llmParse(text, chips, ctx, session) {
   if (!r.ok) return null;
   const out = extractJson(r.content);
   const epId = governance.defaultEpisodeId(ctx, session);
-  return toIntent(ctx, session, out, epId);
+  return toIntent(ctx, session, out, epId, text);
 }
 
 /** LLM 人话回执（成功后；失败 → 回退 replyFor 模板） */

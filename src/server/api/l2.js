@@ -65,9 +65,9 @@ module.exports.register = (router, ctx) => {
     router.json(res, 202, { accepted: true, session_id: params.id, tool_outcome: r && r.code ? { code: r.code, message: r.message } : null });
   }, { auth: true });
 
-  router.add("POST", "/api/l2/approvals/:id", (req, res, body, params, auth) => {
+  router.add("POST", "/api/l2/approvals/:id", async (req, res, body, params, auth) => {
     if (!ready()) return router.json(res, 503, { error: { code: "L2_UNAVAILABLE", message: "L2 runtime 未装配" } });
-    const r = ctx.l2.decideApproval(params.id, body || {}, normAuth(auth));
+    const r = await ctx.l2.decideApproval(params.id, body || {}, normAuth(auth));
     if (r && r.code) return router.json(res, httpOf(r), { error: { code: r.code, message: r.message }, events: r.events } );
     router.json(res, 200, r);
   }, { auth: true });

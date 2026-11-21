@@ -1191,6 +1191,8 @@ function refreshPendingC1(ctx, episodeId) {
 }
 module.exports.register = register;
 module.exports.refreshPendingC1 = refreshPendingC1;
+module.exports.advanceOnAccept = advanceOnAccept;
+module.exports.reEnqueueOnReject = reEnqueueOnReject;
 module.exports.upsertCard = upsertCard;
 module.exports.maybeFinishShoot = maybeFinishShoot;
 module.exports.handleJobDone = handleJobDone;

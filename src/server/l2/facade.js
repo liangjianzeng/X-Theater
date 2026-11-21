@@ -139,7 +139,7 @@ function createL2(ctx) {
   }
 
   /* ---------- 审批终裁（服务端裁决；ApprovalPanel 仅展示层） ---------- */
-  function decideApproval(id, decisionObj, auth) {
+  async function decideApproval(id, decisionObj, auth) {
     const found = findApproval(id);
     if (!found) return { code: "NOT_FOUND", message: "审批不存在" };
     const s = found.session;
@@ -232,7 +232,7 @@ function createL2(ctx) {
     const tcId = util.uid("tc");
     const trace = governance.newTrace(ctx, s, a.tool);
     pub({ type: "tool_call", sid: s.id, id: tcId, tool: a.tool, status: "queued", trace_id: trace });
-    const r = tools.execute(a.tool, a.args, ctx, s, auth || { id: s.uid }, {
+    const r = await tools.execute(a.tool, a.args, ctx, s, auth || { id: s.uid }, {
       budgetChecked: true,
       trace: trace // queued/running/done 事件与 agentrun 账本共用同一 trace_id（对账用）
     });

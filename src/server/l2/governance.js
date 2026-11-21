@@ -13,14 +13,31 @@
  * 零依赖 CommonJS；一切副作用只经注入的 ctx={store,bus,engine,rules,util,cfg}。
  */
 
-// ---- 白名单（theater-mcp 精调工具面；昂贵?:bool） ----
+// ---- 白名单（theater-mcp 精调工具面；昂贵?:bool）----
+// 2026-11-21 全流程扩容：助手从「6 个查询/重拍」扩到贯穿建项/建集/改剧本/拍板/开机/导出。
+// 纪律不变：昂贵动作（改剧本源头/拍板/开机/导出/生成类）必答门＝确认票；查询类零成本直通。
 const TOOLS = {
   query_progress: { expensive: false, desc: "查询拍摄进度与队列态" },
   query_cost: { expensive: false, desc: "查询本集成本与影子账" },
+  query_cards: { expensive: false, desc: "查询本集创作卡清单（待拍板/已拍板）" },
+  query_card: { expensive: false, desc: "查询单张卡的内容详情" },
+  query_projects: { expensive: false, desc: "查询项目列表" },
+  query_episodes: { expensive: false, desc: "查询项目下的剧集列表" },
+  query_scenes: { expensive: false, desc: "查询剧本分场分镜表（画面与台词）" },
+  query_music: { expensive: false, desc: "查询配乐挂接与候选状态" },
+  query_gpu: { expensive: false, desc: "查询本机 LLM/GPU 占用状态" },
+  create_project: { expensive: false, desc: "新建短剧项目（零成本，审计留痕）" },
+  create_episode: { expensive: false, desc: "在项目下新建集（触发故事策划卡）" },
+  suggest_card: { expensive: false, desc: "对 C1 卡出 AI 修改建议（只建议不落盘）" },
+  adopt_music: { expensive: false, desc: "采用某条配乐候选挂接到场次" },
   reroll_shot: { expensive: true, desc: "重拍指定镜头（花真金白银，必答门）" },
   pick_take: { expensive: false, desc: "为镜头选定最佳条" },
   music_candidates: { expensive: true, desc: "生成配乐候选（批量生成，必答门）" },
-  set_mood: { expensive: false, desc: "设定场次情绪基调" }
+  set_mood: { expensive: false, desc: "设定场次情绪基调" },
+  revise_scenes: { expensive: true, desc: "修订剧本分场分镜表（剧本源头变更，必答门）" },
+  decide_card: { expensive: true, desc: "拍板创作卡（accept/reject，用户确认票二次把关）" },
+  shoot_episode: { expensive: true, desc: "开机拍摄全镜头（大额影子成本，必答门）" },
+  export_episode: { expensive: true, desc: "导出成片（交付预检＋合成，必答门）" }
 };
 const WHITELIST = Object.keys(TOOLS);
 const APPROVAL_TTL_MS = 60 * 1000; // 契约 §5：TTL 60s
@@ -103,6 +120,15 @@ function estimate(tool, args, ctx) {
     }
     case "music_candidates":
       return { cents: 45, time_min: 2 }; // 3 条 × 影子 5–15 分/条，取保守上界
+    case "shoot_episode": {
+      // 开机＝全镜 video 影子成本粗估（对齐 episodes.estimateBreakdown 档位上界）
+      const epId = (args && args.episode_id) || "";
+      const shots = Object.keys(st.shots || {}).map(function (k) { return st.shots[k]; })
+        .filter(function (s) { return String(s.episodeId) === String(epId); }).length || 16;
+      return { cents: shots * 80 + 120, time_min: 24 };
+    }
+    case "export_episode":
+      return { cents: 20, time_min: 2 };
     default:
       return { cents: 1, time_min: 1 };
   }
@@ -168,6 +194,97 @@ function validateArgs(tool, args, session, ctx, auth) {
       if (!a.scene_id) return forbidden("缺少场次参数");
       if (typeof a.mood !== "string" || !a.mood.trim()) return forbidden("缺少情绪参数");
       if (!/^[一-龥A-Za-z0-9 ·、-]{1,12}$/.test(a.mood)) return forbidden("情绪参数非法");
+      break;
+    // —— 全流程扩容（2026-11-21）——
+    case "query_card":
+    case "decide_card":
+    case "suggest_card": {
+      let card = a.card_id ? st.cards[a.card_id] : null;
+      if (!card && a.card_type) {
+        const pend = Object.keys(st.cards || {}).map((k) => st.cards[k])
+          .filter((c) => c.status === "pending" && c.type === String(a.card_type));
+        if (pend.length === 1) card = pend[0];
+        else if (pend.length > 1) return forbidden("有多张 " + a.card_type + " 待拍板卡，请指明 card_id");
+      }
+      if (!card) {
+        const pend2 = Object.keys(st.cards || {}).map((k) => st.cards[k])
+          .filter((c) => c.status === "pending");
+        if (pend2.length === 1) card = pend2[0]; // 唯一在等的卡＝语境默认
+      }
+      if (!card) return forbidden("对象不存在或不可见：" + (a.card_id || a.card_type || "(空)"));
+      if (card.episodeId != null) {
+        const ep2 = st.episodes[card.episodeId];
+        if (!ep2 || !st.projects[ep2.projectId]) return forbidden("对象不存在或不可见：卡所属集");
+      }
+      if (tool === "decide_card") {
+        if (["accept", "reject"].indexOf(a.action) < 0) return forbidden("action 只许 accept|reject（改卡走剧本修订面）");
+        if (card.status !== "pending") return forbidden("卡片不是待拍板状态（" + card.status + "）");
+      }
+      if (tool === "suggest_card") {
+        if (card.type !== "C1") return forbidden("建议片一期只支持 C1");
+        if (typeof a.note !== "string" || !a.note.trim()) return forbidden("缺少修改意见");
+      }
+      break;
+    }
+    case "query_episodes":
+      if (a.project_id != null && !st.projects[a.project_id]) return forbidden("对象不存在或不可见：" + a.project_id);
+      break;
+    case "create_project": {
+      if (typeof a.title !== "string" || !a.title.trim()) return forbidden("缺少项目名称");
+      if (a.title.trim().length > 40) return forbidden("项目名称过长（≤40字）");
+      if (a.look != null && ["写实电影感", "柔光唯美", "冷冽悬疑"].indexOf(a.look) < 0) return forbidden("影调只支持：写实电影感/柔光唯美/冷冽悬疑");
+      break;
+    }
+    case "create_episode": {
+      if (a.project_name && !a.project_id) {
+        const hit = Object.keys(st.projects || {}).map((k) => st.projects[k])
+          .filter((p) => p.title === String(a.project_name).trim());
+        if (hit.length === 1) a.project_id = hit[0].id;
+        else if (hit.length > 1) return forbidden("项目名重名，请指明 project_id");
+        else return forbidden("项目不存在：" + a.project_name + "（可先让助手建项目）");
+      }
+      if (!a.project_id || !st.projects[a.project_id]) return forbidden("对象不存在或不可见：" + (a.project_id || "(空)"));
+      if (typeof a.title !== "string" || !a.title.trim()) return forbidden("缺少集标题");
+      if (a.title.trim().length > 60) return forbidden("集标题过长（≤60字）");
+      if (typeof a.brief !== "string" || !a.brief.trim()) return forbidden("缺少一句话故事");
+      if (a.brief.trim().length > 300) return forbidden("一句话故事过长（≤300字）");
+      break;
+    }
+    case "revise_scenes": {
+      if (!a.episode_id) return forbidden("缺少集参数");
+      const ep3 = st.episodes[a.episode_id];
+      if (!ep3 || !ep3.script) return forbidden("本集无剧本");
+      if ((ep3.stage || 1) >= 7) return forbidden("已开拍，场景表锁定");
+      if (!Array.isArray(a.scenes) || !a.scenes.length) return forbidden("缺少 scenes 数组");
+      const stScenes = Object.keys(st.scenes || {}).map(function (k) { return st.scenes[k]; })
+        .filter(function (x) { return x && x.episodeId === a.episode_id; }).length;
+      if (a.scenes.length !== stScenes) return forbidden("场景数须与镜库一致（" + stScenes + " 场）");
+      const roles = (ep3.script.cast || []).map(function (c) { return c.role; });
+      const okStruct = a.scenes.every(function (sc) {
+        if (!sc || !Array.isArray(sc.shots) || !sc.shots.length) return false;
+        return sc.shots.every(function (sh) {
+          if (!sh || typeof sh.desc !== "string" || !sh.desc.trim()) return false;
+          if (sh.dialogue != null && typeof sh.dialogue !== "string") return false;
+          if (sh.dialogue && String(sh.dialogue).length > 200) return false;
+          return (sh.cast || []).every(function (r) { return roles.indexOf(r) >= 0; });
+        });
+      });
+      if (!okStruct) return forbidden("scenes 结构非法：每镜须有画面描述，cast 只能用既有角色名");
+      break;
+    }
+    case "adopt_music": {
+      if (!a.candidate_id) return forbidden("缺少候选参数");
+      if (!a.scene_id) return forbidden("缺少场次参数");
+      const pend = st.music_pending || {};
+      const found = Object.keys(pend).some(function (eid) {
+        return (pend[eid] || []).some(function (c) { return c && c.id === a.candidate_id; });
+      });
+      if (!found) return forbidden("候选不存在或已过期（先让助手出配乐候选）");
+      break;
+    }
+    case "shoot_episode":
+    case "export_episode":
+      if (!a.episode_id) return forbidden("缺少集参数");
       break;
     default:
       break;

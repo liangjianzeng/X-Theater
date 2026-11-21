@@ -84,7 +84,17 @@ const REPLY = {
   music_pre: function (sceneName, mood, est) {
     return "给「" + sceneName + "」备 3 段「" + mood + "」气质的配乐候选，预计 " + est.cents + " 分。确认卡已发出，批准后我就安排生成。";
     },
-  need_shot_no: "要重拍或择优的话，说清是第几镜，比如「重拍第3镜」。"
+  need_shot_no: "要重拍或择优的话，说清是第几镜，比如「重拍第3镜」。",
+  expensive_pre: function (tool, args, est) {
+    if (tool === "decide_card") {
+      const t = String(args.card_type || "卡");
+      return "你要「" + (args.action === "accept" ? "通过" : "重出") + "」" + t + "卡。这一步会推进制作流程，确认卡已发出，请在确认面板批准后我才执行。";
+    }
+    if (tool === "shoot_episode") return "开机拍摄整集，预计 " + est.cents + " 分。这是最大的一笔开销，确认卡已发出——请核对预算后批准。";
+    if (tool === "export_episode") return "导出成片（含交付预检），预计 " + est.cents + " 分。确认卡已发出，批准后我就点火合成。";
+    if (tool === "revise_scenes") return "修订剧本分场分镜表（" + ((args.scenes || []).length) + " 场），C1 卡会重导出重审。确认卡已发出，批准后生效。";
+    return "这步动作需要确认，确认卡已发出，请在确认面板批准后执行。";
+  }
 };
 
 /**
@@ -172,7 +182,7 @@ async function runTurn(opts) {
     const trace = governance.newTrace(ctx, session, "gate");
     stream.tool({ id: tcId, tool: tool, status: "queued", trace_id: trace });
     stream.tool({ id: tcId, tool: tool, status: "failed", code: gate.code, trace_id: trace });
-    await say(gate.code === "FORBIDDEN" ? REPLY.forbidden : REPLY.failed);
+    await say(gate.code === "FORBIDDEN" ? (gate.message || REPLY.forbidden) : REPLY.failed); // 治理文案更具体（人话）
     return { ok: false, code: gate.code, events: events, trace_id: trace };
   }
 
@@ -188,9 +198,11 @@ async function runTurn(opts) {
     if (tool === "reroll_shot") {
       const shot = st.shots[args.shot_id] || {};
       await say(REPLY.reroll_pre(shot.name || args.shot_id, est));
-    } else {
+        } else if (tool === "music_candidates") {
       const scene = st.scenes[args.scene_id] || {};
       await say(REPLY.music_pre(scene.name || args.scene_id, args.mood || scene.mood || "释然", est));
+    } else {
+      await say(REPLY.expensive_pre(tool, args, est));
     }
     publish({ type: "approval_request", sid: session.id, approval: approval });
     // 前端契约事件（扁平）：approval_new
@@ -204,7 +216,7 @@ async function runTurn(opts) {
   stream.tool({ id: tcId, tool: tool, status: "queued", trace_id: trace });
   await sleep(50);
   stream.tool({ id: tcId, tool: tool, status: "running", trace_id: trace });
-  const r = tools.execute(tool, args, ctx, session, auth, { trace: trace });
+  const r = await tools.execute(tool, args, ctx, session, auth, { trace: trace }); // execute 已 async（全流程工具含 LLM 建议片）
   stream.tool({
     id: tcId, tool: tool,
     status: r.ok ? "done" : "failed",
@@ -212,7 +224,7 @@ async function runTurn(opts) {
     code: r.code
   });
   {
-    const fallback = r.ok ? replyFor(tool, args, r, ctx, session) : (r.code === "FORBIDDEN" ? REPLY.forbidden : REPLY.failed);
+    const fallback = r.ok ? replyFor(tool, args, r, ctx, session) : (r.code === "FORBIDDEN" ? (r.message || REPLY.forbidden) : (r.code === "GPU_BUSY" ? "这一步没生效：下游生图/拍摄要独占 GPU，而本机 LLM 正在线——点左下角 GPU 徽章「停止 LLM 让路」后，再让我执行一次。" : REPLY.failed));
     let rep = fallback;
     if (r.ok && ctx.llm && typeof ctx.llm.chat === "function" && ctx.llm.enabled()) {
       try { rep = await require("./llmintent.js").llmReply(tool, args, r, ctx, session, fallback); } catch (e) { rep = fallback; }

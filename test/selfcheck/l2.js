@@ -220,7 +220,7 @@ async function main() {
       typeof apv.hash === "string" && typeof apv.ver === "number" &&
       Math.abs(apv.ttl_until - apv.created_at - 60000) <= 5 && typeof apv.token === "string",
       "mode " + mode + "：确认票 {hash,ver,est,ttl 60s,token}");
-    let d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    let d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(d.ok && d.result.job_id, "mode " + mode + "：approve→执行成功");
     const vjob = env.jobs.find((j) => j.type === "video");
     ok(vjob && vjob.payload.shotId === "sh3" && vjob.opts.episodeId === "e1" && vjob.opts.initiated_by === "user", "mode " + mode + "：engine.enqueue(video,{shotId},{episodeId,initiated_by:user})");
@@ -246,7 +246,7 @@ async function main() {
     r = await l2.postMessage(s.id, { text: "给场1出配乐候选", ctx: [] }, AUTH);
     const apv2 = s.approvals.find((a) => a.id === r.approval_id);
     ok(r.ok && r.needs_approval && apv2.tool === "music_candidates" && apv2.est.cents === 45, "mode " + mode + "：配乐候选→确认票（est 45 分）");
-    d = l2.decideApproval(apv2.id, { decision: "approve", ver: apv2.ver }, AUTH);
+    d = await l2.decideApproval(apv2.id, { decision: "approve", ver: apv2.ver }, AUTH);
     const mjob = env.jobs.find((j) => j.type === "music");
     ok(d.ok && mjob && mjob.payload.sceneId === "sc1" && mjob.payload.mood === "压抑", "mode " + mode + "：approve→music job（沿用已改情绪）");
     ok(s.tasks.some((t) => t.label.indexOf("配乐候选") >= 0), "mode " + mode + "：配乐 task 上任务视图");
@@ -274,18 +274,18 @@ async function main() {
     const cs = l2.createSession(AUTH, "B");
     const s = cs.session;
     section("红队②：昂贵动作绕过审批直发");
-    let r = tools.execute("reroll_shot", { episode_id: "e1", shot_id: "sh1" }, env.ctx, s, AUTH);
+    let r = await tools.execute("reroll_shot", { episode_id: "e1", shot_id: "sh1" }, env.ctx, s, AUTH);
     ok(!r.ok && r.code === "CONFIRM_REQ", "无票 reroll_shot → CONFIRM_REQ");
     ok(env.jobs.length === 0, "CONFIRM_REQ 时 engine 零入队（agent 无权自主点火）");
-    r = tools.execute("music_candidates", { episode_id: "e1", scene_id: "sc1", mood: "释然" }, env.ctx, s, AUTH);
+    r = await tools.execute("music_candidates", { episode_id: "e1", scene_id: "sc1", mood: "释然" }, env.ctx, s, AUTH);
     ok(!r.ok && r.code === "CONFIRM_REQ", "无票 music_candidates → CONFIRM_REQ");
     ok(agentRows(env, s.id).some((rw) => rw.code === "CONFIRM_REQ"), "CONFIRM_REQ 落 agentrun 证据");
     // 用过的一票不可复现：正常走完一票后再直接 execute 同参数 → CONFIRM_REQ
     const pr = await l2.postMessage(s.id, { text: "重拍第 1 镜", ctx: [] }, AUTH);
     const apv = s.approvals.find((a) => a.id === pr.approval_id);
-    const d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    const d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(d.ok && apv.status === "executed", "确认后一票置 executed（消费）");
-    r = tools.execute("reroll_shot", { episode_id: "e1", shot_id: "sh1" }, env.ctx, s, AUTH);
+    r = await tools.execute("reroll_shot", { episode_id: "e1", shot_id: "sh1" }, env.ctx, s, AUTH);
     ok(!r.ok && r.code === "CONFIRM_REQ", "已消费票不可复用 → 再次直执 CONFIRM_REQ");
   }
 
@@ -338,14 +338,14 @@ async function main() {
     } else {
       ok(r.code === "FORBIDDEN", "facade 级跨会话探测直接拒（无事件数据出口）");
     }
-    r = tools.execute("query_cost", { episode_id: "e_ghost" }, env.ctx, sA, AUTH);
+    r = await tools.execute("query_cost", { episode_id: "e_ghost" }, env.ctx, sA, AUTH);
     ok(!r.ok && r.code === "FORBIDDEN", "不存在 episode → FORBIDDEN（不可见即拒）");
-    r = tools.execute("query_progress", { episode_id: "e1", uid: "u2" }, env.ctx, sA, AUTH);
+    r = await tools.execute("query_progress", { episode_id: "e1", uid: "u2" }, env.ctx, sA, AUTH);
     ok(!r.ok && r.code === "FORBIDDEN", "args 带他人 uid → FORBIDDEN");
     r = await l2.postMessage(sA.id, { text: "现在进度怎么样？", ctx: [] }, { id: "u2" });
     ok(r.code === "FORBIDDEN", "他人 token 发消息到他会话 → FORBIDDEN");
     const found = l2.getSession(sB.id);
-    const d = l2.decideApproval("apv_missing", { decision: "approve", ver: 1 }, AUTH);
+    const d = await l2.decideApproval("apv_missing", { decision: "approve", ver: 1 }, AUTH);
     ok(d.code === "NOT_FOUND", "审批不存在 → NOT_FOUND");
     void found;
     ok(agentRows(env, sA.id).some((rw) => rw.status === "denied_tenant" || rw.code === "FORBIDDEN"), "跨租户被拒落 agentrun");
@@ -370,7 +370,7 @@ async function main() {
     r = await l2.postMessage(s2.id, { text: "重拍第 3 镜", ctx: [] }, AUTH);
     const apv = s2.approvals.find((a) => a.id === r.approval_id);
     s2.used_cents = 7990; // 模拟并发动用（客户端谎报 used=0 也没用，水位以服务端为准）
-    const d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    const d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(!d.ok && d.code === "BUDGET", "approve 后执行前再核 → BUDGET（谎报无效）");
     ok(apv.status === "budget_blocked" && env.jobs.length === 0, "预算闸口不 enqueue");
     ok(env.state.alerts.filter((a) => a.kind === "l2_budget").length >= 2, "两次越线两次告警");
@@ -388,41 +388,41 @@ async function main() {
     }
     // ver CAS
     let { s, apv } = await newApproval();
-    let d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver + 7 }, AUTH);
+    let d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver + 7 }, AUTH);
     ok(!d.ok && d.code === "STALE", "ver 不匹配 → STALE（上下文已变）");
     ok(apv.status === "pending", "STALE 不消费票");
     // TTL
     ({ s, apv } = await newApproval());
     apv.ttl_until = util.now() - 100;
-    d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(!d.ok && d.code === "STALE" && apv.status === "expired", "TTL 60s 过期 → STALE+expired");
     // hash 篡改
     ({ s, apv } = await newApproval());
     apv.hash = "deadbeef0000";
-    d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(!d.ok && d.code === "STALE", "hash 篡改 → STALE");
     // 令牌篡改
     ({ s, apv } = await newApproval());
     apv.token = apv.token.slice(0, -2) + (apv.token.slice(-2) === "aa" ? "bb" : "aa");
-    d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(!d.ok && d.code === "STALE", "令牌签名失效 → STALE");
     // reject 留痕
     ({ s, apv } = await newApproval());
-    d = l2.decideApproval(apv.id, { decision: "reject", ver: apv.ver, reason: "成本太高" }, AUTH);
+    d = await l2.decideApproval(apv.id, { decision: "reject", ver: apv.ver, reason: "成本太高" }, AUTH);
     ok(d.ok && apv.status === "rejected", "reject → status rejected");
     ok(env.rows.some((rw) => rw.kind === "audit" && rw.action === "l2_approval_reject" && rw.reason === "成本太高"), "reject 落 audit 留痕");
     ok(env.jobs.length === 0, "reject 不 enqueue");
     // 一票一次：approve 成功后再 decide → STALE
     ({ s, apv } = await newApproval());
-    d = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    d = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(d.ok, "正常 approve 通过");
-    const d2 = l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
+    const d2 = await l2.decideApproval(apv.id, { decision: "approve", ver: apv.ver }, AUTH);
     ok(!d2.ok && d2.code === "STALE", "已消费票再 decide → STALE（一票一次）");
     // 跨用户 decide
     const sOther = l2.createSession({ id: "u2", name: "他人", role: "creator" }, "B").session;
     const r2 = await l2.postMessage(sOther.id, { text: "重拍第 1 镜", ctx: [] }, { id: "u2" });
     const apvOther = sOther.approvals.find((a) => a.id === r2.approval_id);
-    d = l2.decideApproval(apvOther.id, { decision: "approve", ver: apvOther.ver }, AUTH);
+    d = await l2.decideApproval(apvOther.id, { decision: "approve", ver: apvOther.ver }, AUTH);
     ok(d.code === "FORBIDDEN", "他人审批他人票 → FORBIDDEN（租户闸）");
   }
 
@@ -444,12 +444,14 @@ async function main() {
     const badPost = await l2.postMessage("nope", { text: "hi", ctx: [] }, AUTH);
     ok(badPost.code === "NOT_FOUND", "postMessage 缺会话 → NOT_FOUND");
     // 白名单完整性
-    ok(JSON.stringify(Object.keys(governance.TOOLS).sort()) ===
-      JSON.stringify(["music_candidates", "pick_take", "query_cost", "query_progress", "reroll_shot", "set_mood"]),
-      "TOOLS 白名单＝6 工具");
+    ok(Object.keys(governance.TOOLS).length === 21,
+      "TOOLS 白名单＝21 工具");
     ok(governance.TOOLS.reroll_shot.expensive && governance.TOOLS.music_candidates.expensive &&
-      !governance.TOOLS.query_progress.expensive && !governance.TOOLS.pick_take.expensive,
-      "昂贵标记：reroll/music=true，查询/择优=false");
+      governance.TOOLS.decide_card.expensive && governance.TOOLS.shoot_episode.expensive &&
+      governance.TOOLS.export_episode.expensive && governance.TOOLS.revise_scenes.expensive &&
+      !governance.TOOLS.query_progress.expensive && !governance.TOOLS.pick_take.expensive &&
+      !governance.TOOLS.create_project.expensive && !governance.TOOLS.adopt_music.expensive,
+      "昂贵标记：reroll/music/拍板/开机/导出/改剧本=true，查询/择优/建项/采纳=false");
   }
 
   /* ---------- [8] 模式 A spawn 红线＋确定性 ---------- */
