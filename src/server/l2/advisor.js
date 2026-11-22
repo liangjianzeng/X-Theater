@@ -104,12 +104,27 @@ function buildCard(tool, args, r, ctx, session) {
         const nid = (args && args.episode_id) || res.episode_id || null;
         return nid ? { kind: "choices", options: [{ label: "去卡流页跟进", href: flowHref(nid) }] } : null;
       }
-      case "suggest_card":
+      case "suggest_card": {
+        /* 修改链（2026-11-22 对齐场景物化设计）：待拍板 C1 的建议采纳走 apply_suggestion
+           （建议落卡→重派 AI 审→仍待拍板）；场景物化后（C1 已 accept）才走 revise_scenes 面。
+           卡状态从结果里判断：result.status=pending → 采纳腿；否则引导卡流页。 */
+        const isPending = !res.status || res.status === "pending";
+        return {
+          kind: "choices",
+          options: (isPending ? [
+            { label: "采纳建议进卡", hint: "落进待拍板卡，仍由你拍板", send: "采纳建议" },
+            { label: "去卡流页看建议详情", href: flowHref(epId) }
+          ] : [
+            { label: "去卡流页看建议详情", href: flowHref(epId) }
+          ])
+        };
+      }
+      case "apply_suggestion":
         return {
           kind: "choices",
           options: [
-            { label: "去卡流页看建议详情", href: flowHref(epId) },
-            { label: "按建议改剧本", hint: "会出确认票", send: "按建议修订剧本" }
+            { label: "去卡流页核对拍板", hint: "建议已落卡，等你拍板", href: flowHref(epId) },
+            { label: "对这版还不满意", send: "重出一版故事方向" }
           ]
         };
       default:

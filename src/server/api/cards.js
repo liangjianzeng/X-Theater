@@ -1432,3 +1432,4 @@ module.exports.maybeFinishShoot = maybeFinishShoot;
 module.exports.handleJobDone = handleJobDone;
 module.exports.attachJobDoneListener = attachJobDoneListener;
 module.exports.synthesizeMusicCandidates = synthesizeMusicCandidates;
+module.exports.enqueueAiReview = enqueueAiReview; // L2 apply_suggestion 采纳后重派 AI 审（2026-11-22）

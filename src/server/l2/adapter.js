@@ -340,6 +340,10 @@ function replyFor(tool, args, r, ctx, session) {
         ? "现在有 " + ps.length + " 个项目：" + ps.map(p => "《" + (p.title || p.id) + "》").join("、") + "。想深入哪部，直接报名字；要开新剧也行。"
         : "还没有项目——回复个剧名，我给你从建项开始走。";
     }
+    case "apply_suggestion": {
+      const res = r.result || {};
+      return "修改建议已经落进待拍板的" + (res.type === "C1" ? "故事方向卡" : "卡") + "（" + (res.scenes || 0) + " 场分镜按建议更新），AI 审查正在重跑。这张卡仍等你拍板——选项卡里去卡流页核对。";
+    }
     default:
       void st; void session;
       return "办好了。";

@@ -76,6 +76,7 @@ function systemPrompt(ctx, session, chips) {
     '- adopt_music {"candidate_id":"mus_...","scene_id":"sc_..."} 采用配乐候选',
     '- revise_scenes {"episode_id":"ep_...","scenes":[完整新分场分镜表]} 修订剧本（改源头，会出确认卡；scenes 结构必须与 query_scenes 的一致，场数/镜数不变）',
     '- decide_card {"card_id":"card_..." 或 "card_type":"C1","action":"accept|reject"} 拍板卡（card_id 见上下文「待拍板卡」清单；会出确认卡，用户确认后才执行）',
+    '- apply_suggestion {"card_id":"card_..."} 把已出的修改建议落进待拍板 C1 卡（先 suggest_card 出过建议；采纳后仍由用户拍板）',
     '- shoot_episode {"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）',
     '- export_episode {"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）',
     '- search_assets {"domain":"music|images|characters|scenes","q":"关键词"} 检索素材中心资产库（只读）',
@@ -89,7 +90,7 @@ function systemPrompt(ctx, session, chips) {
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",
-    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
+    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「采纳建议/就用建议这版」＝apply_suggestion；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
     "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
     "3. 与工具无关的一般问题（问剧情、要创作建议、闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内。",
     "4. 数据引用纪律（防幻觉）：镜头/任务状态必须逐字引用上下文里的标记——✓=已通过，⚠=待复审，无标记=还没拍；禁止把「未拍」说成「已就绪」，禁止编造成本/进度数字。所有 ID（card_id/project_id/shot_id 等）只能从上下文复制，绝不许编造——上下文没有就改用 card_type/project_name 等名称定位。",
@@ -133,6 +134,7 @@ const TOOL_ARG_KEYS = {
   default: ["shot_id", "shot_no", "scene_id", "scene_no", "mood"],
   query_card: ["card_id"],
   decide_card: ["card_id", "card_type", "action"],
+  apply_suggestion: ["card_id"],
   suggest_card: ["card_id", "note"],
   create_project: ["title", "look"],
   create_episode: ["project_id", "project_name", "title", "brief"],
@@ -207,8 +209,8 @@ function toIntent(ctx, session, out, epId, text) {
       args.project_name = session.lastProject.title;
     }
   }
-  // card_id 幻觉清理（decide_card/suggest_card/query_card 通用）：state 无此 ID → 按类型/唯一 pending 补全
-  if (["decide_card", "suggest_card", "query_card"].indexOf(tool) >= 0 && args.card_id && !(ctx.store.get().cards || {})[args.card_id]) {
+  // card_id 幻觉清理（decide_card/suggest_card/query_card/apply_suggestion 通用）：state 无此 ID → 按类型/唯一 pending 补全
+  if (["decide_card", "suggest_card", "query_card", "apply_suggestion"].indexOf(tool) >= 0 && args.card_id && !(ctx.store.get().cards || {})[args.card_id]) {
     delete args.card_id;
     const st3 = ctx.store.get();
     const pend3 = Object.keys(st3.cards || {}).map(function (k) { return st3.cards[k]; })
@@ -246,7 +248,8 @@ const TOOL_ADVICE = {
   query_cost: "对照预算判断余量，花得多就点出花在哪。",
   query_gpu: "解释谁占着谁，给解锁选项（运维台切 DGX／停 LLM 让路），助手绝不代停。",
   query_scenes: "点出最薄弱的一场，给一句改进方向。",
-  query_music: "说清哪些场还没挂音轨。"
+  query_music: "说清哪些场还没挂音轨。",
+  apply_suggestion: "说明建议落在卡上哪些地方（场次/镜头数变化），强调拍板权仍在用户。"
 };
 
 /** LLM 人话回执（成功后；失败 → 回退 replyFor 模板）

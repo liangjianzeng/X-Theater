@@ -527,6 +527,17 @@ async function main() {
     ok(!!ie && ie.tool === "create_episode" && ie.args.project_name === "链路测试", "链式语境：建集无项目参数 → lastProject 兜底");
     const ie2 = llmi.toIntent(env3.ctx, sessChain, { say: "已建好，ID是 pj_ab12cd34ef56，编号 ep_ef56ab12cd34 可跟进。" }, ep3.id, "x");
     ok(!!ie2 && ie2.say && ie2.say.indexOf("pj_ab12cd34ef56") < 0 && ie2.say.indexOf("ep_ef56ab12cd34") < 0, "ID 机械兜底：直答文本剥除编号");
+    /* 修改链采纳腿：apply_suggestion 闸（无建议→拒；有建议→过；廉价不入确认票） */
+    ok(governance.WHITELIST.some(function (t) { return t === "apply_suggestion"; }), "apply_suggestion 进白名单");
+    ok(!governance.isExpensive("apply_suggestion"), "apply_suggestion 廉价（不进确认票面）");
+    st3c.cards["card_test_pending"].status = "pending";
+    const g1 = governance.validateArgs("apply_suggestion", { card_id: "card_test_pending" }, { uid: "u1", id: "s1", ctx: [] }, env3.ctx, { id: "u1" });
+    ok(g1 && g1.code === "FORBIDDEN" && String(g1.message).indexOf("卡上还没有建议") >= 0, "采纳闸：无建议 → 指路先出建议");
+    st3c.cards["card_test_pending"].payload = Object.assign({}, st3c.cards["card_test_pending"].payload, {
+      suggest: { reply: "扩场1", scenes: [{ name: "场1", shots: [{ desc: "x" }] }] }
+    });
+    const g2 = governance.validateArgs("apply_suggestion", { card_id: "card_test_pending" }, { uid: "u1", id: "s1", ctx: [] }, env3.ctx, { id: "u1" });
+    ok(!g2, "采纳闸：有建议且待拍板 → 放行");
   }
 
   /* ---------- 汇总 ---------- */

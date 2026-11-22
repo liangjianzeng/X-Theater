@@ -202,7 +202,7 @@ ask 卡是长任务链的钩子。已通链路：
 | **顾问话术（replyFor/llmReply 三段式）** | ✅ | adapter.js·llmintent.js TOOL_ADVICE | 现状/评估/推荐，用户面不露 ID（真机验证） |
 | query_cards 富化（label/summary/依赖链） | ✅ | tools.js·governance cardDigest | 卡摘要入回执与选项 hint |
 | 顾问卡回归用例 | ✅ | test/selfcheck/l2.js | advisor 形状＋清洗面（javascript:/越权键位/无动作选项） |
-| 三条任务链真机验证 | ✅ | 建剧链（建项→ask 梗概→建集→卡流页跟进）✓；拍板链（重出一版→确认票→审批面板→tab 切换）✓；修改链建议腿✓、采纳腿❌ | 采纳腿缺口：L2 revise_scenes 闸要求 st.scenes 已落库，C1 待拍板期场景数=0 → 与卡流页 /script-scenes 采纳通路对齐（P1 剩余） |
+| 三条任务链真机验证 | ✅ | 建剧链（建项→ask 梗概→建集→卡流页跟进）✓；拍板链（重出一版→确认票→审批面板→tab 切换）✓；修改链✓全通（建议→落卡→采纳→仍待拍板） | 采纳腿设计：场景物化在 C1 accept 时，待拍板期不走 revise_scenes——新增廉价工具 apply_suggestion（建议落进卡 payload，ver++＋重派 AI 审，拍板权仍在人）；草稿期建议允许增删场次（逐场结构校验） |
 | 链式语境 lastProject | ✅ | adapter 记录＋llmintent toIntent 三级兜底 | 「建完项目答梗概就建集」ask 链承接（selfcheck 覆盖） |
 | ID 机械剥除 | ✅ | llmintent llmReply/toIntent say | 真机发现模型不守「不露编号」纪律 → 清洗层兜底（selfcheck 覆盖） |
 | L2 建项/建集租户戳 | ✅ | tools.js create_project/create_episode | 真机发现漏 tenantId＝scopedView 全域隐形（集建成不可见）→ 与 api 路由同口径 |

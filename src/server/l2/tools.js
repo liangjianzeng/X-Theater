@@ -381,6 +381,26 @@ async function execute(tool, args, ctx, session, auth, opts) {
       }
       break;
     }
+    case "apply_suggestion": {
+      /* 修改链采纳腿（2026-11-22）：待拍板 C1 的建议落盘——场景物化在 C1 accept 时（ensureScenesAndShots），
+         故待拍板期不走 revise_scenes；建议直接写进卡 payload（ver++＋重派 AI 审），拍板权仍在人。 */
+      const cardAs = st.cards[args.card_id];
+      const sug = cardAs.payload && cardAs.payload.suggest;
+      if (!sug || !Array.isArray(sug.scenes) || !sug.scenes.length) {
+        return fail(ctx, session, tool, "NOT_READY", "卡上没有可采纳的建议（先出修改建议）", trace);
+      }
+      cardAs.payload = Object.assign({}, cardAs.payload, {
+        scenes: sug.scenes,
+        suggest: Object.assign({}, sug, { applied_at: util.now() })
+      });
+      cardAs.ver += 1;
+      cardAs.updated_at = util.now();
+      try { if (cardsMod.enqueueAiReview) cardsMod.enqueueAiReview(ctx, cardAs); } catch (e2) { /* 重审失败不阻断 */ }
+      try { ctx.bus.publish("cards", { event: "updated", card: cardAs }); } catch (e3) {}
+      ctx.store.log("audit", { operator: (auth && auth.id) || session.uid, action: "l2_apply_suggestion", audit_id: util.uid("AUD"), reason: cardAs.id + "：建议采纳（拍板权仍在人）" });
+      result = { card_id: cardAs.id, type: cardAs.type, scenes: sug.scenes.length, status: cardAs.status };
+      break;
+    }
     case "adopt_music": {
       const r = musicMod.adoptCandidate(ctx, args.candidate_id, args.scene_id);
       result = { candidate_id: args.candidate_id, scene_id: args.scene_id, adopted: !!(r && r.entry) };
@@ -391,7 +411,7 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const p = card.payload || {};
       const sys = [
         "你是剧场 Studio 的剧本策划顾问。依据修改意见修订分场分镜表，输出 JSON。",
-        "硬约束：scenes 数组长度必须与输入一致；每场 shots 长度必须与输入一致；只改 name/mood/desc/dialogue/sec 的内容，不改结构；台词 ≤40 字；sec 取 3–15 整数；cast 只能用输入里出现的角色名。",
+        "约束：可增删场次（结构还没物化，草稿期允许改结构）；每场 1–6 镜；台词 ≤40 字；sec 取 3–15 整数；cast 只能用输入里出现的角色名；保持整体叙事连贯。",
         '只输出：{"reply":"给制片人的一句话说明（≤120字）","scenes":[…完整新数组…]}'
       ].join("\n");
       const usr = "当前卡内容：" + JSON.stringify({ summary: p.summary, cast: p.cast, scenes: p.scenes }).slice(0, 4000) + "\n修改意见：" + String(args.note).slice(0, 300);
@@ -403,15 +423,36 @@ async function execute(tool, args, ctx, session, auth, opts) {
         try {
           const j = JSON.parse(m[0]);
           reply = String(j.reply || "").slice(0, 200);
-          if (Array.isArray(j.scenes) && Array.isArray(p.scenes) && j.scenes.length === p.scenes.length) {
-            const castRoles = (p.cast || []).map((c) => c.role);
-            const ok = j.scenes.every((sc, i) => Array.isArray(sc.shots) && sc.shots.length === (p.scenes[i].shots || []).length);
-            if (ok) scenes = j.scenes;
+          /* 结构校验放宽（2026-11-22）：草稿期允许增删场次，逐场校验形状并归一化字段
+             （与 /script-scenes 同口径的截断），不再强求与卡上 scenes 数量 1:1。 */
+          const castRoles = (p.cast || []).map((c) => c.role);
+          const ok = Array.isArray(j.scenes) && j.scenes.length >= 1 && j.scenes.length <= 8 &&
+            j.scenes.every((sc) => sc && typeof sc.name === "string" && Array.isArray(sc.shots) &&
+              sc.shots.length >= 1 && sc.shots.length <= 6 &&
+              sc.shots.every((sh) => sh && typeof sh.desc === "string" && sh.desc.trim().length > 0));
+          if (ok) {
+            scenes = j.scenes.map((sc) => ({
+              name: String(sc.name || "场").slice(0, 40),
+              mood: String(sc.mood || "中性").slice(0, 20),
+              shots: sc.shots.map((sh) => ({
+                desc: String(sh.desc || "").slice(0, 300),
+                sec: Number(sh.sec) > 0 ? Math.min(15, Math.round(Number(sh.sec))) : 5,
+                cast: (Array.isArray(sh.cast) ? sh.cast.map(String) : []).filter((r) => castRoles.indexOf(r) >= 0),
+                dialogue: String(sh.dialogue || "").slice(0, 200)
+              }))
+            }));
           }
         } catch (e3) { /* 解析失败 → scenes=null */ }
       }
       if (!reply && !scenes) return fail(ctx, session, tool, "NOT_READY", "LLM 输出无法解析，请换个说法再试", trace);
-      result = { card_id: card.id, reply: reply || "已按意见修订（见分镜表）", scenes: scenes };
+      /* 建议落卡（2026-11-22 修改链采纳腿）：出建议只挂 payload.suggest 不 ver++（草稿），
+         apply_suggestion 采纳时才 scenes 落盘＋ver++＋重派 AI 审——拍板权全程在人。 */
+      card.payload = Object.assign({}, card.payload, {
+        suggest: { reply: reply || "", scenes: scenes || null, note: String(args.note || "").slice(0, 300), at: util.now() }
+      });
+      card.updated_at = util.now();
+      try { ctx.bus.publish("cards", { event: "updated", card: card }); } catch (e4) {}
+      result = { card_id: card.id, reply: reply || "已按意见修订（见分镜表）", scenes: scenes, saved: !!scenes, status: card.status };
       break;
     }
     case "shoot_episode": {

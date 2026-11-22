@@ -29,6 +29,7 @@ const TOOLS = {
   create_project: { expensive: false, desc: "新建短剧项目（零成本，审计留痕）" },
   create_episode: { expensive: false, desc: "在项目下新建集（LLM 自动生成结构化剧本＋故事方向卡）" },
   suggest_card: { expensive: false, desc: "对 C1 卡出 AI 修改建议（只建议不落盘）" },
+  apply_suggestion: { expensive: false, desc: "把已出的修改建议落进待拍板 C1 卡（ver++＋重派 AI 审，拍板权仍在人）" },
   adopt_music: { expensive: false, desc: "采用某条配乐候选挂接到场次" },
   reroll_shot: { expensive: true, desc: "重拍指定镜头（花真金白银，必答门）" },
   pick_take: { expensive: false, desc: "为镜头选定最佳条" },
@@ -198,7 +199,8 @@ function validateArgs(tool, args, session, ctx, auth) {
     // —— 全流程扩容（2026-11-21）——
     case "query_card":
     case "decide_card":
-    case "suggest_card": {
+    case "suggest_card":
+    case "apply_suggestion": {
       let card = a.card_id ? st.cards[a.card_id] : null;
       if (!card && a.card_type) {
         const pend = Object.keys(st.cards || {}).map((k) => st.cards[k])
@@ -223,6 +225,15 @@ function validateArgs(tool, args, session, ctx, auth) {
       if (tool === "suggest_card") {
         if (card.type !== "C1") return forbidden("建议片一期只支持 C1");
         if (typeof a.note !== "string" || !a.note.trim()) return forbidden("缺少修改意见");
+      }
+      if (tool === "apply_suggestion") {
+        if (card.type !== "C1") return forbidden("建议采纳一期只支持 C1");
+        if (card.status !== "pending") return forbidden("卡片不是待拍板状态（" + card.status + ")");
+        const sug = card.payload && card.payload.suggest;
+        if (!sug) return forbidden("卡上还没有建议——先说「给这张卡出修改建议」");
+        if (!Array.isArray(sug.scenes) || !sug.scenes.length) {
+          return forbidden("这条建议缺分镜结构落不了卡——换个更具体的意见重新出建议");
+        }
       }
       break;
     }
