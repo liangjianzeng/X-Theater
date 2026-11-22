@@ -597,9 +597,13 @@ function register(router, ctx) {
 
       delete st.episodes[epId];
       store.commit();
+      // 物理文件删除：cfg.outDir（varDir/out）优先＋basename，CWD 字面兜底旧数据——同 library.resolveOutFile 口径
+      const outDir = (ctx.cfg && ctx.cfg.outDir) || pathm.join(process.cwd(), "var", "out");
       outs.forEach((rel) => {
-        try { fs.unlinkSync(pathm.join(process.cwd(), rel)); } catch (e) {}
-        try { fs.unlinkSync(pathm.join(process.cwd(), rel + ".meta.json")); } catch (e) {}
+        [rel, rel + ".meta.json"].forEach((r2) => {
+          [pathm.join(outDir, pathm.basename(r2)), pathm.join(process.cwd(), r2)]
+            .forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+        });
       });
       audit(auth, "episode_delete", epId, {
         title: ep.title,
@@ -662,7 +666,15 @@ function register(router, ctx) {
     if (i >= 0) new URLSearchParams(req.url.slice(i + 1)).forEach((v, k) => { out[k] = v; });
     return out;
   }
-  function castDir() { return require("path").join(process.cwd(), "var", "assets", "cast"); }
+  // var 数据根＝cfg.varDir（唯一事实源，index.js 按 repoRoot/THEATER_VAR 解析）。禁止 CWD 相对拼接：
+  // 非仓库根 CWD 或 THEATER_VAR 部署时会把资产写歪、state 引用 404（2026-11-23 female_ref.png 错位事故根因）。
+  function varBase() {
+    return (ctx.cfg && ctx.cfg.varDir) || require("path").join(process.cwd(), "var");
+  }
+  // 定妆资产目录＝varBase()/assets/cast（静态面同源）。
+  function castDir() {
+    return require("path").join(varBase(), "assets", "cast");
+  }
 
   // POST /api/episodes/:id/castref/upload?role=X — raw bytes（PNG/JPEG ≤16MB）→ var/assets/cast/
   router.add(
@@ -744,7 +756,7 @@ function register(router, ctx) {
       const name = require("path").basename(rel).replace(/[^A-Za-z0-9._-]/g, "_");
       const fs = require("fs");
       const path = require("path");
-      const src = [path.join(castDir(), name), path.join(process.cwd(), "var", "out", name)]
+      const src = [path.join(castDir(), name), path.join(varBase(), "out", name)]
         .find((p) => fs.existsSync(p));
       if (!src) throw { code: "NOT_FOUND", message: "文件不存在: " + rel };
       // 人脸存在性机检（facegate :8195；无 face 时拒绝确认）
@@ -868,7 +880,8 @@ function register(router, ctx) {
       const pathm = require("path");
       const readJsonl = (f) => {
         try {
-          const p = pathm.join(process.cwd(), "var", f);
+          // 写入端 core/store.js 落 varDir（THEATER_VAR 部署可变），读取必须同源——CWD 拼接在验收部署下恒读空
+          const p = pathm.join(varBase(), f);
           if (!fs.existsSync(p)) return [];
           return fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map((l) => {
             try { return JSON.parse(l); } catch (e) { return null; }

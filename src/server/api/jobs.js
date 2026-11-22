@@ -5,15 +5,14 @@
  * 队列来源优先 engine.queueState()，退化读 job 账本。
  */
 
+const Tenants = require("../core/tenants.js");
+
 function parseQuery(req) {
   const url = (req && req.url) || "";
   const i = url.indexOf("?");
   const out = {};
   if (i >= 0) {
-    const sp = new URLSearchParams(url.slice(i + 1));
-    sp.forEach((v, k) => {
-      out[k] = v;
-    });
+    new URLSearchParams(url.slice(i + 1)).forEach((v, k) => { out[k] = v; });
   }
   return out;
 }
@@ -85,6 +84,15 @@ function register(router, ctx) {
     return null;
   }
 
+  // 集级任务域守卫（2026-11-23 深审）：stop/retry 是写动作；无集归属的素材级任务保持全员可操作
+  //（素材中心候选重试属创作者自身流），集级任务域外一律 404、域内 viewer 只读拒绝。
+  function guardJobDomain(auth, job) {
+    const st = store.get();
+    const eid = jobEpisodeId(job);
+    if (!eid || !(st.episodes || {})[eid]) return;
+    Tenants.guardWrite(st, auth, ((st.episodes || {})[eid] || {}).tenantId || Tenants.defaultTid(st));
+  }
+
   // GET /api/jobs?episodeId=&status=
   router.add(
     "GET",
@@ -93,6 +101,17 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const q = parseQuery(req);
       let jobs = listJobs(ctx);
+      // 域过滤（2026-11-23 深审）：非 ops 只看本域集的任务；无集归属的素材级任务平台共享
+      if (auth.role !== "ops") {
+        const stJ = store.get();
+        const tid = Tenants.contextTid(stJ, auth);
+        const dt = Tenants.defaultTid(stJ);
+        const tidOf = (eid) => ((stJ.episodes || {})[eid] || {}).tenantId || dt;
+        jobs = jobs.filter((j) => {
+          const eid = jobEpisodeId(j);
+          return !eid || tidOf(eid) === tid;
+        });
+      }
       if (q.episodeId) jobs = jobs.filter((j) => jobEpisodeId(j) === q.episodeId);
       if (q.status) jobs = jobs.filter((j) => j.status === q.status);
       return router.json(res, 200, { jobs, total: jobs.length });
@@ -108,6 +127,8 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const live = findLiveJob(params.id);
       if (!live) throw { code: "NOT_FOUND", message: "任务不存在: " + params.id };
+      // 域守卫（2026-11-23 深审）：集级任务重试＝他域写动作，域外一律 404
+      guardJobDomain(auth, live);
       const r = engine.retry(params.id);
       audit(auth, "job_retry", String(params.id), { type: live.type });
       return router.json(res, 200, { ok: true, job: r || live });
@@ -123,6 +144,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const live = findLiveJob(params.id);
       if (!live) throw { code: "NOT_FOUND", message: "任务不存在: " + params.id };
+      guardJobDomain(auth, live);
       const r = engine.stop(params.id);
       audit(auth, "job_stop", String(params.id), { type: live.type });
       return router.json(res, 200, { ok: true, job: r || live });

@@ -43,5 +43,8 @@ runtime/cosyvoice/logs/
 __pycache__/
 runtime/spark-evidence/facegate/buffalo_l.zip
 
+# 冒烟验收的临时证据（mp4/png/meta，机器本地不入库；文档类 .md/.sh 仍入库）
+runtime/spark-evidence/smoke/
+
 # Agent 工具工作区（机器本地，不入库）
 .zcode/

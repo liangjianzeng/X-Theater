@@ -122,7 +122,7 @@ function register(router, ctx) {
       const m = st.invites && typeof st.invites === "object" && !Array.isArray(st.invites)
         ? st.invites
         : (st.invites = {});
-      const code = "INV-" + util.hash12({ ts: util.now(), rnd: Math.random() }).slice(0, 8).toUpperCase();
+      const code = "INV-" + require("crypto").randomBytes(4).toString("hex").toUpperCase();
       if (m[code]) throw { code: "CONFLICT", message: "码冲突，重试一次即可" };
       m[code] = {
         name: String(b.name || "member").slice(0, 20),

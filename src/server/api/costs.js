@@ -44,6 +44,7 @@ function register(router, ctx) {
       const st = store.get();
       const ep = (st.episodes || {})[params.id];
       if (!ep) throw { code: "NOT_FOUND", message: "剧集不存在: " + params.id };
+      require("../core/tenants.js").guardRead(st, auth, ep.tenantId || require("../core/tenants.js").defaultTid(st)); // 域外一律 404（2026-11-23 深审）
       const rows = readBilling(ctx).filter((b) => b && b.episodeId === params.id);
       const shots = Object.keys(st.shots || {})
         .map((k) => st.shots[k])

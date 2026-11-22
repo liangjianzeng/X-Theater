@@ -83,6 +83,7 @@ const laneBase = (lane) => {
 };
 const cfg = {
   outDir,
+  varDir, // 数据目录唯一事实源（2026-11-23：castref 上传等资产写入必须走它，禁止 CWD 拼路径——female_ref.png 错位事故根因）
   seed: true,
   // lane→节点档案端点解析挂到 cfg 上：workers / 运维台 resolveServe 经 cfg.laneBase(lane) 取拨号端点
   laneBase,
@@ -360,6 +361,10 @@ function serveStatic(req, res) {
 }
 
 /* ---------- HTTP 服务 ---------- */
+// 优雅退出（2026-11-23 深审补）：state commit 是 50ms 防抖，退出前不 flush 会丢窗口内最后一次写
+process.on("SIGINT", () => { try { store.flush(); } catch (e) { /* 尽力落盘 */ } process.exit(0); });
+process.on("SIGTERM", () => { try { store.flush(); } catch (e) { /* 尽力落盘 */ } process.exit(0); });
+
 const server = http.createServer((req, res) => {
   Promise.resolve(router.handle(req, res))
     .then((handled) => {

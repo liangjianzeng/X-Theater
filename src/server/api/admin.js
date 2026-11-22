@@ -248,7 +248,15 @@ function register(router, ctx) {
       const epId = params.id;
       if (!(st.episodes || {})[epId]) throw { code: "NOT_FOUND", message: "剧集不存在: " + epId };
       const drop = (obj) => { Object.keys(obj || {}).forEach((k) => { if ((obj[k] || {}).episodeId === epId) delete obj[k]; }); };
-      drop(st.cards); drop(st.scenes); drop(st.shots); drop(st.review_q); drop(st.alerts);
+      // 复审队列条目不带 episodeId（只带 shotId）——按本集镜头集合过滤，否则 purge 后留死条目
+      const shotIdSet = {};
+      Object.keys(st.shots || {}).forEach((k) => {
+        if ((st.shots[k] || {}).episodeId === epId) shotIdSet[k] = true;
+      });
+      drop(st.cards); drop(st.scenes); drop(st.shots); drop(st.alerts);
+      if (Array.isArray(st.review_q)) {
+        st.review_q = st.review_q.filter((r) => !r || !r.shotId || !shotIdSet[r.shotId]);
+      }
       (st.music_lib || []).forEach((m) => { if ((m || {}).episodeId === epId) m.episodeId = null; });
       // 活队列在引擎内存（不在 state）：排队中的任务随 purge 停掉；在跑的由 engine.stop 语义自然收尾
       const engine = ctx.engine;
@@ -508,7 +516,8 @@ function register(router, ctx) {
       requireOps(auth);
       const b = body || {};
       const m = inviteMapOf(store.get());
-      const code = "INV-" + util.hash12({ ts: util.now(), rnd: Math.random() }).slice(0, 8).toUpperCase();
+      // 邀请码要不可预测（可预测码＝外人可自注册）：crypto.randomBytes，非 hash12/Math.random
+      const code = "INV-" + require("crypto").randomBytes(4).toString("hex").toUpperCase();
       if (m[code]) throw { code: "CONFLICT", message: "码冲突，重试一次即可" };
       m[code] = {
         name: String(b.name || "creator").slice(0, 20),

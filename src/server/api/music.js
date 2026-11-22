@@ -11,6 +11,7 @@
  */
 
 const libMod = require("./library.js");
+const Tenants = require("../core/tenants.js");
 
 function findPending(ctx, id) {
   const st = ctx.store.get();
@@ -124,6 +125,8 @@ function register(router, ctx) {
       const b = body || {};
       const scene = (st.scenes || {})[b.sceneId];
       if (!scene) throw { code: "NOT_FOUND", message: "场景不存在: " + b.sceneId };
+      // 域外一律 404（2026-11-23 深审）：派任务/绑曲都是写动作，目标场景必须在本域
+      Tenants.guardWrite(st, auth, ((st.episodes || {})[scene.episodeId] || {}).tenantId || Tenants.defaultTid(st));
       const mood = b.mood || scene.mood || "中性";
       const job = engine.enqueue(
         "music",
@@ -142,6 +145,17 @@ function register(router, ctx) {
     "/api/music/:id/adopt",
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const stG = store.get();
+      // 目标场景域校验（2026-11-23 深审）：绑曲是写动作，域外场景一律 404
+      const tgtScene = body && body.sceneId ? (stG.scenes || {})[body.sceneId] : null;
+      if (tgtScene) {
+        Tenants.guardWrite(stG, auth, ((stG.episodes || {})[tgtScene.episodeId] || {}).tenantId || Tenants.defaultTid(stG));
+      }
+      // 候选池出队同样是他域集的写动作（splice music_pending）
+      const pend0 = findPending(ctx, params.id);
+      if (pend0) {
+        Tenants.guardWrite(stG, auth, ((stG.episodes || {})[pend0.episodeId] || {}).tenantId || Tenants.defaultTid(stG));
+      }
       const r = adoptCandidate(ctx, params.id, body && body.sceneId);
       store.commit();
       audit(auth, "music_adopt", params.id, {
@@ -171,6 +185,8 @@ function register(router, ctx) {
         sceneId = pend.candidate.sceneId;
         mood = pend.candidate.mood;
         episodeId = pend.episodeId;
+        // 域外一律 404（2026-11-23 深审）：换一批写的是他域集的候选池
+        Tenants.guardRead(st, auth, ((st.episodes || {})[pend.episodeId] || {}).tenantId || Tenants.defaultTid(st));
         pend.list.splice(pend.index, 1); // 换一批：移除旧候选
       } else {
         const entry = findLib(ctx, params.id);
@@ -179,6 +195,10 @@ function register(router, ctx) {
         mood = entry.mood;
         const sc = sceneId ? (st.scenes || {})[sceneId] : null;
         episodeId = entry.episodeId || (sc && sc.episodeId) || null;
+        // 库条目重出落在既有场景/集时做域校验（2026-11-23 深审）
+        if (sc) {
+          Tenants.guardRead(st, auth, ((st.episodes || {})[sc.episodeId] || {}).tenantId || Tenants.defaultTid(st));
+        }
       }
       const job = engine.enqueue(
         "music",

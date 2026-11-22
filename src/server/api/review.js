@@ -56,11 +56,17 @@ function register(router, ctx) {
           try {
             const fs = require("fs");
             const path = require("path");
-            const mf = path.join(process.cwd(), "var", "out", String(lastTake.art).replace(/^.*[\\/]/, "") + ".meta.json");
-            const mj = JSON.parse(fs.readFileSync(mf, "utf8"));
-            prompt = mj.prompt || null;
-            firstFrame = mj.first_frame || null;
-            irUsed = mj.ir_llm_used != null ? !!mj.ir_llm_used : null;
+            // meta 落点＝varDir/out（THEATER_VAR 部署可变）：cfg.outDir＋basename 优先，CWD 字面兜底旧数据
+            const mfName = String(lastTake.art).replace(/^.*[\\/]/, "") + ".meta.json";
+            const outDir = (ctx.cfg && ctx.cfg.outDir) || path.join(process.cwd(), "var", "out");
+            const mf = [path.join(outDir, mfName), path.join(process.cwd(), "var", "out", mfName)]
+              .find((p) => fs.existsSync(p));
+            if (mf) {
+              const mj = JSON.parse(fs.readFileSync(mf, "utf8"));
+              prompt = mj.prompt || null;
+              firstFrame = mj.first_frame || null;
+              irUsed = mj.ir_llm_used != null ? !!mj.ir_llm_used : null;
+            }
           } catch (e) { /* meta 缺失（旧 take）则不显示 */ }
         }
         return Object.assign({}, r, {

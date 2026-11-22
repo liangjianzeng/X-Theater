@@ -124,7 +124,7 @@ const SCENE_SEED = [
   { id: "s1", name: "场1 重逢", mood: "释然" },
   { id: "s2", name: "场2 离别", mood: "离别" },
   { id: "s3", name: "场3 对峙", mood: "压抑" },
-  { id: "s4", name: "场4 灯塔", mood: "释然" }
+  { id: "s4", name: "场4 归航", mood: "释然" }
 ];
 
 /** 确定性 takes：普通镜 1 条；每逢 3 的镜 2 条；#7 双条（重拍记录演示）。pick 择优按低价合规条。 */
@@ -192,7 +192,7 @@ function seedState() {
         id: "e1",
         projectId: "p1",
         title: "夜航西飞 · 第 1 集",
-        brief: "一句话：女飞行员夜航归乡，在灯塔下与往事和解。",
+        brief: "一句话：女飞行员夜航归乡，在旧机库与往事和解。",
         stage: 1,
         decisions: 0,
         budget_cents: 5000,
@@ -390,6 +390,15 @@ function pruneDrafts(state, now) {
 
 /* ---------------- openStore ---------------- */
 
+/** state.json 原子写（2026-11-23 深审修复）：tmp＋rename 替换。直接 writeFileSync 覆盖在
+ *  写一半崩溃（断电/被杀）时会留下截断的 state.json——下次启动 JSON.parse 失败静默回种子，
+ *  等于全库数据丢失。同目录 rename 是原子操作，任何时刻磁盘上都是完整文件。 */
+function writeState(statePath, state) {
+  const tmp = statePath + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.renameSync(tmp, statePath);
+}
+
 function openStore(varDir, opts) {
   fs.mkdirSync(varDir, { recursive: true });
   const statePath = path.join(varDir, "state.json");
@@ -400,7 +409,9 @@ function openStore(varDir, opts) {
     try {
       state = JSON.parse(fs.readFileSync(statePath, "utf8"));
     } catch (e) {
-      state = null; // 损坏 → 重建种子
+      // 损坏文件改名留证（不再静默覆盖），再回种子重建——可人工比对找回
+      try { fs.renameSync(statePath, statePath + ".corrupt-" + util.now()); } catch (e2) { /* 占用/权限：维持旧行为 */ }
+      state = null;
     }
   }
   if (!state || typeof state !== "object" || !state.projects || !state.episodes) {
@@ -428,7 +439,7 @@ function openStore(varDir, opts) {
       });
     });
     if (state.episodes && state.episodes.e1) state.episodes.e1.cost_cents = sum;
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    writeState(statePath, state);
     if (lines.length) {
       fs.appendFileSync(
         path.join(varDir, "log-billing.jsonl"),
@@ -440,7 +451,7 @@ function openStore(varDir, opts) {
     ensureAssetLib(state);
     // 注册表引擎 node 绑定迁移（2026-11-22 节点注册表化）：幂等补齐
     if (ensureRegistryNodes(state)) {
-      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+      writeState(statePath, state);
     }
     // 转场衔接镜台账＋后期设置默认值（2026-11-22 对标调研梯队）：幂等补齐
     ensurePostprodFields(state);
@@ -481,7 +492,7 @@ function openStore(varDir, opts) {
     const fixed =
       stampTid(state.projects) + stampTid(state.episodes) + stampTid(state.l2_sessions);
     if (!hasTenants || fixed) {
-      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+      writeState(statePath, state);
     }
   }
 
@@ -502,28 +513,28 @@ function openStore(varDir, opts) {
       return state;
     },
 
-    /** 防抖 50ms 写 state.json */
+    /** 防抖 50ms 写 state.json（原子写：tmp＋rename） */
     commit() {
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
         revCounter++;
         try {
-          fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+          writeState(statePath, state);
         } catch (e) {
           console.error("[store] commit failed:", e.message);
         }
       }, 50);
     },
 
-    /** 立即落盘（自测/退出前用） */
+    /** 立即落盘（自测/退出前用；原子写） */
     flush() {
       if (timer) {
         clearTimeout(timer);
         timer = null;
       }
       revCounter++;
-      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+      writeState(statePath, state);
     },
 
     /** 账本追加：自动加 {id,ts}，返回该行对象（账本只增不改） */

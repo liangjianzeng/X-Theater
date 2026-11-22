@@ -24,6 +24,13 @@ function cardTid(st, card) {
   return (ep || {}).tenantId || Tenants.defaultTid(st);
 }
 
+/* var 数据根（2026-11-23 收口）：cfg.varDir＝唯一事实源（index.js 按 repoRoot/THEATER_VAR 解析）。
+ * CWD 相对拼接在非仓库根 CWD 或 THEATER_VAR 部署下会把资产写歪、state 引用 404——
+ * female_ref.png 错位事故同根因；本文件 var/ 相对拼接一律经此函数。 */
+function varBase(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || require("path").join(process.cwd(), "var");
+}
+
 /* 无剧本集的 C1 兜底分场：通用三幕结构名，不带任何叙事内容
  *（2026-11-23 修复：旧占位「重逢/离别/对峙/灯塔」是一部戏的具体剧情，
  *  会泄漏进每一部没跑出剧本的剧，策划 AI 审查因此对所有剧都"审灯塔"）。
@@ -499,7 +506,7 @@ function refineViewRefs(ctx, episodeId, c2sCard) {
   st.viewRefs[episodeId] = st.viewRefs[episodeId] || {};
   const fs = require("fs");
   const path = require("path");
-  const vdir = path.join(process.cwd(), "var", "assets", "cast", roleSeg, "views");
+  const vdir = path.join(varBase(ctx), "assets", "cast", roleSeg, "views");
   fs.mkdirSync(vdir, { recursive: true });
   const refs = [];
   (p2.views || []).forEach((v) => {
@@ -507,7 +514,7 @@ function refineViewRefs(ctx, episodeId, c2sCard) {
     if (v.selected === false) return; // 用户取消勾选的帧不收
     if (v.score != null && v.score < 0.45) return; // <0.45 疑似换人，硬线
     const name = String(v.art).replace(/^.*[\\/]/, "");
-    const src = [path.join(process.cwd(), "var", "out", name), path.join(process.cwd(), "var", "assets", "cast", name)]
+    const src = [path.join(varBase(ctx), "out", name), path.join(varBase(ctx), "assets", "cast", name)]
       .find((x) => fs.existsSync(x));
     if (!src) return;
     if (path.resolve(path.dirname(src)).toLowerCase() !== path.resolve(vdir).toLowerCase()) {
@@ -880,7 +887,7 @@ function onVideoDone(ctx, job, episodeId) {
   const art = job.art || job.result || {};
   const take = art.take || {
     id: ctx.util.uid("tk"),
-    engine: art.engine ? "自部署·标准档" : "自部署·标准档", // 语言表纪律：用户面不带型号
+    engine: "自部署·标准档", // 语言表纪律：用户面不带型号
     cost_cents: typeof art.cost_cents === "number" ? art.cost_cents : 80,
     art: art.art || art.path || null,
     license: art.license || { model: "MIT", usage: "ok" }
@@ -1208,7 +1215,8 @@ function attachJobDoneListener(ctx) {
     try {
       handleJobDone(ctx, evt);
     } catch (e) {
-      /* 监听器内部异常不得打挂总线 */
+      // 异常不打挂总线，但必须留痕：卡链推进失败若无日志，断链只能靠人工巡检发现（2026-11-23 深审）
+      console.error("[cards] handleJobDone failed:", (evt && evt.job && (evt.job.type + "/" + evt.job.id)) || "?", e && (e.stack || e.message || e));
     }
   };
   ctx.bus.on("jobs", handler);
@@ -1389,9 +1397,13 @@ function register(router, ctx) {
       collect(p.grid);
       (p.views || []).forEach((v) => { if (v && v.art) collect(v.art); });
       (p.images || []).forEach((v) => { if (v && v.art) collect(v.art); });
+      // 删除物理文件：cfg.outDir（varDir/out）优先＋basename，CWD 字面兜底旧数据——同 library.resolveOutFile 口径
+      const outDir = (ctx.cfg && ctx.cfg.outDir) || path.join(process.cwd(), "var", "out");
       outs.forEach((rel) => {
-        try { fs.unlinkSync(path.join(process.cwd(), rel)); } catch (e) {}
-        try { fs.unlinkSync(path.join(process.cwd(), rel + ".meta.json")); } catch (e) {}
+        [rel, rel + ".meta.json"].forEach((r2) => {
+          [path.join(outDir, path.basename(r2)), path.join(process.cwd(), r2)]
+            .forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+        });
       });
       delete st.cards[card.id];
       store.commit();
@@ -1457,6 +1469,8 @@ function register(router, ctx) {
 
       if (action === "edit") {
         card.payload = Object.assign({}, card.payload, b.payload || {});
+        // 机检结论只允许 onAiReviewDone 写入：请求体注入 ai_review 可伪造「机检通过」并让重审短路
+        delete card.payload.ai_review;
         card.ver += 1; // 改卡必 ver++
         card.updated_at = util.now();
         enqueueAiReview(ctx, card); // 改卡后若审查缺失（如清旧审）→ 重派（幂等）
@@ -1491,7 +1505,10 @@ function register(router, ctx) {
       }
 
       // accept（可能抛错的操作放前面，抛错则不产生决策）
-      if (b.payload) card.payload = Object.assign({}, card.payload, b.payload);
+      if (b.payload) {
+        card.payload = Object.assign({}, card.payload, b.payload);
+        delete card.payload.ai_review; // 同 edit：机检结论不可由请求体注入（随决策档案固化即伪造审查记录）
+      }
       const derived = advanceOnAccept(ctx, card, episode, operator);
       // 宪法 3：必答门计数＝C1 方向／C2 签约／C6 预算开机（预算触发）／C7 验收／C8 导出确认＝4＋1；
       // C3（默认过）/C4（软确认）/C5（出口在 C6）为软卡不计数，C9 永不计数。

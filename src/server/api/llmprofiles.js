@@ -112,7 +112,8 @@ function register(router, ctx) {
       const st = store.get();
       const profiles = profilesOf(st);
       const c = cleanPayload(st, body || {}, false);
-      const id = "lp_" + util.hash12({ label: c.label, base: c.base, ts: util.now(), rnd: Math.random() }).slice(0, 8);
+      // id 唯一性用 crypto 随机（契约 §9 确定性纪律：进程内禁 Math.random；非密料但同规矩）
+      const id = "lp_" + require("crypto").randomBytes(4).toString("hex");
       if (profiles[id]) throw { code: "CONFLICT", message: "档案 id 冲突，重试一次即可" };
       profiles[id] = Object.assign({ id }, c);
       if (!st.llm_active) st.llm_active = id; // 第一份档案自动启用

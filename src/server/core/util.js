@@ -7,8 +7,9 @@
 
 const crypto = require("crypto");
 
-// 演示密钥（一期自能力期硬编码即可，二期换 KMS/环境变量）
-const SECRET = "x-theater-phase1-demo-secret";
+// 演示密钥（一期自能力期硬编码即可，二期换 KMS）；THEATER_SECRET 供部署面覆盖——
+// 不设则保持演示值（存量 token 兼容），设了则重启后旧 token 全部失效（重登录即可）
+const SECRET = process.env.THEATER_SECRET || "x-theater-phase1-demo-secret";
 
 /* ---------- 单调时钟 ---------- */
 let _lastTs = 0;

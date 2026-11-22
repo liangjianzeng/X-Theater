@@ -8,6 +8,7 @@
  */
 
 const PRECHECK_ITEM_MUSIC = "配乐双许可";
+const Tenants = require("../core/tenants.js");
 
 /** 曲库读取（素材中心 2026-11-22）：asset_lib.audio.music 优先（迁移后旧 music_lib 只读留档，不重复计数） */
 function musicLibOf(ctx) {
@@ -145,7 +146,9 @@ function register(router, ctx) {
     "/api/episodes/:id/precheck",
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
-      requireEpisode(params.id);
+      const stP = store.get();
+      const epP = requireEpisode(params.id);
+      Tenants.guardRead(stP, auth, epP.tenantId || Tenants.defaultTid(stP)); // 域外一律 404（2026-11-23 深审）
       const pre = computePrecheck(ctx, params.id);
       return router.json(res, 200, {
         episodeId: params.id,
@@ -163,7 +166,9 @@ function register(router, ctx) {
     "/api/episodes/:id/export",
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
-      requireEpisode(params.id);
+      const stE = store.get();
+      const epE = requireEpisode(params.id);
+      Tenants.guardWrite(stE, auth, epE.tenantId || Tenants.defaultTid(stE)); // 域外一律 404；viewer 不可导出（2026-11-23 深审）
       const pre = computePrecheck(ctx, params.id);
       if (!pre.pass) {
         throw {
