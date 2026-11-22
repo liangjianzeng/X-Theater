@@ -82,7 +82,7 @@
   function openPreview(art, title) { preview.value = { art: srcOf(art), title: title || "" }; }
   function closePreview() { preview.value = null; }
   /* 音频诚实化：占位/坏文件加载失败 → 如实标注（不再让空文件冒充候选） */
-      const audioFail = Vue.reactive({});
+      /* audioFail 已并入 StudioAudio 组件内部失败态 */
       global.addEventListener("keydown", function (e) { if (e.key === "Escape") preview.value = null; });
   function fmtSec(s) { return s == null ? "—" : s + " 秒"; }
       /* 词典值→中文标签：引擎收英文 tag，界面只讲中文（2026-11-22 用户裁决）；候选池溯源同表 */
@@ -92,6 +92,105 @@
       MUSIC_VOCALS.forEach(v => { VOCAL_ZH[v.v] = v.label; });
       function zhList(map, arr) { return (arr || []).map(v => map[v] || v).join("、"); }
       const MODE_ZH = { quick: "快速", standard: "标准", expert: "专家" };
+      /* ================= 曲库标准播放器 StudioAudio（2026-11-22 用户批语：播放组件能力显示不全、使用有问题）
+       * 裸 <audio controls> 在窄卡/窄列里只渲染出播放·静音·菜单，进度与时长看不见。
+       * 能力对齐主流曲库产品：播放/暂停、可点击+拖拽进度条、已播/总长、倍速循环、音量+静音、
+       * 加载失败诚实态（占位/坏文件如实标注）、页内单实例互斥（播 A 停 B）。 */
+      let AP_ACTIVE = null;   // 页内唯一在播实例
+      const StudioAudio = {
+        name: "StudioAudio",
+        props: {
+          src: { type: String, default: "" },
+          compact: { type: Boolean, default: false },
+          label: { type: String, default: "音频" }
+        },
+        setup(props) {
+          const el = Vue.ref(null);
+          const playing = Vue.ref(false);
+          const cur = Vue.ref(0);
+          const dur = Vue.ref(0);
+          const failed = Vue.ref(false);
+          const muted = Vue.ref(false);
+          const vol = Vue.ref(1);
+          const speed = Vue.ref(1);
+          const bar = Vue.ref(null);
+          const drag = Vue.ref(false);
+          const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
+          function fmt(t) {
+            const n = Math.max(0, Math.floor(Number(t) || 0));
+            return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+          }
+          const pct = Vue.computed(() => (dur.value ? Math.min(100, (cur.value / dur.value) * 100) : 0));
+          function onMeta() { failed.value = false; dur.value = (el.value && el.value.duration) || 0; }
+          function onTime() { if (!drag.value) cur.value = el.value ? el.value.currentTime : 0; }
+          function onErr() { failed.value = true; playing.value = false; }
+          function toggle() {
+            const a = el.value;
+            if (!a) return;
+            if (playing.value) { a.pause(); return; }
+            if (AP_ACTIVE && AP_ACTIVE !== a) { try { AP_ACTIVE.pause(); } catch (e) {} }
+            AP_ACTIVE = a;
+            a.playbackRate = speed.value;
+            a.volume = muted.value ? 0 : vol.value;
+            const pr = a.play();
+            if (pr && pr.catch) pr.catch(() => { failed.value = true; playing.value = false; });
+          }
+          function seekTo(ev) {
+            const a = el.value, box = bar.value;
+            if (!a || !box || !dur.value) return;
+            const r = box.getBoundingClientRect();
+            const ratio = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+            a.currentTime = ratio * dur.value;
+            cur.value = a.currentTime;
+          }
+          function down(ev) {
+            drag.value = true;
+            seekTo(ev);
+            try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) {}
+          }
+          function move(ev) { if (drag.value) seekTo(ev); }
+          function up() { drag.value = false; }
+          function cycleSpeed() {
+            const i = SPEEDS.indexOf(speed.value);
+            speed.value = SPEEDS[(i + 1) % SPEEDS.length];
+            if (el.value) el.value.playbackRate = speed.value;
+          }
+          function toggleMute() {
+            muted.value = !muted.value;
+            if (el.value) el.value.volume = muted.value ? 0 : vol.value;
+          }
+          function onVol(ev) {
+            vol.value = Number(ev.target.value);
+            muted.value = vol.value === 0;
+            if (el.value) el.value.volume = vol.value;
+          }
+          Vue.watch(() => props.src, () => {   // 换源复位（卡片复用同组件）
+            playing.value = false; cur.value = 0; dur.value = 0; failed.value = false; drag.value = false;
+            Vue.nextTick(() => { if (el.value) { try { el.value.load(); } catch (e) {} } });
+          });
+          return { el, bar, playing, cur, dur, failed, muted, vol, speed, pct, fmt, onMeta, onTime, onErr, toggle, down, move, up, cycleSpeed, toggleMute, onVol };
+        },
+        template: `
+          <div class="v-ap" :class="{'v-ap-c': compact}">
+            <audio ref="el" :src="src" preload="metadata" style="display:none" @loadedmetadata="onMeta" @timeupdate="onTime" @ended="playing=false" @error="onErr" @play="playing=true" @pause="playing=false"></audio>
+            <div class="v-ap-row">
+              <button type="button" class="v-ap-play" @click="toggle" :title="playing ? '暂停' : '播放'">{{ playing ? '⏸' : '▶' }}</button>
+              <span class="v-ap-time num">{{ fmt(cur) }}/{{ dur ? fmt(dur) : '--:--' }}</span>
+              <span class="grow"></span>
+              <button type="button" class="v-ap-ctl" @click="cycleSpeed" :title="'倍速循环（当前 ' + speed + 'x），点击切换'">{{ speed }}x</button>
+              <button type="button" class="v-ap-ctl" @click="toggleMute" :title="muted ? '取消静音' : '静音'">{{ muted ? '🔇' : '🔊' }}</button>
+              <input v-if="!compact" class="v-ap-vol" type="range" min="0" max="1" step="0.05" :value="vol" @input="onVol" title="音量" />
+            </div>
+            <div class="v-ap-row v-ap-bar-row">
+              <div class="v-ap-bar" ref="bar" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" title="点击或拖动跳转进度">
+                <div class="v-ap-fill" :style="{ width: pct + '%' }"></div>
+                <div class="v-ap-knob" :style="{ left: pct + '%' }"></div>
+              </div>
+            </div>
+            <div class="v-ap-fail" v-if="failed">⚠ 音频加载失败：占位或坏文件（如实标注，不冒充可用）</div>
+          </div>
+        `
+      };
       /* 候选池溯源：生成要素（中文）＋引擎/节点/时间（用户裁决「得把引擎节点时间显示」） */
       function draftGenLine(d) {
         const g = d.gen;
@@ -119,6 +218,7 @@
 
   views.Studio = {
     components: {
+      "studio-audio": StudioAudio,
       "err-state": T.components.ErrState,
       "empty-state": T.components.EmptyState,
       "loading": T.components.Loading,
@@ -181,7 +281,7 @@
       Vue.onMounted(() => {
         store.loadStudioSummary();
         store.loadStudioDrafts();
-        ["music", "images", "characters", "scenes"].forEach(d => store.loadStudioDomain(d));
+        ["music", "images", "characters", "scenes", "voices"].forEach(d => store.loadStudioDomain(d));
         if (!store.state) store.refreshState().catch(() => {});
       });
       Vue.onUnmounted(stopPolling);
@@ -196,12 +296,40 @@
       const gMusic = Vue.reactive({
         mode: "standard", type: "bgm", mood: "释然", moodOther: "",
         freeTags: "", genres: [], instruments: [], bpm: "", vocal: "", instrumental: true,
+        voiceId: "", cloneMode: "full",   // 声纹克隆（2026-11-22）：克隆条目 id + 生成档位
         structure: "", lyrics: "", caption: "",
         sec: 45, count: 1, projectId: "", _dirtyLyrics: false
       });
       const mBusy = Vue.ref(false);
       const mWarns = Vue.ref([]);
       const preset = Vue.computed(() => MUSIC_TYPE_PRESETS[gMusic.type] || { instrumental: true, structureLine: "", lyrics: "", hint: "" });
+      /* 声纹克隆（2026-11-22）：克隆条目列表 + 内联登记表单；选中声纹即切人声通道 */
+      const cloneVoices = Vue.computed(() => (lib.value.voices || []).filter(v => v && v.kind === "clone"));
+      const selVoice = Vue.computed(() => cloneVoices.value.find(v => v.id === gMusic.voiceId) || null);
+      Vue.watch(() => gMusic.voiceId, (id) => { if (id && gMusic.instrumental) gMusic.instrumental = false; });
+      const vpShow = Vue.ref(false);
+      const vpForm = Vue.reactive({ name: "", gender: "女", desc: "", prompt_text: "", consent: false, file: null, busy: false });
+      function vpPick(e) {
+        vpForm.file = e.target.files[0] || null;
+        if (vpForm.file && !vpForm.name) vpForm.name = String((vpForm.file.name || "").replace(/\.[a-z0-9]+$/i, "")).slice(0, 30);
+      }
+      async function vpRegister() {
+        if (vpForm.busy || !vpForm.file || !String(vpForm.name || "").trim() || !vpForm.consent) return;
+        vpForm.busy = true;
+        try {
+          const v = await store.studioCreateVoice(vpForm.file, { name: vpForm.name.trim(), gender: vpForm.gender, desc: vpForm.desc, prompt_text: vpForm.prompt_text });
+          gMusic.voiceId = v.id;
+          vpShow.value = false;
+          vpForm.name = ""; vpForm.desc = ""; vpForm.prompt_text = ""; vpForm.consent = false; vpForm.file = null;
+        } catch (e) { /* toast 已发 */ }
+        finally { vpForm.busy = false; }
+      }
+      async function vpDelete() {
+        const v = selVoice.value; if (!v) return;
+        const ok = await store.confirm({ title: "删除声纹「" + v.name + "」？（已生成的歌曲不受影响）", okLabel: "确认删除" });
+        if (!ok) return;
+        try { await store.studioDeleteVoice(v.id); if (gMusic.voiceId === v.id) gMusic.voiceId = ""; } catch (e) {}
+      }
       function applyPreset(force) {
         gMusic.instrumental = !!preset.value.instrumental;
         gMusic.structure = preset.value.structureLine || "";
@@ -223,6 +351,9 @@
       async function genMusic() {
         if (mBusy.value) return;
         if (gMusic.mode === "quick" && !effMood.value) return;
+        if (gMusic.voiceId && !String(gMusic.lyrics || "").trim()) {
+          mWarns.value = ["声纹克隆需要歌词（克隆音色演唱自定义歌词）"]; return;
+        }
         if (gMusic.mode !== "quick" && !gMusic.instrumental && !String(gMusic.lyrics || "").trim() && gMusic.type !== "bgm" && gMusic.type !== "ambient") {
           mWarns.value = ["要人声请先填歌词（或切回纯音乐）"]; return;
         }
@@ -234,6 +365,8 @@
             mood: gMusic.mode === "quick" ? effMood.value : (effMood.value || undefined),
             sec: gMusic.sec, count: gMusic.count, projectId: gMusic.projectId || undefined,
             instrumental: gMusic.instrumental,
+            voiceId: gMusic.voiceId || undefined,
+            cloneMode: gMusic.voiceId ? gMusic.cloneMode : undefined,
             structure: gMusic.structure || undefined
           };
           if (gMusic.mode === "standard") {
@@ -474,8 +607,9 @@
         TABS, MUSIC_TYPES, MUSIC_MODES, MUSIC_GENRES, MUSIC_INSTRUMENTS, MUSIC_VOCALS, MUSIC_TYPE_PRESETS, LYRIC_MARKS,
         IMAGE_TYPES, IMAGE_SIZES, IMAGE_LIGHTS, LOOKS, MOODS, SECS,
         tab, goTab, summary, drafts, lib, projects, episodes, srcOf, fmtSec,
-        preview, openPreview, closePreview, audioFail,
+        preview, openPreview, closePreview,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
+        cloneVoices, selVoice, vpShow, vpForm, vpPick, vpRegister, vpDelete,
         assistPaste, assistShow, aiMusicBusy, aiLyrics, aiImgBusy, aiImage,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
         musicFilter, musicList,
@@ -539,6 +673,47 @@
                 <button v-for="v in MUSIC_VOCALS" :key="v.v" type="button" class="chip" :class="{on: gMusic.instrumental ? v.v==='' : gMusic.vocal===v.v}" @click="if (v.v==='') { gMusic.instrumental = true; } else { gMusic.instrumental = false; gMusic.vocal = v.v; }">{{ v.label }}</button>
               </div>
             </div>
+            <!-- 声纹克隆（2026-11-22）：克隆音色演唱自定义歌词；登记样本须勾授权 -->
+            <div class="v-studio-fieldrow">
+              <span class="field-label">声纹克隆</span>
+              <div class="v-studio-chips">
+                <select class="select v-studio-sel" v-model="gMusic.voiceId">
+                  <option value="">不使用（按人声词典）</option>
+                  <option v-for="v in cloneVoices" :key="v.id" :value="v.id">{{ v.name }}（{{ v.gender }}）</option>
+                </select>
+                <button type="button" class="chip" @click="vpShow = !vpShow">＋ 上传声纹</button>
+                <template v-if="selVoice">
+                  <studio-audio :src="srcOf(selVoice.ref)" compact style="width:170px" label="声纹样本"></studio-audio>
+                  <button type="button" class="chip" @click="vpDelete()">✕ 删除</button>
+                  <template v-if="gMusic.mode==='expert'">
+                    <button type="button" class="chip" :class="{on: gMusic.cloneMode==='full'}" @click="gMusic.cloneMode='full'" title="两段式：先出完整歌再变声；≈2×耗时，音色贴样本">完整档</button>
+                    <button type="button" class="chip" :class="{on: gMusic.cloneMode==='fast'}" @click="gMusic.cloneMode='fast'" title="单段风格迁移：快，但音色较松">快速档</button>
+                  </template>
+                  <span class="weak" v-else>完整档（两段 · ≈2×耗时）</span>
+                </template>
+                <span class="weak" v-if="!cloneVoices.length && !vpShow">还没有声纹——上传一段清唱样本（20–40s、无伴奏最佳）</span>
+              </div>
+            </div>
+            <div v-if="vpShow" class="v-music-lyrics v-vp-form">
+              <div class="v-music-lyrics-head"><span class="field-label">登记声纹（克隆音色来源）</span></div>
+              <div class="v-studio-gen">
+                <label class="field"><span class="field-label">样本文件（WAV/MP3）</span>
+                  <input type="file" accept="audio/*,.wav,.mp3" @change="vpPick" /></label>
+                <label class="field"><span class="field-label">名称</span>
+                  <input class="input" v-model.trim="vpForm.name" maxlength="30" placeholder="例：阿岚" /></label>
+                <label class="field"><span class="field-label">性别</span>
+                  <select class="select" v-model="vpForm.gender"><option>女</option><option>男</option></select></label>
+                <label class="field" style="grid-column: 1 / -1;"><span class="field-label">音色描述（英文，供变声通道）</span>
+                  <input class="input" v-model.trim="vpForm.desc" maxlength="200" placeholder="例：young female vocals, breathy and intimate" /></label>
+                <label class="field" style="grid-column: 1 / -1;"><span class="field-label">样本文字稿（可空；预留配音线克隆用）</span>
+                  <input class="input" v-model.trim="vpForm.prompt_text" maxlength="200" placeholder="样本里说的那句话（逐字）" /></label>
+              </div>
+              <div class="v-music-acts" style="margin-top:6px">
+                <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" v-model="vpForm.consent" /> 我已获得该声音所有者的授权</label>
+                <button type="button" class="btn btn-sm btn-primary" style="white-space:nowrap" :disabled="vpForm.busy || !vpForm.file || !vpForm.name || !vpForm.consent" @click="vpRegister()">{{ vpForm.busy ? '登记中…' : '登记声纹' }}</button>
+                <span class="weak">样本建议清唱 20–40 秒、无伴奏；登记后即可在本表单选用克隆出歌</span>
+              </div>
+            </div>
             <div class="v-studio-fieldrow">
               <span class="field-label">曲风</span>
               <div class="v-studio-chips">
@@ -587,7 +762,7 @@
 
           <div class="v-music-acts">
             <button class="btn btn-primary" :disabled="mBusy" @click="genMusic">{{ mBusy ? '排队中…' : '生成候选（' + (gMusic.count * 3) + ' 段）' }}</button>
-            <span class="weak">{{ preset.hint }} · {{ gMusic.instrumental ? '纯音乐' : (gMusic.vocal || '未选人声') }}</span>
+            <span class="weak">{{ preset.hint }} · {{ gMusic.voiceId && selVoice ? ('声纹克隆：' + selVoice.name + (gMusic.cloneMode === 'fast' ? ' · 快档' : ' · 完整档')) : (gMusic.instrumental ? '纯音乐' : (gMusic.vocal || '未选人声')) }}</span>
           </div>
           <div class="v-music-warns" v-if="mWarns.length">
             <div v-for="(w,i) in mWarns" :key="i">⚠ {{ w }}</div>
@@ -613,7 +788,7 @@
                   <td class="num">{{ fmtSec(m.sec) }}</td>
                   <td><license-badge :license="m.license"></license-badge></td>
                   <td class="num"><span class="v-studio-rate" role="button" :title="'当前 '+m.rating+' 星，点击改 5 星'" @click="rateMusic(m, m.rating>=5?0:5)">{{ '★'.repeat(m.rating||0) || '☆' }}</span></td>
-                  <td><audio v-if="m.art" controls preload="none" :src="srcOf(m.art)" style="max-width:170px;height:28px"></audio><span v-else class="weak">无文件</span></td>
+                  <td><studio-audio v-if="m.art" :src="srcOf(m.art)" compact style="width:175px" :label="m.title"></studio-audio><span v-else class="weak">无文件</span></td>
                   <td>
                     <div class="v-studio-bind" v-for="u in (m.used_by||[])" :key="u.kind+u.id">
                       <span class="badge" :class="{'badge-ok': u.primary}">{{ u.kind==='scene'?'场':'集' }}:{{ u.id }}{{ u.primary?' · 主':'' }}</span>
@@ -828,11 +1003,10 @@
           </div>
           <empty-state v-if="!draftsAll.length" icon="📥" text="候选池是空的" sub="去「音频」或「图像」生成一批。"></empty-state>
                       <div class="v-studio-drafts" v-else>
-              <div class="card v-studio-draft" v-for="d in draftsAll" :key="draftDomain(d)+d.id">
+              <div class="card v-studio-draft" :class="{'v-studio-draft-music': draftDomain(d)==='music'}" v-for="d in draftsAll" :key="draftDomain(d)+d.id">
                 <div class="v-studio-draft-media">
                   <template v-if="draftDomain(d)==='music'">
-                    <audio v-if="d.art && !audioFail[d.id]" controls preload="none" :src="srcOf(d.art)" style="width:100%" @error="audioFail[d.id]=true"></audio>
-                    <span v-else-if="d.art" class="weak">音频文件不可用（占位或生成失败——音乐生成服务未运行时产物为占位）</span>
+                    <studio-audio v-if="d.art" :src="srcOf(d.art)" style="width:100%" :label="d.title"></studio-audio>
                     <span v-else class="weak">生成中…</span>
                   </template>
                   <template v-else>

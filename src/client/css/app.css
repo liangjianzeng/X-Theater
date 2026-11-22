@@ -676,7 +676,11 @@ a { color: inherit; text-decoration: none; }
 .v-studio-img-meta .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
 .v-studio-rate { cursor: pointer; color: #C77E2B; letter-spacing: 2px; user-select: none; }
 .v-studio-bind { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
-.v-studio-sel { max-width: 200px; height: 30px; font-size: 12.5px; }
+/* height 32 + padding 4：内容区须容得下 12.5px 行框——height 30 + 基类 padding 8px 会把字横向切半（用户批语：显示不全） */
+.v-studio-sel { max-width: 200px; height: 32px; padding: 4px 10px; font-size: 12.5px; line-height: 1.3; }
+/* 登记声纹小表单：控件与声纹区块同档，避免和上方 v-studio-sel 视觉落差（用户批语：字体变大） */
+.v-vp-form .input, .v-vp-form .select { font-size: 13px; padding: 6px 10px; }
+.v-vp-form input[type="file"] { font-size: 12.5px; max-width: 240px; }
 .v-studio-prim { display: inline-flex; gap: 4px; align-items: center; font-size: 12.5px; white-space: nowrap; }
 .v-studio-canons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .v-studio-sec { font-weight: 700; margin: 6px 0; }
@@ -743,3 +747,42 @@ a { color: inherit; text-decoration: none; }
 .v-studio-draft-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 .v-studio-draft-acts .select { max-width: 220px; }
 @media (max-width: 640px) { .v-studio-draft { flex-direction: column; } .v-studio-draft-media { width: 100%; } }
+
+/* ================= 曲库标准播放器（2026-11-22 用户批语：播放组件能力显示不全、使用有问题） =================
+   裸 <audio controls> 在窄卡/窄列只渲染播放·静音·菜单，进度与时长不可见。对齐曲库产品标准控件。 */
+.v-ap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.v-ap-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.v-ap-play {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font-size: 12px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+}
+.v-ap-play:hover { border-color: var(--brand); color: var(--brand); }
+.v-ap-bar {
+  position: relative; flex: 1; min-width: 40px; height: 8px; border-radius: 4px;
+  background: #EDEAE2; cursor: pointer; touch-action: none;
+}
+.v-ap-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; background: var(--brand); pointer-events: none; }
+.v-ap-knob {
+  position: absolute; top: 50%; left: 0; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--brand-ink); transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px #fff; pointer-events: none;
+}
+.v-ap-time { flex: none; font-size: 11px; color: var(--ink2); min-width: 70px; text-align: right; }
+.v-ap-side { gap: 4px; }
+.v-ap-ctl {
+  flex: none; border: 0; background: none; color: var(--ink2);
+  font-size: 11.5px; cursor: pointer; padding: 2px 5px; border-radius: 6px; line-height: 1.4;
+}
+.v-ap-ctl:hover { background: #F0EDE6; color: var(--ink); }
+.v-ap-vol { flex: 1; min-width: 56px; max-width: 96px; accent-color: var(--brand); }
+.v-ap-c .v-ap-row { gap: 6px; }
+.v-ap-c .v-ap-play { width: 24px; height: 24px; font-size: 10px; }
+.v-ap-c .v-ap-time { min-width: 56px; font-size: 10.5px; }
+.v-ap-c .v-ap-vol { display: none; }
+.v-ap-fail { font-size: 11.5px; color: var(--warn); }
+.v-ap-bar-row { gap: 0; }
+.v-ap-bar-row .v-ap-bar { width: 100%; min-width: 0; }
+.v-studio-draft-music .v-studio-draft-media { width: 240px; }
+@media (max-width: 640px) { .v-studio-draft-music .v-studio-draft-media { width: 100%; } }

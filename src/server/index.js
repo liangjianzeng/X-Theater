@@ -57,13 +57,15 @@ const bus = createBus({
   }
 });
 // comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
-// comfySpark 通道：THEATER_COMFY_SPARK=1 启用 DGX Spark ComfyUI（H3 线 vidspark/imgspark 真引擎）
+// comfyRemote 通道：THEATER_COMFY_REMOTE=1 启用远端 ComfyUI（H3 线 t2v.remote/t2i.remote 真引擎；
+//   旧部署种子 THEATER_COMFY_SPARK / THEATER_COMFY_SPARK_URL 仍读——env 名是外部契约，仅此一处兼容）
 // 端点解析（2026-11-22 节点注册表化）：一律经 cfg.laneBase(lane)→注册表 lane→node 绑定→节点档案，
 // 运维台改绑定/改端点热生效，单一事实源是 state.nodes——代码里不再写死机器 IP。
 // env 仅作内建回退表覆盖不到时的部署种子（老部署路径）。
 const LANE_ENV_FALLBACK = {
-  img5060: "THEATER_COMFY_URL", vid5060: "THEATER_COMFY_URL",
-  imgspark: "THEATER_COMFY_SPARK_URL", vidspark: "THEATER_COMFY_SPARK_URL"
+  "t2i.local": "THEATER_COMFY_URL", "t2v.local": "THEATER_COMFY_URL",
+  "t2i.remote": process.env.THEATER_COMFY_REMOTE_URL ? "THEATER_COMFY_REMOTE_URL" : "THEATER_COMFY_SPARK_URL",
+  "t2v.remote": process.env.THEATER_COMFY_REMOTE_URL ? "THEATER_COMFY_REMOTE_URL" : "THEATER_COMFY_SPARK_URL"
 };
 const laneBase = (lane) => {
   try {
@@ -87,14 +89,14 @@ const cfg = {
   comfy: {
     enabled: process.env.THEATER_COMFY === "1",
     inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input",
-    get base() { return laneBase("img5060"); }
+    get base() { return laneBase("t2i.local"); }
   },
-  comfySpark: {
-    enabled: process.env.THEATER_COMFY_SPARK === "1",
-    get base() { return laneBase("imgspark"); }
+  comfyRemote: {
+    enabled: process.env.THEATER_COMFY_REMOTE === "1" || process.env.THEATER_COMFY_SPARK === "1",
+    get base() { return laneBase("t2i.remote"); }
   },
   h3ir: {
-    llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
+    llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：远端 llama-server /v1 全英文 IR 重写；空＝规则拼装
     llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
   },
   // Agent 大脑宿主机的 Comfy 端点（显存互斥监视/卸载用——与大脑同机才有显存冲突）。
@@ -283,13 +285,41 @@ function serveStatic(req, res) {
       return router.json(res, 404, { error: { code: "NOT_FOUND", message: "产物不存在" } });
     }
     try {
-      const buf = fs.readFileSync(fp);
+      /* 媒体可跳转（2026-11-22 用户批语：播放组件使用有问题）：HTTP Range/206——
+         无 Accept-Ranges 时 Chromium 只能在已缓冲区间内 seek（拖进度条被钳回），音频波形进度不可用。
+         音频/图像统一走这里；不支持的 Range 头按 200 全量兜底。 */
+      const size = fs.statSync(fp).size;
+      const ctype = MIME[path.extname(fp).toLowerCase()] || "application/octet-stream";
+      const rng = String(req.headers["range"] || "").trim();
+      const m = /^bytes=(\d*)-(\d*)$/.exec(rng);
+      if (m && (m[1] !== "" || m[2] !== "") && size > 0) {
+        let start, end;
+        if (m[1] === "") {                        // bytes=-N：尾部 N 字节
+          const n = Math.min(size - 1, parseInt(m[2], 10) || 0);
+          if (n <= 0) { res.writeHead(416, { "Content-Range": "bytes */" + size }); res.end(); return; }
+          start = size - n; end = size - 1;
+        } else {
+          start = parseInt(m[1], 10);
+          end = m[2] === "" ? size - 1 : Math.min(size - 1, parseInt(m[2], 10));
+          if (start > size - 1 || start > end) { res.writeHead(416, { "Content-Range": "bytes */" + size }); res.end(); return; }
+        }
+        res.writeHead(206, {
+          "Content-Type": ctype,
+          "Content-Range": "bytes " + start + "-" + end + "/" + size,
+          "Content-Length": end - start + 1,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "no-cache"
+        });
+        fs.createReadStream(fp, { start, end }).pipe(res);
+        return;
+      }
       res.writeHead(200, {
-        "Content-Type": MIME[path.extname(fp).toLowerCase()] || "application/octet-stream",
-        "Content-Length": buf.length,
+        "Content-Type": ctype,
+        "Content-Length": size,
+        "Accept-Ranges": "bytes",
         "Cache-Control": "no-cache"
       });
-      res.end(buf);
+      fs.createReadStream(fp).pipe(res);
     } catch (e) {
       router.json(res, 500, { error: { code: "INTERNAL", message: "产物读取失败" } });
     }

@@ -353,3 +353,16 @@ E2E 实测记录（浏览器真机）：登录→素材中心六 tab→音频生
 - **真机验证**：音乐 3 候选 ≈70s 回流（晚风×3：`要素：标准 · 纯音乐`＋`⚙ 生成引擎 1.5 · 本机 · 17:54`）；图像 LLM 在线下零弹窗直跑（写死兜底生效：深夜便利店→真 DGX H3 引擎 `MiniMax-H3-Image int8_convrot 6step · DGX H3 全家桶 · 17:59`；清晨码头→imgspark 车道 `MiniMax-H3-Image 6step`）；横幅出现→回流自动收
 - **修复**：`draftDomain is not defined`（helper 块落在 setup 作用域外，改内联 domain 判断）；横幅首帧「已等 -51 秒」（tickNow 未同步，markGoing 时置基准＋Math.max(0)）
 - 回归 **12/12 PASS**（TEST_BASE_PORT=19420）；客户端缓存戳 ch11
+
+### 追加迭代（2026-11-22 下午⑥·曲库标准播放器＋媒体可跳转）
+
+用户反馈「音乐播放的组件能力都显示不全，使用有问题」——裸 `<audio controls>` 在窄卡/窄列里只渲染出播放·静音·菜单，进度条与时长看不见且不能拖。
+
+- **StudioAudio 标准播放器**（views/studio.js 模块内组件，局部注册 studio-audio）：
+  - 能力对齐主流曲库产品：播放/暂停、全宽进度条（点击＋拖拽 seek）、已播/总长（mm:ss）、倍速循环（1→1.25→1.5→2→0.75）、音量滑条＋静音、加载失败诚实态（占位/坏文件如实标注，不冒充可用）、页内单实例互斥（播 A 停 B）、换源自动复位
+  - 替换三处裸 audio：候选池草稿卡（全尺寸＋音乐卡媒体列 170→240px）、曲库表格行（compact）、声纹样本试听（compact）；audioFail 反应式并入组件内部失败态
+  - 两行布局：row1=播放+时间+倍速+静音+音量，row2=进度条独占全宽（窄卡 54px 进度条是精度根因）
+- **媒体可跳转的真正病根＝静态服务无 HTTP Range**（src/server/index.js）：无 `Accept-Ranges` 时 Chromium 只能在已缓冲区间内 seek（拖进度条被钳回缓冲末端）。/var/out/* 与 /var/assets/* 资产面补齐 Range/206（`bytes=a-b`／`bytes=-N` 后缀／416 越界兜底，`fs.createReadStream` 分段流式），200 全量路径同样带 `Accept-Ranges: bytes`
+- **修复**：`bar` 模板 ref 未进 setup return → `ref="bar"` 永远 null → seekTo 静默早退（点击/拖拽全失效的真凶）；音乐草稿卡类绑定补回
+- **真机实测**：真实点击进度条中心 → 61s（期望 60）；cua 真实拖拽 25%→75% → 91s（期望 90）；播放中 ⏸/1x/音量控件全渲染；HTTP 层 curl 验证 206 `bytes 1000-1999/46080088`
+- 回归与缓存戳：全量套件重跑；客户端 ch13
