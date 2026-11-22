@@ -685,3 +685,43 @@ a { color: inherit; text-decoration: none; }
   .v-studio-canons { grid-template-columns: 1fr; }
 }
 .v-studio-norefwarn { display: flex; align-items: center; justify-content: center; height: 170px; padding: 12px; font-size: 12.5px; color: var(--ink2, #889); background: repeating-linear-gradient(45deg, #232936, #232936 24px, #2e3646 24px, #2e3646 48px); color: #cfd6e4; text-align: center; }
+
+/* ---- 素材中心修复（2026-11-22 下午）：表格崩版 + 音乐专业配置组件 ---- */
+/* 表格列被 audio/绑定控件挤成竖排——最小宽度+横滚+关键列不折行 */
+.v-studio .table-scroll, .v-assets .table-scroll { overflow-x: auto; }
+.v-studio .table, .v-assets .table { min-width: 980px; }
+.v-studio .table th, .v-studio .table td, .v-assets .table th, .v-assets .table td { white-space: nowrap; vertical-align: middle; }
+.v-studio .table td .weak, .v-assets .table td .weak { white-space: normal; }
+.v-assets .table td .row, .v-studio .table td .row { flex-wrap: nowrap; }
+/* 类型预设卡片 */
+.v-music-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
+.v-music-preset { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; padding: 10px 12px; border: 1.5px solid var(--line, #ddd); border-radius: 10px; background: #fff; cursor: pointer; }
+.v-music-preset b { font-size: 13.5px; }
+.v-music-preset .weak { font-size: 11.5px; line-height: 1.4; }
+.v-music-preset.on { border-color: #C77E2B; background: #FDF6EF; }
+/* 模式切换 */
+.v-music-modes { display: flex; gap: 6px; align-items: center; margin: 6px 0 10px; }
+.v-music-mode { padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line, #ccc); background: #fff; cursor: pointer; font-size: 13px; }
+.v-music-mode.on { background: #2A2F3A; color: #fff; border-color: #2A2F3A; }
+/* 配置行与 chips */
+.v-music-config { margin: 6px 0 4px; padding: 10px 12px; background: #FAFAF7; border-radius: 10px; }
+.v-studio-fieldrow { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0; }
+.v-studio-fieldrow > .field-label { width: 52px; flex-shrink: 0; padding-top: 5px; }
+.v-studio-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line, #ccc); background: #fff; cursor: pointer; font-size: 12px; color: inherit; }
+.chip.on { background: #2A2F3A; color: #fff; border-color: #2A2F3A; }
+.chip-sm { font-size: 11px; padding: 2px 8px; }
+/* 歌词编辑器 */
+.v-music-lyrics { margin-top: 8px; }
+.v-music-lyrics-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.v-music-lyrics-box { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.7; width: 100%; resize: vertical; white-space: pre; }
+.v-music-acts { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+.v-music-warns { margin-top: 6px; padding: 8px 12px; background: #FBF3DF; border-radius: 8px; color: #9A6B08; font-size: 12.5px; }
+@media (max-width: 900px) {
+  .v-music-presets { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---- AI 辅助组件（2026-11-22 下午③） ---- */
+.chip-ai { background: linear-gradient(135deg, #C77E2B, #E0A45C); color: #fff; border-color: transparent; font-weight: 600; }
+.chip-ai:disabled { opacity: 0.6; cursor: wait; }
+.v-assist-paste { margin: 6px 0; padding: 8px; background: #FDF6EF; border-radius: 8px; border: 1px dashed #E0A45C; }

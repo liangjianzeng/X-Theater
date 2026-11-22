@@ -30,6 +30,7 @@ const TOOLS = {
   create_episode: { expensive: false, desc: "在项目下新建集（LLM 自动生成结构化剧本＋故事方向卡）" },
   suggest_card: { expensive: false, desc: "对 C1 卡出 AI 修改建议（只建议不落盘）" },
   apply_suggestion: { expensive: false, desc: "把已出的修改建议落进待拍板 C1 卡（ver++＋重派 AI 审，拍板权仍在人）" },
+  remember: { expensive: false, desc: "记住一条项目备忘（用户显式「记住：X」；跨会话注入后续对话）" },
   adopt_music: { expensive: false, desc: "采用某条配乐候选挂接到场次" },
   reroll_shot: { expensive: true, desc: "重拍指定镜头（花真金白银，必答门）" },
   pick_take: { expensive: false, desc: "为镜头选定最佳条" },
@@ -38,7 +39,16 @@ const TOOLS = {
   revise_scenes: { expensive: true, desc: "修订剧本分场分镜表（剧本源头变更，必答门）" },
   decide_card: { expensive: true, desc: "拍板创作卡（accept/reject，用户确认票二次把关）" },
   shoot_episode: { expensive: true, desc: "开机拍摄全镜头（大额影子成本，必答门）" },
-  export_episode: { expensive: true, desc: "导出成片（交付预检＋合成，必答门）" }
+  export_episode: { expensive: true, desc: "导出成片（交付预检＋合成，必答门）" },
+  // 素材中心（2026-11-22 施工 C6）：副驾升级为素材管理员
+  search_assets: { expensive: false, desc: "检索素材中心资产库（曲/图/角色/场景卡，只读）" },
+  library_stats: { expensive: false, desc: "素材中心库存统计（各域计数＋候选池）" },
+  bind_asset: { expensive: false, desc: "把素材绑定到本集场景（主曲/备选，审计留痕）" },
+  generate_music: { expensive: true, desc: "素材中心生成配乐候选（进候选池不挂场，必答门）" },
+  // AI 生成编排（2026-11-22 下午③）：副驾直接代办歌词/画面扩写与图像生成
+  assist_lyrics: { expensive: false, desc: "AI 把歌词素材扩写为结构化歌词（段标记规范），结果直接回给用户" },
+  assist_image_prompt: { expensive: false, desc: "AI 把简单画面想法扩写为专业四层画面描述，结果直接回给用户" },
+  generate_image: { expensive: true, desc: "素材中心生成图像候选（进候选池不挂集，必答门）" }
 };
 const WHITELIST = Object.keys(TOOLS);
 const APPROVAL_TTL_MS = 60 * 1000; // 契约 §5：TTL 60s
@@ -121,6 +131,10 @@ function estimate(tool, args, ctx) {
     }
     case "music_candidates":
       return { cents: 45, time_min: 2 }; // 3 条 × 影子 5–15 分/条，取保守上界
+    case "generate_music":
+      return { cents: 45, time_min: 2 }; // 与 music_candidates 同口径（进候选池）
+    case "generate_image":
+      return { cents: 40, time_min: 2 }; // 1–2 张 × 15–25 分/张，取保守上界
     case "shoot_episode": {
       // 开机＝全镜 video 影子成本粗估（对齐 episodes.estimateBreakdown 档位上界）
       const epId = (args && args.episode_id) || "";
@@ -228,13 +242,19 @@ function validateArgs(tool, args, session, ctx, auth) {
       }
       if (tool === "apply_suggestion") {
         if (card.type !== "C1") return forbidden("建议采纳一期只支持 C1");
-        if (card.status !== "pending") return forbidden("卡片不是待拍板状态（" + card.status + ")");
+        if (card.status !== "pending") return forbidden("卡片不是待拍板状态（" + card.status + "）");
         const sug = card.payload && card.payload.suggest;
         if (!sug) return forbidden("卡上还没有建议——先说「给这张卡出修改建议」");
         if (!Array.isArray(sug.scenes) || !sug.scenes.length) {
           return forbidden("这条建议缺分镜结构落不了卡——换个更具体的意见重新出建议");
         }
       }
+      break;
+    }
+    case "remember": {
+      if (typeof a.fact !== "string" || !a.fact.trim()) return forbidden("缺少备忘内容（记住什么？）");
+      if (a.fact.trim().length > 120) return forbidden("备忘过长（≤120字）");
+      if (a.project_id != null && !st.projects[a.project_id]) return forbidden("对象不存在或不可见：" + a.project_id);
       break;
     }
     case "query_episodes":

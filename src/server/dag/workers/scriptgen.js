@@ -17,6 +17,8 @@
  *   - 禁随机（确定性纪律不适用于模型输出本身；本 worker 不引入额外随机源）。
  */
 
+const prompts = require("../../prompts/index.js");
+
 const NAME = "scriptgen";
 const LANE = "scriptgen";
 
@@ -54,11 +56,16 @@ function toScript(j) {
   const scenesIn = Array.isArray(j.scenes) ? j.scenes : (Array.isArray(j.storyboard) ? j.storyboard : []);
   if (!scenesIn.length) return null;
   const castIn = (Array.isArray(j.cast) ? j.cast : (Array.isArray(j.characters) ? j.characters : [])).slice(0, MAX_CAST);
-  const cast = castIn.map((c) => ({
-    role: clampStr(pick(c, ["role", "name", "character", "角色", "角色名"]) || "角色", 30) || "角色",
-    name: clampStr(pick(c, ["name", "actor", "演员"]), 30),
-    desc: clampStr(pick(c, ["desc", "description", "appearance", "外貌", "设定", "描述"]), 400)
-  }));
+  const cast = castIn.map((c) => {
+    const genderRaw = clampStr(pick(c, ["gender", "sex", "性别"]), 4);
+    return {
+      role: clampStr(pick(c, ["role", "name", "character", "角色", "角色名"]) || "角色", 30) || "角色",
+      name: clampStr(pick(c, ["name", "actor", "演员"]), 30),
+      gender: /^(女|女性|female|f)$/i.test(genderRaw) ? "女" : (/^(男|男性|male|m)$/i.test(genderRaw) ? "男" : undefined),
+      voice: clampStr(pick(c, ["voice", "音色", "声线"]), 40) || undefined,
+      desc: clampStr(pick(c, ["desc", "description", "appearance", "外貌", "设定", "描述"]), 400)
+    };
+  });
   const roles = cast.map((c) => c.role);
   const scenes = scenesIn.slice(0, MAX_SCENES).map((sc, si) => {
     const shotsIn = Array.isArray(sc && (sc.shots || sc.镜头 || sc.shotList)) ? (sc.shots || sc.镜头 || sc.shotList) : [];
@@ -67,6 +74,12 @@ function toScript(j) {
       if (!castShot.length && roles.length === 1) castShot = [roles[0]]; // 独角剧回填
       return {
         desc: clampStr(pick(sh, ["desc", "description", "visual", "画面", "描述"]), 300),
+        // 镜头语言字段（2026-11-22 schema v2）：枚举内才保留，越界丢弃——worker 层按 desc 关键词推导兜底
+        size: prompts.SIZE_KEYS.indexOf(clampStr(pick(sh, ["size", "shot_size", "景别"]), 6)) >= 0
+          ? clampStr(pick(sh, ["size", "shot_size", "景别"]), 6) : undefined,
+        move: prompts.MOVE_KEYS.indexOf(clampStr(pick(sh, ["move", "camera", "运镜"]), 6)) >= 0
+          ? clampStr(pick(sh, ["move", "camera", "运镜"]), 6) : undefined,
+        light: clampStr(pick(sh, ["light", "lighting", "光线"]), 60) || undefined,
         sec: Number(pick(sh, ["sec", "duration", "时长", "seconds"])) > 0
           ? Math.min(15, Math.max(3, Math.round(Number(pick(sh, ["sec", "duration", "时长", "seconds"])))))
           : 5,
@@ -90,34 +103,25 @@ function toScript(j) {
   return { scenes, cast };
 }
 
-function beatsBlock(tpl) {
-  if (!tpl || !Array.isArray(tpl.beats) || !tpl.beats.length) return "";
-  const lines = tpl.beats
-    .map((b, i) => `${i + 1}. ${b.beat}${b.guide ? "：" + b.guide : ""}`)
-    .join("\n");
-  return `\n题材节拍（${tpl.genre || "通用"}）——剧情按此节拍展开：\n${lines}`;
-}
-
+/* 提示词骨架迁入 prompts 注册中心（2026-11-22）：buildScriptgenSys/buildScriptgenUsr 单一来源，
+ * 本文件只保留钳制与容错。节拍块随 sys 一并注入。 */
 function buildSys(tpl) {
-  return [
-    "你是剧场 Studio 的短剧编剧。把输入的故事想法扩写成一集竖屏短剧的分场分镜剧本，只输出一个 JSON 对象。",
-    "JSON 字段（键名必须一字不差）：",
-    `{"title":"片名(≤16字)","scenes":[{"name":"场名(2-10字)","mood":"氛围(2-6字)","shots":[{"desc":"画面描述","sec":5,"cast":["角色名"],"dialogue":"台词"}]}],"cast":[{"role":"角色名","name":"演员名","desc":"外貌设定"}]}`,
-    "硬约束：",
-    `1. scenes 3–${MAX_SCENES} 场，每场 shots 2–${MAX_SHOTS} 镜，全片总时长 60–100 秒。`,
-    "2. 每个 shot：desc 是文生图画面描述（人物动作/表情/机位/光线，40–80 字）；sec 是 3–15 整数；cast 填该镜出场角色名（必须与 cast.role 一致，空镜才留空数组）；dialogue 是该镜台词（≤40 字，无台词用空字符串）。关键情绪镜 tier 填 \"high\"（最多 2 镜）。",
-    "3. cast 数组 2–4 人：role 是剧中称呼；desc 是定妆画像——年龄、性别、发型、服装、气质（40–80 字，跨镜稳定）。",
-    "4. 不要输出解释文字、不要 markdown 代码块、不要在 JSON 前后加任何内容。",
-    beatsBlock(tpl),
-    tpl && tpl.style && tpl.style.look ? `影调风格：${tpl.style.look}。desc 与 mood 与此风格一致。` : ""
-  ].filter(Boolean).join("\n");
+  return prompts.buildScriptgenSys(tpl, { maxScenes: MAX_SCENES, maxShots: MAX_SHOTS });
 }
 
-function buildUsr(p, brief, kind, tpl) {
-  const srcText = kind === "novel"
-    ? `以下是一段小说/故事文本，从中提炼改编出一集短剧剧本（可只取最戏剧化的主线）：\n${brief.slice(0, 3000)}`
-    : `一句话/一段话的想法：\n${brief.slice(0, 500)}`;
-  return `${srcText}\n剧名（可用它起片名）：${clampStr(p.title, 40)}`;
+function buildUsr(p, brief, kind, tpl, ctx) {
+  let usr = prompts.buildScriptgenUsr(p, brief, kind);
+  // 设定域注入（素材中心 C1，2026-11-22）：canon.lore（世界观/人物小传/称谓表）随 usr 定界注入——
+  // 长剧集连续性的结构化源头；空设定无感（q() 由注册中心统一消毒）
+  try {
+    const st = ctx && ctx.store && typeof ctx.store.get === "function" ? ctx.store.get() : null;
+    const lore = st && st.asset_lib && st.asset_lib.canon && Array.isArray(st.asset_lib.canon.lore) ? st.asset_lib.canon.lore : [];
+    const lines = lore.filter((l) => l && (l.title || l.content)).map((l) => (l.title || "设定") + "：" + (l.content || "")).slice(0, 8);
+    if (lines.length) {
+      usr += "\n" + prompts.q("剧集设定（世界观/人物小传/称谓表——剧情、台词与锚点必须与设定一致）", lines.join("\n"), 1500);
+    }
+  } catch (e) { /* 设定注入失败不阻断剧本生成 */ }
+  return usr;
 }
 
 /* 结果必须挂到 job 上（与 img5060 bag() 同纪律）：bus 广播与 cards.js 只读 job.result/job.art */
@@ -137,7 +141,7 @@ async function generate(ctx, job, sys, usr) {
   const tpl = job.payload && job.payload.template;
   const r = await ctx.llm.chat(
     [{ role: "system", content: sys }, { role: "user", content: usr }],
-    { temperature: 0.5, maxTokens: 3000, timeoutMs: 90000 }
+    { temperature: 0.5, maxTokens: 4000, timeoutMs: 90000 }
   );
   if (!r || !r.ok) {
     return { script: null, note: "LLM 未给出结果（" + ((r && r.error) || "超时") + "）——先用占位结构，可驳回方向卡重出" };
@@ -156,9 +160,9 @@ async function generate(ctx, job, sys, usr) {
       { role: "system", content: sys },
       { role: "user", content: usr },
       { role: "assistant", content: String(r.content || "").slice(0, 500) },
-      { role: "user", content: "上一次输出无法解析。只输出一个 JSON 对象：{\"title\":…,\"scenes\":[…],\"cast\":[…]}，键名一字不差，不要任何其他文字或代码块。" }
+      { role: "user", content: "上一次输出无法解析。只输出一个 JSON 对象：{\"title\":…,\"scenes\":[…],\"cast\":[…]}，键名一字不差；shots 的 size/move/light 与 cast 的 gender 也要给全。不要任何其他文字或代码块。" }
     ],
-    { temperature: 0.3, maxTokens: 3000, timeoutMs: 90000 }
+    { temperature: 0.3, maxTokens: 4000, timeoutMs: 90000 }
   );
   script = r2 && r2.ok ? parseScript(r2.content) : null;
   if (script) {
@@ -175,7 +179,16 @@ function parseTitle(content) {
 }
 function tplNote(tpl, script) {
   const n = script ? script.scenes.length : 0;
-  return tpl ? `按「${tpl.genre || "通用"}」节拍生成 ${n} 场剧本` : `生成 ${n} 场剧本`;
+  const base = tpl ? `按「${tpl.genre || "通用"}」节拍生成 ${n} 场剧本` : `生成 ${n} 场剧本`;
+  // 锚点五要素软校验（prompts/validate.js）：缺项不 fail，提示词层引导用户在 C2 补齐
+  const warns = [];
+  if (script && Array.isArray(script.cast)) {
+    script.cast.forEach((c) => {
+      const miss = prompts.validate.anchorWarnings(c.desc);
+      if (miss.length) warns.push((c.role || c.name || "?") + "缺[" + miss.join("/") + "]");
+    });
+  }
+  return warns.length ? base + "；锚点待补：" + warns.join("、") : base;
 }
 
 async function run(job, ctx) {
@@ -194,7 +207,7 @@ async function run(job, ctx) {
   }
 
   try {
-    const bag = await generate(ctx, job, buildSys(tpl), buildUsr(p, brief, kind));
+    const bag = await generate(ctx, job, buildSys(tpl), buildUsr(p, brief, kind, tpl, ctx));
     return attach(job, bag);
   } catch (e) {
     return attach(job, {

@@ -263,8 +263,13 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const cachedGpu = (ctx.llm && ctx.llm.enabled()) ? (ctx.llm.cached() || {}) : { configured: false, llmOnline: false };
       const epIdGpu = args.episode_id || governance.defaultEpisodeId(ctx, session);
       const epG = st.episodes[epIdGpu] || {};
+      // driver＝节点注册表任意节点 id（2026-11-22）；渲染是否落在 LLM 承载机由节点表判定，不再写死 dgx/local
+      const driverId = epG.driver || "local";
+      const driverNode = (st.nodes || {})[driverId] || null;
       result = Object.assign({}, cachedGpu, {
-        episode_driver: epG.driver === "dgx" ? "dgx" : "local",
+        episode_driver: driverId,
+        episode_node_label: driverNode ? driverNode.label : driverId,
+        render_on_llm_host: !!(driverNode && (st.llm_node || "local") === driverId),
         nodes: Object.keys(st.nodes || {}).map(function (id) { return { id: id, label: st.nodes[id].label, is_llm_host: (st.llm_node || "local") === id }; }),
         llm_node: st.llm_node || "local"
       });
@@ -401,6 +406,126 @@ async function execute(tool, args, ctx, session, auth, opts) {
       result = { card_id: cardAs.id, type: cardAs.type, scenes: sug.scenes.length, status: cardAs.status };
       break;
     }
+    /* ---- 素材中心（2026-11-22 C6，2026-11-22 下午③重打：并行 commit 覆盖后恢复） ---- */
+    case "search_assets": {
+      const domain = String(args.domain || "music");
+      const st2 = ctx.store.get();
+      const arrs = {
+        music: st2.asset_lib && st2.asset_lib.audio ? st2.asset_lib.audio.music : [],
+        characters: (st2.asset_lib && st2.asset_lib.characters) || [],
+        scenes: (st2.asset_lib && st2.asset_lib.scenes) || [],
+        images: (st2.asset_lib && st2.asset_lib.images) || []
+      };
+      const arr = (arrs[domain] || []).filter((x) => x && x.status !== "retired");
+      const q = String(args.q || "").trim().toLowerCase();
+      const hits = (q ? arr.filter((x) => JSON.stringify(x).toLowerCase().indexOf(q) >= 0) : arr).slice(0, 5);
+      result = { domain, total: arr.length, hits: hits.map((x) => ({ id: x.id, title: x.title || x.name || x.role, mood: x.mood || null, type: x.type || null, rating: x.rating || 0 })) };
+      break;
+    }
+    case "library_stats": {
+      const st2 = ctx.store.get();
+      const l = st2.asset_lib || { audio: { music: [], sfx: [], ambience: [], voices: [] }, images: [], characters: [], scenes: [] };
+      result = {
+        music: (l.audio.music || []).filter((m) => m.status !== "retired").length,
+        sfx: (l.audio.sfx || []).length,
+        ambience: (l.audio.ambience || []).length,
+        voices: (l.audio.voices || []).length,
+        images: (l.images || []).filter((m) => m.status !== "retired").length,
+        characters: (l.characters || []).length,
+        scenes: (l.scenes || []).length,
+        drafts: st2.asset_drafts ? (st2.asset_drafts.music || []).length + (st2.asset_drafts.images || []).length : 0
+      };
+      break;
+    }
+    case "bind_asset": {
+      const domain = String(args.domain || "music");
+      const libMod = require("../api/library.js");
+      const entry = libMod.findEntry(ctx, domain, args.asset_id);
+      if (!entry) throw { code: "NOT_FOUND", message: "素材不存在: " + args.asset_id };
+      const epIdBind = governance.defaultEpisodeId(ctx, session);
+      let sceneId = args.scene_id || null;
+      if (!sceneId && args.scene_no) {
+        const sorted = Object.keys(st.scenes || {}).map((k) => st.scenes[k])
+          .filter((s) => String(s.episodeId) === String(epIdBind))
+          .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        const hit = sorted[(Number(args.scene_no) || 1) - 1];
+        sceneId = hit ? hit.id : null;
+      }
+      if (!sceneId || !st.scenes[sceneId]) throw { code: "NOT_FOUND", message: "场景不存在（scene_no/scene_id）" };
+      entry.used_by = Array.isArray(entry.used_by) ? entry.used_by : [];
+      if (!entry.used_by.some((u) => u && u.kind === "scene" && String(u.id) === String(sceneId))) {
+        entry.used_by.push({ kind: "scene", id: String(sceneId), primary: !!args.primary, at: Date.now() });
+      } else if (args.primary) {
+        entry.used_by.forEach((u) => { if (u.kind === "scene" && String(u.id) === String(sceneId)) u.primary = true; });
+      }
+      if (domain === "music" && args.primary) {
+        (st.asset_lib.audio.music || []).forEach((m) => {
+          if (m === entry || !Array.isArray(m.used_by)) return;
+          m.used_by.forEach((u) => { if (u.kind === "scene" && String(u.id) === String(sceneId)) u.primary = false; });
+        });
+      }
+      ctx.store.commit();
+      ctx.store.log("audit", { operator: (auth && auth.id) || session.uid, action: "l2_bind_asset", audit_id: util.uid("AUD"), reason: domain + ":" + args.asset_id + " → scene " + sceneId + (args.primary ? "（主）" : "") });
+      result = { asset_id: args.asset_id, domain, scene_id: sceneId, primary: !!args.primary, bound: true };
+      break;
+    }
+    case "generate_music": {
+      const mood = String(args.mood || "释然").trim();
+      const type = ["bgm", "theme", "ambient", "mv"].indexOf(args.type) >= 0 ? args.type : "bgm";
+      const job = ctx.engine.enqueue("music", {
+        type, mood, sec: Number(args.sec) || undefined,
+        projectId: args.project_id || undefined
+      }, { initiated_by: "user" });
+      job_id = job ? job.id : null;
+      used_cents = (approval && approval.est && approval.est.cents) || est.cents;
+      result = { mood, type, candidates: 3, goes_to: "素材中心候选池", job_id };
+      break;
+    }
+    case "generate_image": {
+      const desc = String(args.desc || "").trim();
+      if (!desc) throw { code: "BAD_REQUEST", message: "desc（画面描述）必填" };
+      const job = ctx.engine.enqueue("img_free", {
+        type: ["establishing", "empty", "prop", "poster", "mood", "mv"].indexOf(args.type) >= 0 ? args.type : "mood",
+        desc: desc.slice(0, 800),
+        ratio: args.ratio === "16:9" || args.ratio === "1:1" ? args.ratio : "9:16",
+        projectId: args.project_id || undefined
+      }, { initiated_by: "user" });
+      job_id = job ? job.id : null;
+      used_cents = (approval && approval.est && approval.est.cents) || est.cents;
+      result = { desc: desc.slice(0, 60), goes_to: "素材中心候选池", job_id };
+      break;
+    }
+    case "assist_lyrics": {
+      const promptsMod = require("../prompts/index.js");
+      if (!ctx.llm || !ctx.llm.enabled()) throw { code: "LLM_OFFLINE", message: "AI 助手没在线，不能扩写歌词" };
+      const paste = String(args.paste || "").trim();
+      if (!paste) throw { code: "BAD_REQUEST", message: "paste（歌词素材/主题）必填" };
+      const typeLabel = ({ theme: "主题曲", bgm: "背景 BGM", ambient: "氛围垫乐", mv: "MV 成曲" })[args.type] || "主题曲";
+      const r = await ctx.llm.chat(
+        [{ role: "system", content: promptsMod.buildAssistLyricsSys() },
+         { role: "user", content: promptsMod.buildAssistLyricsUsr({ paste, typeLabel, mood: args.mood, sec: 0, instrumental: false, note: args.note }) }],
+        { temperature: 0.7, maxTokens: 1600, timeoutMs: 90000 });
+      if (!r || !r.ok || !r.content) throw { code: "LLM_BAD", message: "AI 没给出结果——稍后重试" };
+      result = { lyrics: String(r.content).replace(/```[a-z]*\n?/gi, "").trim().slice(0, 3000) };
+      break;
+    }
+    case "assist_image_prompt": {
+      const promptsMod = require("../prompts/index.js");
+      if (!ctx.llm || !ctx.llm.enabled()) throw { code: "LLM_OFFLINE", message: "AI 助手没在线，不能扩写画面" };
+      const idea = String(args.idea || "").trim();
+      if (!idea) throw { code: "BAD_REQUEST", message: "idea（画面想法）必填" };
+      const r = await ctx.llm.chat(
+        [{ role: "system", content: promptsMod.buildAssistImageSys() },
+         { role: "user", content: promptsMod.buildAssistImageUsr({ idea, type: args.type, mood: args.mood, ratio: args.ratio }) }],
+        { temperature: 0.6, maxTokens: 900, timeoutMs: 90000 });
+      if (!r || !r.ok || !r.content) throw { code: "LLM_BAD", message: "AI 没给出结果——稍后重试" };
+      const m = String(r.content).match(/\{[\s\S]*\}/);
+      let out = null; try { out = JSON.parse(m[0]); } catch (e) {}
+      if (!out || !out.desc) throw { code: "LLM_BAD", message: "AI 输出解析失败——稍后重试" };
+      result = { desc: String(out.desc || "").slice(0, 600), negative: String(out.negative || "").slice(0, 200), tags: String(out.tags || "").slice(0, 200) };
+      break;
+    }
+
     case "adopt_music": {
       const r = musicMod.adoptCandidate(ctx, args.candidate_id, args.scene_id);
       result = { candidate_id: args.candidate_id, scene_id: args.scene_id, adopted: !!(r && r.entry) };

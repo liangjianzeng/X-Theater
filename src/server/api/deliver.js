@@ -9,12 +9,35 @@
 
 const PRECHECK_ITEM_MUSIC = "配乐双许可";
 
+/** 曲库读取（素材中心 2026-11-22）：asset_lib.audio.music 优先（迁移后旧 music_lib 只读留档，不重复计数） */
+function musicLibOf(ctx) {
+  const st = ctx.store.get();
+  return st.asset_lib && st.asset_lib.audio && Array.isArray(st.asset_lib.audio.music)
+    ? st.asset_lib.audio.music
+    : (Array.isArray(st.music_lib) ? st.music_lib : []);
+}
+
+/** 场景绑定判定：1:N used_by（K2）或旧 sceneId 字段（迁移兼容） */
+function boundToScene(m, sid) {
+  return (
+    (Array.isArray(m.used_by) ? m.used_by : []).some((u) => u && u.kind === "scene" && String(u.id) === String(sid)) ||
+    (m.sceneId && String(m.sceneId) === String(sid))
+  );
+}
+
+/** 主曲判定（K2：compose 每场取主曲；备选曲不参与出货，预检只看主曲） */
+function primaryOfScene(lib, sid) {
+  const bound = lib.filter((m) => m && boundToScene(m, sid));
+  if (!bound.length) return null;
+  const prim = bound.filter((m) => (Array.isArray(m.used_by) ? m.used_by : []).some((u) => u && u.kind === "scene" && String(u.id) === String(sid) && u.primary));
+  return (prim.length ? prim : bound)[0]; // 无 primary 标记（旧数据）→ 首条
+}
+
 function episodeMusics(ctx, episodeId) {
   const st = ctx.store.get();
-  return (st.music_lib || []).filter((m) => {
-    const sc = m && m.sceneId ? (st.scenes || {})[m.sceneId] : null;
-    return sc && sc.episodeId === episodeId;
-  });
+  const lib = musicLibOf(ctx);
+  const sceneIds = Object.keys(st.scenes || {}).filter((k) => st.scenes[k] && st.scenes[k].episodeId === episodeId);
+  return sceneIds.map((sid) => primaryOfScene(lib, sid)).filter(Boolean);
 }
 
 function musicCheckItem(ctx, episodeId) {
@@ -27,12 +50,12 @@ function musicCheckItem(ctx, episodeId) {
   let item = { item: PRECHECK_ITEM_MUSIC, pass: bad.length === 0, note: fallbackNote };
   const lic = ctx.rules && ctx.rules.license;
   if (lic && typeof lic.precheckMusic === "function") {
-    // rules.license.precheckMusic(sceneSlots, lib)：只校验“引用曲”（已挂接到本集场景的曲）
-    const lib = st.music_lib || [];
+    // rules.license.precheckMusic(sceneSlots, lib)：只校验“引用曲”（已挂接到本集场景的主曲）
+    const lib = musicLibOf(ctx);
     const sceneIds = Object.keys(st.scenes || {}).filter((k) => st.scenes[k].episodeId === episodeId);
     const slots = [];
     sceneIds.forEach((sid) => {
-      const t = lib.filter((m) => m.sceneId === sid)[0];
+      const t = primaryOfScene(lib, sid);
       if (t) slots.push({ sceneId: sid, trackId: t.id, track: t });
     });
     let r = null;

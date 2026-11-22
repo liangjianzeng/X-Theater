@@ -10,6 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "vid5060";
 const ENGINE = "LTX-2.5 distilled GGUF UD-Q4_K_XL";
@@ -19,7 +20,6 @@ const COST_CENTS = 80;
 const TMPL_I2V = "ltx25-i2v";
 const TMPL_I2V_REF = "ltx25-i2v-ref";
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
-const STYLE = "电影感镜头运动，青橙影调，雨夜暖光，浅景深";
 
 function fnv1a(str) {
   let h = 0x811c9dc5;
@@ -146,21 +146,23 @@ function shotDesc(ctx, episodeId, shot) {
     const script = ep && ep.script;
     if (!script) return shot.name || "";
     const flat = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name }, sh))));
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name, sceneMood: sc.mood }, sh))));
     // state 镜 seq 是全局编号（场×100+序），须按 seq 排序后取位，不能直接当下标
     const sorted = Object.keys(st.shots || {}).map((k) => st.shots[k])
       .filter((x) => x && x.episodeId === episodeId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
     const pos = sorted.findIndex((x) => x.id === (shot && shot.id));
     const sh = (pos >= 0 ? flat[pos] : null) || flat[(shot.seq || 1) - 1] || {};
     const refName = (sh.cast || [])[0];
+    const cc0 = (script.cast || []).find((x) => x.role === refName || x.name === refName) || {};
+    const g0 = prompts.genderOf(cc0, refName);
     // 参考图只锚 cast[0]；其余角色用形象块文字锚定（否则双人镜第二人会漂成女性——实测）
     const whoBlocks = (sh.cast || []).slice(0, 2).map((role, ci) => {
       const cc = (script.cast || []).find((x) => x.role === role || x.name === refName && x.role === role || x.name === role);
       const an = (cc && (cc.anchor || cc.desc)) || "";
       const wd = (cc && cc.wardrobe) || "";
       const nm = (cc && cc.name) || role;
-      const fem = /女/.test(role);
-      const pron = fem ? "她" : "他";
+      const g = prompts.genderOf(cc, role);
+      const pron = prompts.pronZh(g);
       if (ci === 0) {
         return [
           an ? "画面中是参考图里同一位人物（同一人）：" + an + "。" : "",
@@ -168,37 +170,45 @@ function shotDesc(ctx, episodeId, shot) {
           wd ? "服装：" + wd + "，与参考图一致。" : ""
         ].filter(Boolean).join("");
       }
-      return nm + "：" + (fem ? "一位年轻东亚女性" : "一位年轻东亚男性") + "，" + an + (wd ? "，穿" + wd : "") + "。";
+      return nm + "：" + prompts.genderNounZh(g) + "，" + an + (wd ? "，穿" + wd : "") + "。";
     }).join("");
     const legacyWho = (sh.cast || []).map((role) => {
       const cc = (script.cast || []).find((x) => x.role === role || x.name === role);
       return cc ? cc.desc + "。" : "";
     }).join("");
-    // 场景光照统一块（场内视觉连续性——实测成片空镜乱入电线塔/桥的根因之一）
-    const sceneLight = {
-      "场1": "雨夜，青蓝冷调与暖烛光对比，窗上雨痕",
-      "场2": "暮色，暖黄烛光笼罩，雾气弥漫",
-      "场3": "深夜，冷蓝压抑调，暴雨",
-      "场4": "黎明前，金色光束刺破雨幕，青灰转金"
-    };
-    const lightKey = Object.keys(sceneLight).find((k) => String((sh && sh.scene) || "").indexOf(k) === 0 || String(sh.desc || "").indexOf(k) >= 0 || (shot && shot.name || "").indexOf(k) >= 0);
+    // 场景光照统一块（2026-11-22 提示词体系升级）：shot.light（剧本 schema v2）→ mood 光线词典
+    // → 风格包 light_by_mood，替代《雨夜》场1-场4 写死映射；场内视觉连续性纪律不变。
+    const pkg = prompts.style.resolve(ctx, episodeId);
+    const light = String(sh.light || "").trim() || prompts.lightZh(sh.sceneMood || sh.mood, pkg);
+    // 运镜具体化：shot.move（schema v2）→ 关键词推导 → 词典短语，替代「电影感镜头运动」泛写
+    const moveLine = prompts.moveZh(sh.move || prompts.guessMove(sh.desc || ""));
     // 台词直接写进提示词：LTX-2.5 音视频联合生成说话口型＋同期声（实测 SP_speech 口型与语音同步）
-    const speech = sh.dialogue ? "她面向镜头开口说话，语音清晰说出：「" + sh.dialogue + "」。她说话时嘴唇随台词自然开合，口型与台词对应，同期声收录她的说话声。" : "";
+    const speech = sh.dialogue
+      ? prompts.pronZh(g0) + "面向镜头开口说话，语音清晰说出：「" + sh.dialogue + "」。" + prompts.pronZh(g0) + "说话时嘴唇随台词自然开合，口型与台词对应，同期声收录" + prompts.pronZh(g0) + "的说话声。"
+      : "";
     return [
       whoBlocks.length ? whoBlocks : legacyWho,
       sh.desc || shot.name || "",
-      lightKey ? sceneLight[lightKey] : "",
+      light,
+      moveLine,
       speech,
-      STYLE
+      pkg.video_suffix_zh
     ].filter(Boolean).join(" ");
   } catch (e) { return (shot && shot.name) || ""; }
 }
 
 async function freeComfy(ctx) {
-  const base = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = dialBase(ctx); // 与本 lane 拨号同端点（同机模型常驻才有显存冲突），挂节点档案
   try {
     await fetch(base + "/free", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
   } catch (e) { /* 无 /free 或不可达：下游真错误会暴露 */ }
+}
+
+/** vid5060 车道拨号端点：注册表 lane→node 绑定 → 节点档案（旧部署回退 cfg.comfy 通道） */
+function dialBase(ctx) {
+  const c = (ctx && ctx.cfg) || {};
+  if (typeof c.laneBase === "function") return String(c.laneBase(NAME) || "").replace(/\/+$/, "");
+  return String((c.comfy && c.comfy.base) || "").replace(/\/+$/, "");
 }
 
 async function runComfy(ctx, job, p, seed, cents) {
@@ -214,10 +224,11 @@ async function runComfy(ctx, job, p, seed, cents) {
   const hasNS = hasNativeSpeech(ctx, episodeId, shot);
   const r = await comfy.runTemplate(ctx, j, {
     tmplId: ref ? TMPL_I2V_REF : TMPL_I2V,
+    base: dialBase(ctx), // 本 lane 绑定节点的 Comfy 端点（显式传入，不随 img5060 绑定漂移）
     params: Object.assign({
       SEED: numFrom(seed) % 4294967295,
       PROMPT: shotDesc(ctx, episodeId, shot),
-      NEGATIVE: "低质量，模糊，变形，水印，文字，闪切",
+      NEGATIVE: prompts.negativeFor("video"),
       WIDTH: 720, HEIGHT: 1280,
       FPS: 24, LENGTH: 121,
       STAGE1_W: 360, STAGE1_H: 640,

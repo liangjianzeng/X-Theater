@@ -11,6 +11,29 @@ const fs = require("fs");
 const path = require("path");
 const util = require("./util");
 
+/* ---------------- 节点拓扑内建默认（2026-11-22 节点注册表化） ----------------
+ * 存量库注册表引擎缺 node 绑定时的回退表（2026-11-22 之前的硬编码拓扑）。
+ * 启动时 ensureRegistryNodes 会把绑定写进注册表，此后注册表是 lane→node 唯一事实源；
+ * 本表仅兜底「注册表同族引擎全无绑定」的过渡态。引擎登记/改绑见 api/admin.js。 */
+const DEFAULT_LANE_NODE = { img5060: "local", vid5060: "local", imgspark: "dgx", vidsark: "dgx", vidspark: "dgx" };
+// 注：vidsark 为 2026-11-22 之前的拼写残留（兼容保留），正确键名 vidspark 修正同绑 dgx
+
+/** 幂等迁移：注册表引擎补 node 绑定字段（缺省按 DEFAULT_LANE_NODE，其余车道 null） */
+function ensureRegistryNodes(state) {
+  const st = state || {};
+  st.settings = st.settings || {};
+  const reg = (st.settings.registry = st.settings.registry || {});
+  let n = 0;
+  Object.keys(reg).forEach((id) => {
+    const e = reg[id];
+    if (e && e.node === undefined) {
+      e.node = DEFAULT_LANE_NODE[e.lane] !== undefined ? DEFAULT_LANE_NODE[e.lane] : null;
+      n++;
+    }
+  });
+  return n;
+}
+
 /* ---------------- 种子数据（契约 §8 附录 A） ---------------- */
 
 const SHOT_TYPES = ["特写", "中景", "全景", "空镜"];
@@ -132,38 +155,41 @@ function seedState() {
     alerts: [],
     l2_sessions: {},
     settings: {
-      // 引擎与段位注册表（契约 §4；rules.quant 依 registry[engineId].unavail/published 裁决）
+      // 引擎与段位注册表（契约 §4；rules.quant 依 registry[engineId].unavail/published 裁决）。
+      // node＝引擎归属算力节点（state.nodes 的 id，2026-11-22 节点注册表化）：
+      //   车道拨号（cfg.laneBase）与运维台「归属节点」列均由此派生——注册表是 lane→node 的唯一事实源。
+      //   null＝不挂算力节点的独立服务/进程内车道。
       registry: {
         "qwen-image-2.1-turbo-Q5_K_M": {
-          lane: "img5060", engine: "qwen-image-2.1-turbo", quant: "Q5_K_M",
+          lane: "img5060", node: "local", engine: "qwen-image-2.1-turbo", quant: "Q5_K_M",
           endpoint: "W-B ComfyUI :8188", published: ["Q5_K_M"], unavail: []
         },
         "MiniMax-H3-Image": {
-          lane: "imgspark", engine: "MiniMax-H3-Image", quant: "int8_convrot",
+          lane: "imgspark", node: "dgx", engine: "MiniMax-H3-Image", quant: "int8_convrot",
           endpoint: "Spark ComfyUI :8188", published: ["int8", "MXFP8+FP8"], unavail: ["nvfp4"]
         },
         "LTX-2.5": {
-          lane: "vid5060", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
+          lane: "vid5060", node: "local", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
           endpoint: "W-B ComfyUI :8188", published: ["UD-Q4_K_XL"], unavail: []
         },
         "FastH3": {
-          lane: "vidspark", engine: "MiniMax-H3", quant: "int8_convrot",
+          lane: "vidspark", node: "dgx", engine: "MiniMax-H3", quant: "int8_convrot",
           endpoint: "Spark ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: []
         },
         "ACE-Step 1.5": {
-          lane: "music", engine: "ACE-Step 1.5", quant: "fp16",
+          lane: "music", node: null, engine: "ACE-Step 1.5", quant: "fp16",
           endpoint: "W-M :8190", published: ["fp16"], unavail: []
         },
         "CosyVoice2": {
-          lane: "tts", engine: "CosyVoice2", quant: "fp16",
+          lane: "tts", node: null, engine: "CosyVoice2", quant: "fp16",
           endpoint: "W-B :9880", published: ["fp16"], unavail: []
         },
         "FFmpeg": {
-          lane: "compose", engine: "FFmpeg", quant: "n/a",
+          lane: "compose", node: null, engine: "FFmpeg", quant: "n/a",
           endpoint: "容器池", published: ["n/a"], unavail: []
         },
         "moderate-rules": {
-          lane: "moderate", engine: "规则码＋抽帧 stub", quant: "n/a",
+          lane: "moderate", node: null, engine: "规则码＋抽帧 stub", quant: "n/a",
           endpoint: "in-proc", published: ["n/a"], unavail: []
         }
       },
@@ -199,6 +225,64 @@ function seedStateMinimal() {
   };
 }
 
+/* ---------------- 素材中心（asset_lib）骨架与一次性迁移（素材中心方案 §2/施工 A1） ----------------
+ * st.asset_lib：五域资产库（audio{music,sfx,ambience,voices}/images/characters/scenes/canon）。
+ * st.asset_drafts：候选临时池（生成未入库，TTL 7 天惰性清理）。
+ * 迁移：music_lib → asset_lib.audio.music（只增不删——旧数组保留一版，回滚=代码回退旧包）。
+ * 条目补齐：type/scope/status/rating/used_by/source；sceneId → used_by[{kind:"scene",primary}]。
+ */
+const ASSET_DRAFT_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function ensureAssetLib(state) {
+  if (!state || typeof state !== "object") return state;
+  if (state.asset_lib && state.asset_lib.version) return state;
+  state.asset_lib = {
+    version: 1,
+    audio: { music: [], sfx: [], ambience: [], voices: [] },
+    images: [],
+    characters: [],
+    scenes: [],
+    canon: { style_pkgs: [], reject_rules: [], lore: [], beats: [] }
+  };
+  state.asset_drafts = { music: [], images: [] };
+  // 一次性迁移曲库（mu1/mu2 种子曲 → global/approved）
+  const migrated = [];
+  (Array.isArray(state.music_lib) ? state.music_lib : []).forEach((m) => {
+    if (!m || !m.id) return;
+    const used_by = [];
+    if (m.sceneId) used_by.push({ kind: "scene", id: String(m.sceneId), primary: true });
+    migrated.push(
+      Object.assign({}, m, {
+        type: m.type || "bgm",
+        tags: m.tags || "",
+        scope: m.scope || "global",
+        projectId: m.projectId || null,
+        status: m.status || "approved",
+        rating: m.rating || 0,
+        used_by,
+        source: m.source || "seed"
+      })
+    );
+  });
+  state.asset_lib.audio.music = migrated;
+  return state;
+}
+
+/** 候选池 TTL 惰性清理：读取面（list/summary）调用；过期候选直接淘汰。 */
+function pruneDrafts(state, now) {
+  const drafts = state && state.asset_drafts;
+  if (!drafts) return state;
+  const t = now || Date.now();
+  ["music", "images"].forEach((k) => {
+    const arr = Array.isArray(drafts[k]) ? drafts[k] : (drafts[k] = []);
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const d = arr[i];
+      if (!d || !d.created_at || t - d.created_at > ASSET_DRAFT_TTL_MS) arr.splice(i, 1);
+    }
+  });
+  return state;
+}
+
 /* ---------------- openStore ---------------- */
 
 function openStore(varDir, opts) {
@@ -216,6 +300,7 @@ function openStore(varDir, opts) {
   }
   if (!state || typeof state !== "object" || !state.projects || !state.episodes) {
     state = (opts && opts.minimal) ? seedStateMinimal() : seedState();
+    ensureAssetLib(state); // 种子即带素材库骨架（种子曲随迁移进库）
     seeded = true;
     // e1 演示集已开拍：镜像种子影子账本，Σbilling(episode)==cost_cents 不变量出生即成立（V5）
     let sum = 0;
@@ -244,13 +329,65 @@ function openStore(varDir, opts) {
         lines.map((l) => JSON.stringify(l)).join("\n") + "\n"
       );
     }
+  } else {
+    // 素材库骨架/迁移：存量库统一走 ensure（version 防重跑；只增不删可回滚）
+    ensureAssetLib(state);
+    // 注册表引擎 node 绑定迁移（2026-11-22 节点注册表化）：幂等补齐
+    if (ensureRegistryNodes(state)) {
+      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    }
+  }
+
+  /* ---------- 域（tenant）迁移＋自愈 stamp（2026-11-22 S3） ---------- */
+  // 首次：建「默认工作台」回填全部存量（pool 模式，方案 docs/permission-domain-plan.md）。
+  // 此后每次启动仍幂等补 stamp：并行写入方/历史数据漏戳的实体归默认域，防 scopedView 全域隐形
+  //（2026-11-22 真机：副驾 create_episode 漏戳，集建成即不可见）。
+  {
+    const hasTenants = state.tenants && Object.keys(state.tenants).length;
+    const dt = hasTenants ? Object.keys(state.tenants)[0] : "tid_default";
+    const stampTid = (o) => {
+      let n = 0;
+      Object.keys(o || {}).forEach((k) => {
+        if (o[k] && !o[k].tenantId) { o[k].tenantId = dt; n++; }
+      });
+      return n;
+    };
+    if (!hasTenants) {
+      const users = state.users || {};
+      const opsUser =
+        Object.keys(users).map((k) => users[k]).find((u) => u && u.role === "ops") || null;
+      const members = {};
+      Object.keys(users).forEach((uid) => {
+        members[uid] = opsUser && uid === opsUser.id ? "owner" : "member";
+      });
+      state.tenants = {
+        tid_default: {
+          id: "tid_default",
+          name: "默认工作台",
+          owner_uid: opsUser ? opsUser.id : null,
+          members,
+          created_at: Date.now()
+        }
+      };
+    }
+    const fixed =
+      stampTid(state.projects) + stampTid(state.episodes) + stampTid(state.l2_sessions);
+    if (!hasTenants || fixed) {
+      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    }
   }
 
   let timer = null;
+  let revCounter = 0; // state 修订号（commit/flush 自增）：域级资产反查索引用它做失效
   const store = {
     varDir,
     statePath,
     seeded,
+
+    /** state 修订号（资产索引缓存失效用） */
+    rev() {
+      return revCounter;
+    },
 
     /** → state（可变对象；改完调 commit()） */
     get() {
@@ -262,6 +399,7 @@ function openStore(varDir, opts) {
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
+        revCounter++;
         try {
           fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
         } catch (e) {
@@ -276,6 +414,7 @@ function openStore(varDir, opts) {
         clearTimeout(timer);
         timer = null;
       }
+      revCounter++;
       fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     },
 
@@ -307,4 +446,4 @@ function openStore(varDir, opts) {
   return store;
 }
 
-module.exports = { openStore, seedState };
+module.exports = { openStore, seedState, ensureAssetLib, pruneDrafts, ASSET_DRAFT_TTL_MS, DEFAULT_LANE_NODE, ensureRegistryNodes };

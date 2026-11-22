@@ -9,7 +9,11 @@ const { expect, pollUntil, pickList, extractId, bySeqThenId, sleep, trunc, j } =
 const PROJECT_ID = 'p1';
 const SEED_EPISODE_ID = 'e1';
 const EXPECTED_SHOTS = 16;
-const L2_TOOL_WHITELIST = ['query_progress', 'query_cost', 'reroll_shot', 'pick_take', 'music_candidates', 'set_mood'];
+const L2_TOOL_WHITELIST = ['query_progress', 'query_cost', 'reroll_shot', 'pick_take', 'music_candidates', 'set_mood',
+  /* 素材中心（2026-11-22 施工 C6）：副驾素材工具 */
+  'search_assets', 'library_stats', 'bind_asset', 'generate_music',
+  /* AI 生成编排（2026-11-22 下午③） */
+  'assist_lyrics', 'assist_image_prompt', 'generate_image'];
 
 /** 禁词表（契约 §4 rules.langlint：take/seed/prompt/i2v/LoRA/stale/超分/补帧/路由/worker + 模型名正则） */
 const BANNED_PATTERNS = [

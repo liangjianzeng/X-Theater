@@ -8,6 +8,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "music";
 const ENGINE = "ACE-Step 1.5";
@@ -58,7 +59,7 @@ function writeOut(ctx, fileName, data) {
 
 /** 显存互斥：卸载 ComfyUI 常驻模型（编辑模型热载 ~14.5G，不卸载则 TTS/音乐必 OOM） */
 async function freeComfy(ctx) {
-  const base = String((ctx && ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.base) || "");
+  const base = String((ctx && ctx.cfg && (ctx.cfg.llmHostComfy || (ctx.cfg.comfy && ctx.cfg.comfy.base))) || ""); // 本机（LLM 承载机）Comfy——同机模型常驻才有显存冲突，挂节点档案
   if (!base) return;
   try {
     await new Promise((resolve) => {
@@ -76,7 +77,20 @@ async function runReal(ctx, job, p, mood) {
   const http = require("http");
   const url = String((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL || "");
   if (!url) return null;
-  const body = JSON.stringify({ mood, seconds: 45, seed: numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295 });
+  // 曲风 tags（2026-11-22 提示词体系升级，方案 §5.7）：mood→tags 词典＋风格包 music_tags 覆盖，
+  // 作为可选字段透传（ACE-Step 支持 tags+lyrics 双通道；旧服务端忽略该字段无害）。
+  // 素材中心专业配置（2026-11-22 下午）：API 层已组装 final tags；lyrics（结构标记/歌词）、
+  // caption（自然语言）、instrumental 全通道透传——旧服务端忽略未知字段无害。
+  const pkg = prompts.style.resolve(ctx, p.episodeId || job.episodeId || "");
+  const sec = Math.max(15, Math.min(180, Number(p.sec) || 45)) | 0;
+  const body = JSON.stringify({
+    mood, seconds: sec,
+    seed: numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295,
+    tags: String(p.tags || "").trim() || prompts.musicTags(mood, pkg),
+    lyrics: String(p.lyrics || "") || undefined,
+    prompt: String(p.caption || "") || undefined,
+    instrumental: !!p.instrumental || undefined
+  });
   const r = await new Promise((resolve, reject) => {
     const rq = http.request(url + "/music", { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) }, timeout: 300000 }, (rs) => {
       let s = ""; rs.on("data", (c) => s += c); rs.on("end", () => { try { resolve({ st: rs.statusCode, b: JSON.parse(s || "{}") }); } catch (e) { reject(Object.assign(new Error("W-M 响应异常"), { code: "MUSIC_BAD" })); } });
@@ -96,14 +110,15 @@ async function runReal(ctx, job, p, mood) {
   const meta = {
     kind: "music-real", lane: NAME, engine: ENGINE + "（int8 权重档）", engine_user: "自部署·标准档",
     id, title: mood + " · " + Math.round(info.seconds) + "s", mood, sec: info.seconds,
-    license: { model: "MIT", usage: "ok" }, sceneId: p.sceneId || null,
+    license: { model: "MIT", usage: "ok" }, sceneId: p.sceneId || null, asset_type: p.type || "bgm", tags: p.tags || "",
     episodeId: p.episodeId || job.episodeId || null, cents: 12, seed: String(info.seed || ""),
     gen_seconds: info.gen_seconds, vram_peak_mb: info.vram_peak_mb, source: info.file
   };
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   return {
     id, title: meta.title, mood, sec: info.seconds, license: { model: "MIT", usage: "ok" },
-    engine: "自部署·标准档", shadow_cents: 12, sceneId: p.sceneId || null, art: "var/out/" + fileName, art_abs: abs
+    engine: "自部署·标准档", shadow_cents: 12, sceneId: p.sceneId || null, asset_type: p.type || "bgm", tags: p.tags || "",
+    art: "var/out/" + fileName, art_abs: abs
   };
 }
 
@@ -125,12 +140,13 @@ async function run(job, ctx) {
   }
   const candidates = [];
   let total = 0;
+  const secFixed = Math.max(15, Math.min(120, Number(p.sec) || 0)) | 0; // 素材中心：显式时长优先（0=随机 30–60s）
   for (let i = 0; i < 3; i++) {
     const seed = hash12(ctx, { lane: NAME, jobId: j.id, i, mood, sceneId: p.sceneId || null });
     const n = numFrom(seed);
     const cents = 5 + (n % 11); // 5–15 分/条
     total += cents;
-    const sec = 30 + (numFrom(sub(seed, 4, 8)) % 31); // 30–60s
+    const sec = secFixed || 30 + (numFrom(sub(seed, 4, 8)) % 31); // 30–60s
     const title = titles[i];
     const usage = title.includes("未许可") ? "missing" : "ok";
     const id = "mus_" + sub(seed, 0, 8) + "_" + i;
@@ -148,6 +164,8 @@ async function run(job, ctx) {
       sec,
       license,
       sceneId: p.sceneId || null,
+      asset_type: p.type || "bgm",
+      tags: p.tags || "",
       episodeId: p.episodeId || j.episodeId || null,
       cents,
       seed
@@ -164,6 +182,8 @@ async function run(job, ctx) {
       engine: ENGINE,
       shadow_cents: cents,
       sceneId: p.sceneId || null,
+      asset_type: p.type || "bgm",
+      tags: p.tags || "",
       art,
       art_abs: abs
     });

@@ -33,6 +33,15 @@ function dialogueTag(dialogue, lang) {
   return " <d>[" + l + "]" + d + "</d>";
 }
 
+/** 年龄 EN 标签（2026-11-22 显老修复）：从中文 desc 提取「N岁」→ IR 里显式 Age 标注。
+ *  参考图人脸年龄会压过埋在句首的中文岁数，必须有独立 EN 硬约束；缺省按短剧年轻带。 */
+function ageEn(desc) {
+  const m = String(desc || "").match(/(\d{1,2})\s*岁/);
+  return m
+    ? " Age " + m[1] + " (the face must look exactly " + m[1] + " years old — youthful; never older)."
+    : " Age early-20s (youthful appearance; never older).";
+}
+
 /** 歌曲锚点（2026-11-21）：整首歌统一风格——同一旋律动机+伴奏+唱法写进每镜 IR，
  *  保证 8 镜独立生成拼起来像同一首歌。song 可为字符串（直接用）或 {motif,accompaniment,tempo,key,voice}。 */
 function songLine(song) {
@@ -52,6 +61,10 @@ function songLine(song) {
  * FL2VA 三字段 IR（base-en.txt §2.2）：instruction 行 + 三核心字段。
  * - shotDesc：该镜中文描述（剧本 shots[].desc + 在场角色人设 + 风格锚点）
  * - dialogue：该镜台词（逐句）
+ * - 2026-11-22 提示词体系升级（方案 §5.5/A7）：运镜句按镜头词典代码化（cameraEn，替代写死
+ *   handheld micro）、环境音按场景词典（ambienceEn，替代写死 bedroom）、说话人代词随 gender
+ *   （替代 She 假设）、sings/speaks 按 song 有无区分。
+ * opts 新增：cameraEn（运镜英文句）、ambienceEn（环境音英文短语）、gender（"男"/"女"）
  */
 function buildFL2VA(opts) {
   const o = opts || {};
@@ -60,19 +73,25 @@ function buildFL2VA(opts) {
   const style = String(o.style || "").trim();
   const desc = String(o.shotDesc || "").trim();
   const song = songLine(o.song);
-  const speaker = o.speaker ? " The speaker (" + o.speaker + ") sings these lyrics softly:" : (o.dialogue ? " She sings these lyrics softly:" : "");
+  const pron = o.gender === "男" ? "he" : "she";
+  const pronCap = pron === "he" ? "He" : "She";
+  const verb = song ? "sings these lyrics softly" : "speaks this line softly";
+  const speaker = o.speaker ? " The speaker (" + o.speaker + ") " + verb + ":" : (o.dialogue ? " " + pronCap + " " + verb + ":" : "");
+  const camera = String(o.cameraEn || "").trim() || "The camera holds the composition with subtle handheld micro-movement";
+  const ambience = String(o.ambienceEn || "").trim() || "Quiet location room tone";
   const lines = [];
   if (style) lines.push(style);
   lines.push(
     "integrated_multimodal_description: [Shot 1] Live-action, cinematic. " + desc +
     speaker + dlg +
-    " The camera holds the composition with subtle handheld micro-movement throughout; the action begins immediately and completes just before the final second."
+    " " + camera + "; the action begins immediately and completes just before the final second."
   );
   lines.push(
-    "overall_soundscape: Quiet bedroom room tone matching the scene, soft cloth rustle" +
-    (song ? "; she sings the lyrics above as " + song + " — the sung vocals are clearly audible and lip-synced" : (o.dialogue ? "; the spoken dialogue is clearly audible and lip-synced" : "")) + "."
+    "overall_soundscape: " + ambience + " matching the scene, soft cloth rustle" +
+    // 2026-11-22 配音清晰度修复：说/唱分离且人声必须压过环境——唱仅在剧本显式给歌时出现
+    (song ? "; " + pron + " sings the lyrics above as " + song + " — the sung vocals are close-mic, clearly intelligible and lip-synced, mixed above the accompaniment" : (o.dialogue ? "; the spoken dialogue is close-mic, clearly intelligible and lip-synced, mixed above the location ambience" : "")) + "."
   );
-  lines.push("non_diegetic_music: " + (o.music || (song ? "the accompaniment of the song she sings is part of the scene; no extra background music." : "none; keep the natural location ambience only.")));
+  lines.push("non_diegetic_music: " + (o.music || (song ? "the accompaniment of the song " + pron + " sings is part of the scene; no extra background music." : "none; keep the natural location ambience only, keep it softer than the voice.")));
   return lines.join("\n");
 }
 
@@ -95,7 +114,7 @@ function buildRef2VA(opts) {
     const picSrc = pics[i] ? " from " + pics[i] : "";
     defs.push(
       "<Subject " + n + "> is the character '" + String(s.name || "role" + n) + "'" + picSrc +
-      ": " + String(s.desc || "") + (s.wardrobe ? " Wardrobe: " + s.wardrobe + "." : "")
+      ": " + String(s.desc || "") + ageEn(s.desc) + (s.wardrobe ? " Wardrobe: " + s.wardrobe + "." : "")
     );
   });
   pics.forEach((p, i) => {
@@ -116,15 +135,25 @@ function buildRef2VA(opts) {
   );
 
   const speaker0 = subjects.length ? " <Subject 1> (S1)" : "";
+  // 2026-11-22 提示词体系升级（方案 §5.5/A8）：镜头句（景别+运镜）按词典代码化、
+  // 环境音按场景词典、追加排除句（官方 ref-en 支持 exclusion 描述）
+  const sizeEn = String(o.sizeEn || "").trim();
+  const cameraEn = String(o.cameraEn || "").trim();
+  const ambience = String(o.ambienceEn || "").trim() || "Quiet location room tone";
+  // 在场人数硬约束（2026-11-22 角色消失修复）：定义了几个 subject，画面就全程必须几个人
+  const presence = subjects.length > 1
+    ? " All " + subjects.length + " subjects are present simultaneously throughout the entire shot — none disappears, none is replaced by a different person."
+    : " Exactly one subject appears in the shot; no extra people enter the frame.";
   const detailed =
-    "[Shot 1] Live-action, cinematic shot with shallow depth of field. " +
-    String(o.shotDesc || "").trim() +
+    "[Shot 1] Live-action, cinematic shot" + (sizeEn ? " — " + sizeEn : "") + " with shallow depth of field. " +
+    String(o.shotDesc || "").trim() + presence +
     (o.dialogue ? speaker0 + " speaks the line:" + dlg + " Lip movement naturally syncs with the spoken dialogue." : " No dialogue in this shot; the subject's breathing and micro-expressions remain natural.") +
-    " The camera holds with subtle movement, completing the action just before the final second.";
+    " " + (cameraEn || "The camera holds with subtle movement") + ", completing the action just before the final second." +
+    " No subtitles, no text overlays, no watermarks; single continuous shot, no cuts.";
 
   const soundscape =
-    "Quiet location room tone consistent with the scene; soft cloth rustle and footstep sounds follow the visible movements" +
-    (o.dialogue ? "; the spoken dialogue is clearly audible and lip-synced." : ".");
+    ambience + " consistent with the scene; soft cloth rustle and footstep sounds follow the visible movements" +
+    (o.dialogue ? "; the spoken dialogue is close-mic, clearly intelligible and lip-synced, mixed above the location ambience." : ".");
 
   return [
     "subject_definitions:",
@@ -176,6 +205,10 @@ async function rewriteWithLLM(ir, cfg) {
     const data = await res.json();
     const out = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
     if (!out || typeof out !== "string" || out.length < 40) return { ir, llm_used: false };
+    // 输出契约校验（2026-11-22 prompts/validate.js）：六段标题 + <d> 台词标签必须保留，
+    // 否则弃用重写结果回退规则 IR（fail-open 保留，但给出 reason 供 meta/日志审计）
+    const chk = require("../../prompts/validate.js").validateIR(out, ir);
+    if (!chk.ok) return { ir, llm_used: false, reject_reason: chk.reason };
     return { ir: out.trim(), llm_used: true };
   } catch (e) {
     clearTimeout(t);

@@ -13,9 +13,10 @@
 const fs = require("fs");
 const path = require("path");
 const util = require("../core/util");
+const { DEFAULT_LANE_NODE } = require("../core/store");
 const llmMod = require("../llm/llm");
-// 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥
-const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video"];
+// 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
+const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free"];
 function llmBlocked(cfg) {
   try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
 }
@@ -28,9 +29,12 @@ const TYPE_LANE = {
   casting: "img5060",
   storyboard_char: "img5060",
   storyboard: "img5060",
+  // 素材中心自由生图（2026-11-22 施工 B1）：默认落本机 t2i/i2i 车道；episode.driver 指到别的节点时
+  // 仍按节点路由改道（在 DRIVER_ROUTABLE 白名单内），"固定"只对"无跨节点意图"成立
+  img_free: "img5060",
   img_spark: "imgspark",
   // H3 线（试妆试镜流程 2026-11-21）：初始定妆图生成与试妆试镜视频固定走 imgspark
-  //（comfySpark 启用＝真引擎；stub 模式下 imgspark 自带确定性占位分支）
+  //（引擎专用工作流，不在 driver 改道白名单——它们点名要 H3 引擎，不随剧集节点漂移）
   cast_init: "imgspark",
   screen_test: "imgspark",
   // 卡流节点审查（2026-11-21）：拍板点自动多人格机检；真 LLM 到位后换 lane 承载，人格骨架不变
@@ -40,6 +44,11 @@ const TYPE_LANE = {
   compose: "compose",
   moderate: "moderate"
 };
+
+// 剧集驱动（episode.driver）可改道的任务类型白名单：这些是"通用工作流"，落到哪个节点由
+// driver 指向的算力节点决定（按注册表 lane→node 绑定找同族车道）。引擎专用工作流
+//（img_spark/cast_init/screen_test）不在内。白名单制：新增类型默认不改道，要跨节点需显式加入。
+const DRIVER_ROUTABLE = ["c1plan", "casting", "storyboard", "storyboard_char", "img_free", "video"];
 
 function laneFor(type, opts) {
   if (type === "video") return opts && opts.tier === "high" ? "vidspark" : "vid5060";
@@ -51,6 +60,15 @@ function laneFor(type, opts) {
     throw err;
   }
   return l;
+}
+
+/* ---------- 车道→节点解析（注册表 lane→node 是唯一事实源，存内建回退表兜底） ---------- */
+// 车道族：img*/vid* 前缀（img5060/imgspark 同族可互换节点；命名约定，新车道遵守即入族）
+function familyOf(lane) {
+  const l = String(lane || "");
+  if (l.indexOf("img") === 0) return "img";
+  if (l.indexOf("vid") === 0) return "video";
+  return null;
 }
 
 function createEngine({ store, bus, cfg }) {
@@ -89,6 +107,42 @@ function createEngine({ store, bus, cfg }) {
   function epOf(id) {
     return id ? store.get().episodes[id] || null : null;
   }
+
+  /* ---------- 车道→节点绑定（注册表唯一事实源；存量库回退内建表） ---------- */
+  function registryEntries() {
+    const st = store.get();
+    const reg = (st.settings && st.settings.registry) || {};
+    return Object.keys(reg).map((k) => reg[k]);
+  }
+
+  /** lane 当前绑定到哪个节点（取登记序第一条绑定；无绑定时回退内建表） */
+  function laneBoundNode(lane) {
+    const hit = registryEntries().find((e) => e && e.lane === lane && e.node);
+    if (hit) return hit.node;
+    return DEFAULT_LANE_NODE[lane] || null;
+  }
+
+  /** 同族（img/video）车道里绑定到指定节点的第一条；同族引擎全无绑定时回退内建表 */
+  function laneBoundTo(family, nodeId) {
+    if (!family || !nodeId) return null;
+    const entries = registryEntries();
+    let anyBound = false;
+    for (const e of entries) {
+      if (e && familyOf(e.lane || "") === family) {
+        if (e.node) {
+          anyBound = true;
+          if (e.node === nodeId) return e.lane;
+        }
+      }
+    }
+    if (!anyBound) {
+      for (const l of Object.keys(DEFAULT_LANE_NODE)) {
+        if (familyOf(l) === family && DEFAULT_LANE_NODE[l] === nodeId) return l;
+      }
+    }
+    return null;
+  }
+
   function isPausedEpisode(job) {
     const ep = epOf(job.episodeId);
     return !!(ep && ep.paused);
@@ -106,6 +160,7 @@ function createEngine({ store, bus, cfg }) {
           lane: job.lane,
           status,
           episodeId: job.episodeId,
+          tid: job.tid || null, // 域维度（S3-6）：按域聚合计费/审计
           initiated_by: job.initiated_by,
           free: !!job.free,
           attempts: job.attempts,
@@ -129,6 +184,7 @@ function createEngine({ store, bus, cfg }) {
         status,
         event: status, // 订阅方（cards 卡流状态机）按 event 分发
         episodeId: job.episodeId,
+        tid: job.tid || null, // 域维度（S3-6）：SSE 订阅端按此过滤
         attempts: job.attempts,
         // 完整 job 快照：卡流需要 payload（shotId/sceneId/mood）驱动派生
         job: {
@@ -137,6 +193,7 @@ function createEngine({ store, bus, cfg }) {
           lane: job.lane,
           status,
           episodeId: job.episodeId,
+          tid: job.tid || null,
           payload: job.payload || {},
           initiated_by: job.initiated_by,
           free: !!job.free,
@@ -157,6 +214,36 @@ function createEngine({ store, bus, cfg }) {
     if (st.alerts.length > 200) st.alerts.length = 200;
     store.commit();
     return a;
+  }
+
+  /* ---------- 域级预算护栏（P2） ---------- */
+  // 复用集级 120% 语义：域累计（Σ本域 episode.cost_cents）> 域预算×1.2 → 暂停本域全部进行中集＋告警。
+  // 恢复：运营调高预算或手动恢复集（用户裁量），护栏不自动解除。
+  function tenantGuardrail(st, tid) {
+    const t = (st.tenants || {})[tid];
+    if (!t || !(t.budget_cents > 0)) return;
+    const sum = Object.keys(st.episodes || {})
+      .map((k) => st.episodes[k])
+      .filter((e) => (e.tenantId || "tid_default") === tid)
+      .reduce((a, e) => a + (e.cost_cents || 0), 0);
+    if (sum > t.budget_cents * 1.2) {
+      let n = 0;
+      Object.keys(st.episodes || {}).forEach((k) => {
+        const e = st.episodes[k];
+        if ((e.tenantId || "tid_default") === tid && !e.paused && (e.stage || 1) < 8) {
+          e.paused = true;
+          n++;
+        }
+      });
+      if (n) {
+        store.commit();
+        const a = pushAlert(
+          "budget",
+          "域「" + (t.name || tid) + "」累计成本 " + sum + " 分已超域预算 " + t.budget_cents + " 分的 120%，已暂停 " + n + " 个进行中的集（调高预算或手动恢复）"
+        );
+        bus.publish("alerts", a);
+      }
+    }
   }
 
   /* ---------- 预算护栏 ---------- */
@@ -270,6 +357,7 @@ function createEngine({ store, bus, cfg }) {
       // 影子记账（对账不变量：Σbilling(episode)==episode.cost_cents；free 任务不记不计）
       store.log("billing", {
         episodeId: job.episodeId,
+        tid: job.tid || null, // 域维度（P2）：按域聚合计费
         shotId: (job.payload && job.payload.shotId) || null,
         kind: job.type,
         cents
@@ -279,6 +367,8 @@ function createEngine({ store, bus, cfg }) {
         ep.cost_cents = (ep.cost_cents || 0) + cents;
         store.commit();
         guardrail(ep);
+        // 域级护栏（P2）：本域预算超限 → 暂停全域进行中的集
+        if (ep.tenantId) tenantGuardrail(store.get(), ep.tenantId);
       } else {
         store.commit();
       }
@@ -292,20 +382,37 @@ function createEngine({ store, bus, cfg }) {
 
     enqueue(type, payload, opts) {
       opts = opts || {};
-      // 剧集驱动配置（2026-11-21）：episode.driver="dgx" → 生图/视频走远程 DGX 节点（H3 全家桶），
-      // 本机 5060 Ti 显存让给 LLM 常驻；缺省 "local" 走本机 Comfy。
+      const st = store.get();
+      // 剧集驱动节点路由（2026-11-22 数据驱动化）：episode.driver＝算力节点 id（state.nodes），
+      // img/video 改道目标＝该节点绑定的同族车道（注册表 lane→node）——加节点/改绑定/删节点不再改代码。
+      // driver 指向已不存在的节点（如节点被删后遗留）→ 回退首个登记节点（不写死 local，离开 5060 Ti 也能活）。
       const epForDriver = epOf(opts.episodeId) || (payload && payload.episodeId ? epOf(payload.episodeId) : null);
-      const driver = (epForDriver && epForDriver.driver) === "dgx" ? "dgx" : "local";
+      const driver = epForDriver && (st.nodes || {})[epForDriver.driver]
+        ? epForDriver.driver
+        : Object.keys(st.nodes || {})[0] || "local";
       let lane = laneFor(type, opts);
-      if (driver === "dgx") {
-        if (type === "video") lane = "vidspark";
-        else if (type !== "compose" && type !== "moderate" && type !== "aireview" && type !== "scriptgen" && type !== "voice" && type !== "music") lane = "imgspark";
+      if (DRIVER_ROUTABLE.indexOf(type) >= 0) {
+        const target = laneBoundTo(familyOf(lane), driver);
+        if (target) {
+          lane = target;
+        } else if (laneBoundNode(lane) !== driver) {
+          throw {
+            code: "NODE_NO_LANE",
+            message: "节点「" + driver + "」未绑定该类引擎车道——去运维台「引擎段位」给该节点登记或改绑一个同族引擎，或把本集驱动切回有引擎的节点"
+          };
+        }
       }
-      // 显存互斥硬闸（2026-11-21）：本机 LLM 在线＝16G 卡装不下两家——**本机渲染车道**（img5060/vid5060）
-      // 拒绝入队（Huihui35B attention 占 ~14.4GB）。Spark 远程车道（imgspark/vidspark）渲染在 DGX 上，
-      // 与本机显存无关，不受此闸（2026-11-21 修正：原按类型一刀切误伤 H3 线）。
-      if ((lane === "img5060" || lane === "vid5060") && LOCAL_GPU_TYPES.indexOf(type) >= 0 && llmBlocked(cfg)) {
-        throw { code: "GPU_BUSY", message: "本机 LLM 正占用独显（约 14.4GB），本机生图/拍摄装不下——请在左下角 GPU 徽章「让路」停掉 LLM 后重试，或改走 Spark 高价值档。" };
+      // 显存互斥硬闸（2026-11-21 引入；2026-11-22 数据驱动化）：车道归属节点开启 gpu_gate
+      // 且 LLM 正承载在同一节点 → 拒绝入队（16G 单卡装不下双家；DGX 等大卡节点 gpu_gate=false 不受闸）。
+      const laneNode = laneBoundNode(lane);
+      if (
+        laneNode &&
+        st.llm_node === laneNode &&
+        ((st.nodes || {})[laneNode] || {}).gpu_gate &&
+        LOCAL_GPU_TYPES.indexOf(type) >= 0 &&
+        llmBlocked(cfg)
+      ) {
+        throw { code: "GPU_BUSY", message: "本机 LLM 正占用独显（约 14.4GB），本机生图/拍摄装不下——请在左下角 GPU 徽章「让路」停掉 LLM 后重试，或去运维台把本集驱动切到别的节点。" };
       }
       const ep = epOf(opts.episodeId);
       if (ep && ep.paused) {
@@ -318,6 +425,8 @@ function createEngine({ store, bus, cfg }) {
         lane,
         status: "queued",
         episodeId: opts.episodeId || null,
+        // 域归属（S3-6）：经 episode 反查（账本/事件/SSE 域过滤的租户维度；episodeId 是全任务公共键）
+        tid: (epOf(opts.episodeId || (payload && payload.episodeId) || null) || {}).tenantId || null,
         payload: payload || {},
         initiated_by: opts.initiated_by || "user",
         free: !!opts.free,
@@ -386,6 +495,16 @@ function createEngine({ store, bus, cfg }) {
         out[l] = { queued: lanes[l].queue.length, running: lanes[l].busy ? 1 : 0 };
       }
       return out;
+    },
+
+    // 已知车道名清单（ALL_LANES ∪ 已装载 worker 车道 ∪ 已用过车道）：引擎登记/改绑的合法 lane 枚举源
+    laneNames() {
+      return Array.from(new Set(ALL_LANES.concat(Object.keys(workersByLane), Object.keys(lanes))));
+    },
+
+    // lane 当前绑定到哪个节点（注册表 lane→node，缺绑定回退内建表）：运维台归属解析用
+    laneBoundNode(lane) {
+      return laneBoundNode(lane);
     },
 
     // 在队/在跑任务查询（试妆试镜流程防重派；重启后 Map 清空＝无在跑，语义安全）

@@ -183,20 +183,61 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
     }
   } catch (e) { /* 台词对位失败不阻断成片（BGM/画面兜底） */ }
   // 4) 终混：concat（含环境声）＋BGM 垫底＋台词对位叠加（normalize=0 保留各轨电平）
-  const adopted = (lib || []).find((m) => m.sceneId && m.art);
+  // 素材中心（2026-11-22）：取曲读 asset_lib——本集场景的 primary 绑定优先，其次任意绑定，最后旧 sceneId 字段
+  const stReal = (ctx && ctx.store && typeof ctx.store.get === "function" && ctx.store.get()) || {};
+  const scenesReal = stReal.scenes || {};
+  const epSceneIds = new Set(
+    Object.keys(scenesReal)
+      .map((k) => scenesReal[k])
+      .filter((sc) => sc && sc.episodeId === episodeId)
+      .map((sc) => String(sc.id))
+  );
+  const boundOf = (m, wantPrimary) =>
+    (Array.isArray(m.used_by) ? m.used_by : []).some(
+      (u) => u && u.kind === "scene" && epSceneIds.has(String(u.id)) && (!wantPrimary || u.primary)
+    );
+  const adopted =
+    (lib || []).find((m) => m && m.art && boundOf(m, true)) ||
+    (lib || []).find((m) => m && m.art && boundOf(m, false)) ||
+    (lib || []).find((m) => m && m.sceneId && m.art);
   const bgm = adopted && fs.existsSync(resolveArt(ctx, adopted.art)) ? resolveArt(ctx, adopted.art) : null;
+  // 环境音铺底（素材中心 C2，2026-11-22）：本集各场绑定的 ambience 素材，按该场首镜起点延迟混入（音量 0.12）；
+  // 失败不阻断成片（与台词对位同一容错口径）。SFX 事件级时间轴需要点位编辑器，本期不做（见实施记录）。
+  const ambInputs = [];
+  const ambFilters = [];
+  try {
+    const ambLib = (stReal.asset_lib && stReal.asset_lib.audio && Array.isArray(stReal.asset_lib.audio.ambience)) ? stReal.asset_lib.audio.ambience : [];
+    const scAll = Object.keys(scenesReal).map((k) => scenesReal[k])
+      .filter((sc) => sc && sc.episodeId === episodeId)
+      .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    scAll.forEach((sc) => {
+      const amb = ambLib.find((a) => a && a.art && (Array.isArray(a.used_by) ? a.used_by : []).some((u) => u && u.kind === "scene" && String(u.id) === String(sc.id)));
+      if (!amb) return;
+      const abs = resolveArt(ctx, amb.art);
+      if (!fs.existsSync(abs)) return;
+      const partIdx = partShots.findIndex((ps) => ps && Number(ps.seq) > (sc.seq || 0) * 100 && Number(ps.seq) <= ((sc.seq || 0) + 1) * 100);
+      if (partIdx < 0) return;
+      const ms = Math.round((starts[partIdx] || 0) * 1000);
+      const ai = ambInputs.length;
+      ambInputs.push(abs);
+      ambFilters.push("[" + (2 + dlgInputs.length + ai) + ":a]aresample=48000,aformat=channel_layouts=stereo,volume=0.12" + (ms > 0 ? ",adelay=" + ms + ":all=1" : "") + "[a" + ai + "]");
+    });
+  } catch (e) { /* 环境音失败不阻断成片 */ }
   const finalName = safeSeg(episodeId) + "_final.mp4";
   const finalPath = path.join(outDir, finalName);
-  if ((bgm || dlgInputs.length) && fs.existsSync(path.join(tmp, "list.txt"))) {
+  if ((bgm || dlgInputs.length || ambInputs.length) && fs.existsSync(path.join(tmp, "list.txt"))) {
     const inputs = ["-y", "-f", "concat", "-safe", "0", "-i", listFile];
     if (bgm) inputs.push("-i", bgm);
     dlgInputs.forEach((f) => inputs.push("-i", f));
+    ambInputs.forEach((f) => inputs.push("-i", f));
     const fc = [];
     let mix = "[0:a]";
     if (bgm) { fc.push("[1:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.18[b]"); mix += "[b]"; }
     dlgFilters.forEach((f) => fc.push(f));
+    ambFilters.forEach((f) => fc.push(f));
     for (let i = 0; i < dlgInputs.length; i++) mix += "[d" + i + "]";
-    const nIn = 1 + (bgm ? 1 : 0) + dlgInputs.length;
+    for (let i = 0; i < ambInputs.length; i++) mix += "[a" + i + "]";
+    const nIn = 1 + (bgm ? 1 : 0) + dlgInputs.length + ambInputs.length;
     fc.push(mix + "amix=inputs=" + nIn + ":duration=first:normalize=0[aout]");
     await runFfmpeg(ctx, inputs.concat(["-filter_complex", fc.join(";"),
       "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", finalPath]), 600000);
@@ -218,7 +259,13 @@ async function run(job, ctx) {
   const st = (ctx && ctx.store && typeof ctx.store.get === "function" && ctx.store.get()) || {};
   const allShots = st.shots || {};
   const scenes = st.scenes || {};
-  const lib = Array.isArray(st.music_lib) ? st.music_lib : [];
+  // 素材中心（2026-11-22）：曲库读 asset_lib（迁移后 music_lib 保留只读一版作兜底）
+  const lib =
+    st.asset_lib && st.asset_lib.audio && Array.isArray(st.asset_lib.audio.music)
+      ? st.asset_lib.audio.music
+      : Array.isArray(st.music_lib)
+        ? st.music_lib
+        : [];
   const episode = (st.episodes || {})[episodeId] || {};
 
   const shots = Object.keys(allShots)

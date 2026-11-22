@@ -21,7 +21,7 @@ const fs = require('fs');
 const ROOT = path.join(__dirname, '..');
 const SERVER_ENTRY = path.join(ROOT, 'src', 'server', 'index.js');
 const TMP_ROOT = path.join(__dirname, 'tmp');
-const BASE_PORT = 18766;
+const BASE_PORT = Number(process.env.TEST_BASE_PORT) || 18766; // 环境变量可避让并行会话的套件端口（2026-11-22）
 const INVITE = 'INV-DEMO-1';
 
 // job / shot 状态词汇表（契约未穷举，宽容匹配）

@@ -14,6 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const h3ir = require("../adapters/h3ir.js");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "vidspark";
 const ENGINE = "MiniMax-H3 int8_convrot turbo4";
@@ -22,17 +23,10 @@ const TIER = "h3-int8";
 const COST_CENTS = 150;
 const TMPL_FL2VA = "h3-fl2va-video";
 const TMPL_REF2VA = "h3-ref2va-video";
-// 歌曲锚点默认值（2026-11-21）：整首歌统一旋律动机/伴奏/唱法——8 镜独立生成拼起来像同一首歌。
-// 剧本 song 字段（ep.script.song）可覆盖（POST /api/episodes/:id/song）。
-const DEFAULT_SONG = {
-  motif: "one gentle slow ballad, the same melodic motif carried through the whole song",
-  accompaniment: "soft piano arpeggios with light strings",
-  tempo: "about 70 bpm",
-  key: "G major",
-  voice: "young female vocals, breathy and intimate, close to the microphone"
-};
+// 歌曲锚点（2026-11-22 提示词体系升级）：不再写死「温柔女声慢谣」常量——按首场 mood+主唱性别
+// 由 prompts.defaultSongFor 生成；ep.script.song（POST /api/episodes/:id/song）仍最高优先。
+// 整首歌统一旋律动机/伴奏/唱法的纪律不变——8 镜独立生成拼起来像同一首歌。
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
-const STYLE = "Live-action cinematic look, soft diffused practical lights, matte natural skin with no oily shine, subtle film grain, shallow depth of field";
 
 /** ffmpeg 助手（runtime/bin/ffmpeg.exe，essentials 版） */
 function runFfmpeg(args, timeoutMs) {
@@ -45,6 +39,23 @@ function runFfmpeg(args, timeoutMs) {
     pr.on("close", (code) => code === 0 ? resolve(true) : reject(Object.assign(new Error("ffmpeg 失败：" + err.slice(-300)), { code: "FFMPEG_FAIL" })));
     pr.on("error", (e) => reject(Object.assign(new Error("ffmpeg 启动失败：" + e.message), { code: "FFMPEG_SPAWN" })));
     setTimeout(() => { try { pr.kill(); } catch (e2) {} reject(Object.assign(new Error("ffmpeg 超时"), { code: "FFMPEG_TIMEOUT" })); }, timeoutMs || 120000).unref();
+  });
+}
+
+/** 首帧等比适配到镜幅（cover 居中裁切，不拉伸——试妆抽帧 736×1312 → 镜幅 768×1344 等） */
+/** H3 全家桶原生音轨探测（2026-11-22 配音修复）：mp4 是否含音频流。
+ *  fail-open（探测不了 → 视为有音）——H3 台词镜默认按「原生说话声」走。 */
+function probeHasAudio(abs) {
+  return new Promise((resolve) => {
+    try {
+      const exe = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
+      if (!fs.existsSync(exe)) return resolve(true);
+      const pr = require("child_process").spawn(exe, ["-hide_banner", "-i", abs], { windowsHide: true });
+      let out = "";
+      pr.stderr.on("data", (c) => { if (out.length < 8000) out += String(c); });
+      pr.on("close", () => resolve(/Stream.*Audio:/.test(out)));
+      pr.on("error", () => resolve(true));
+    } catch (e) { resolve(true); }
   });
 }
 
@@ -110,20 +121,29 @@ function settingsOf(ctx) {
     return {};
   }
 }
-/** 该镜剧本数据：desc、台词、在场角色人设（shots 按 seq 对齐，同 video5060） */
+/** 该镜剧本数据：desc、台词、在场角色人设、镜头语言字段与场景情绪（shots 按 seq 对齐，同 video5060） */
 function shotScript(ctx, episodeId, shot) {
   const st = ctx.store.get();
   const ep = st.episodes && st.episodes[episodeId];
   const script = ep && ep.script;
-  const out = { desc: (shot && shot.name) || "", dialogue: "", castDefs: [] };
+  const out = { desc: (shot && shot.name) || "", dialogue: "", castDefs: [], scene: "", mood: "", size: null, move: null, light: "" };
   if (!script) return out;
   const flat = [];
-  (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name }, sh))));
+  (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => flat.push(Object.assign({ scene: sc.name, sceneMood: sc.mood }, sh))));
   const sh = flat[(shot.seq || 1) - 1] || {};
   out.desc = sh.desc || out.desc;
   out.dialogue = sh.dialogue || "";
+  out.scene = sh.scene || "";
+  out.mood = sh.sceneMood || "";
+  out.size = sh.size || null;
+  out.move = sh.move || null;
+  out.light = sh.light || "";
   const cast = script.cast || [];
   out.castDefs = (sh.cast || []).map((role) => cast.find((x) => x.role === role || x.name === role)).filter(Boolean);
+  // 兜底（2026-11-22 热舞派对复盘）：LLM 生成剧本的镜头常不写 cast 字段——空则回退全剧角色
+  //（最多 3 人）做身份锚，否则 refs 恒空、开机全灭。真空镜仍可被 desc 驱动，塞人风险由
+  // 分镜首帧路径（storyboard_char → FL2VA）优先覆盖，本回退只在没有首帧时兜底。
+  if (!out.castDefs.length && cast.length) out.castDefs = cast.slice(0, 3);
   return out;
 }
 /** 分镜首帧：C2 payload.images 按 shotId 绑定的真图（同 video5060.sbFileForShot）。
@@ -132,12 +152,20 @@ function sbArtForShot(ctx, episodeId, shotId) {
   try {
     const st = ctx.store.get();
     const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
-    const c2 = cards.filter((x) => x.episodeId === episodeId && x.type === "C2").pop(); // 最新 C2
-    const im = c2 && c2.payload && (c2.payload.images || []).find((x) => x.shotId === shotId && x.art);
-    if (!im) return null;
-    const local = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(im.art.replace(/^.*[\\/]/, "")));
-    if (!fs.existsSync(local)) return null;
-    return { bytes: fs.readFileSync(local), art: im.art };
+    // 首帧两处找：C2（storyboard 挂卡）为主，C4（分镜画面卡）兜底——2026-11-22 热舞派对复盘中
+    // 发现 C2 被 castref 回填重写后 images 清空、图落在 C4 的实际案例
+    const candidates = [];
+    const c2 = cards.filter((x) => x.episodeId === episodeId && x.type === "C2").pop();
+    if (c2 && c2.payload) candidates.push(c2.payload);
+    const c4 = cards.filter((x) => x.episodeId === episodeId && x.type === "C4").pop();
+    if (c4 && c4.payload) candidates.push(c4.payload);
+    for (const payload of candidates) {
+      const im = (payload.images || []).find((x) => x.shotId === shotId && x.art);
+      if (!im) continue;
+      const local = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(im.art.replace(/^.*[\\/]/, "")));
+      if (fs.existsSync(local)) return { bytes: fs.readFileSync(local), art: im.art };
+    }
+    return null;
   } catch (e) {
     return null;
   }
@@ -149,12 +177,20 @@ function castRefArts(ctx, episodeId, castDefs) {
     const st = ctx.store.get();
     const cards = Object.keys(st.cards || {}).map((k) => st.cards[k]);
     const c2 = cards.filter((x) => x.episodeId === episodeId && x.type === "C2").pop(); // 最新 C2
-    const cands = (c2 && c2.payload && c2.payload.candidates) || [];
+    const p = (c2 && c2.payload) || {};
+    const flat = Array.isArray(p.candidates) ? p.candidates : []; // 旧扁平形态
+    const nested = Array.isArray(p.actors) ? p.actors : []; // 2026-11-21 试妆试镜重构：actors[].candidates[]
+    const localOf = (art) => path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(String(art).replace(/^.*[\\/]/, "")));
     for (const cd of castDefs) {
-      const c = (Array.isArray(cands) ? cands : []).find((x) => x && (x.role === cd.role || x.name === cd.name) && x.art);
-      if (c) {
-        const local = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(c.art.replace(/^.*[\\/]/, "")));
-        if (fs.existsSync(local)) arts.push({ bytes: fs.readFileSync(local), def: cd });
+      const cand = flat.find((x) => x && (x.role === cd.role || x.name === cd.name) && x.art)
+        || nested.map((a) => (a && a.candidates) || []).reduce((acc, cs) => acc.concat(cs), [])
+          .find((x) => x && (x.role === cd.role || x.name === cd.name) && x.art)
+        || nested.map((a) => ({ role: a.role, art: a.refImage })).find((x) => x.role === cd.role && x.art);
+      if (cand) {
+        const local = localOf(cand.art);
+        if (fs.existsSync(local) && !arts.some((a) => a.def && a.def.role === cd.role)) {
+          arts.push({ bytes: fs.readFileSync(local), def: cd });
+        }
       }
     }
   } catch (e) { /* 候选缺失走剧本 refImage */ }
@@ -176,14 +212,22 @@ function castRefArts(ctx, episodeId, castDefs) {
 
 async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfySpark && ctx.cfg.comfySpark.base) || "") || "").replace(/\/+$/, ""); // 本 lane 绑定节点的 Comfy 端点（注册表 lane→node），旧部署回退 comfySpark 通道
   const shotId = p.shotId || null;
   const st = ctx.store.get();
   const shot = (st.shots || {})[shotId] || {};
   const episodeId = p.episodeId || j.episodeId || null;
   const epRow = (st.episodes || {})[episodeId] || {};
-  const song = (epRow.script && epRow.script.song) || DEFAULT_SONG;
   const scr = shotScript(ctx, episodeId, shot);
+  // 风格包（2026-11-22）：IR 风格行/运镜/环境音全走注册中心，删写死 STYLE 常量
+  const pkg = prompts.style.resolve(ctx, episodeId);
+  const gender0 = scr.castDefs.length ? prompts.genderOf(scr.castDefs[0], scr.castDefs[0].role) : null;
+  // 歌曲锚点仅在剧本显式给歌（POST /api/episodes/:id/song）时启用——MV/歌曲向集。
+  // 2026-11-22 配音修复：defaultSongFor 永远生成一首歌会让对话剧每句台词都被 H3「唱」出来
+  //（人声埋进自己生成的伴奏里听不清）。对话剧无歌 → IR 走 speaks 分支，台词正常说+口型。
+  const song = (epRow.script && epRow.script.song) || null;
+  const move = scr.move || prompts.guessMove(scr.desc);
+  const ambience = prompts.ambienceEn(scr.scene, pkg);
   const sec = Number(p.sec) > 0 ? Number(p.sec) : 5;
   const length = h3ir.lengthFrames(sec);
   // 手机短剧默认竖屏 768×1344（H3 768p 短边），payload 可覆盖
@@ -248,9 +292,15 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     // 首帧等比适配到镜幅（开机前校准 2026-11-21：试妆抽帧 736×1312 → 镜幅 768×1344，cover 裁切防拉伸）
     const fitBytes = await fitFrame(sbBytes, width, height, safeSeg(shotId).slice(0, 24));
     const ffName = await comfy.uploadAsset(base, fitBytes, "spark_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
-    const ir = h3ir.buildFL2VA({ shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, speaker: scr.castDefs[0] && scr.castDefs[0].name, song });
+    const ir = h3ir.buildFL2VA({
+      shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文",
+      style: prompts.style.irStyleEn(pkg), sec,
+      speaker: scr.castDefs[0] && scr.castDefs[0].name,
+      cameraEn: prompts.moveEn(move), ambienceEn: ambience, gender: gender0, song
+    });
     const rewritten = await h3ir.rewriteWithLLM(ir, ctx.cfg);
     irLlmUsed = rewritten.llm_used === true;
+    if (rewritten.reject_reason) log2(j, "IR 重写产物弃用（" + rewritten.reject_reason + "）——回退规则 IR");
     tmplId = TMPL_FL2VA;
     params = { SEED: seedNum, PROMPT: rewritten.ir, WIDTH: width, HEIGHT: height, LENGTH: length, STEPS: 4, FIRST_FRAME: ffName };
   } else if (refs.length) {
@@ -259,9 +309,16 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
       names.push(await comfy.uploadAsset(base, refs[i].bytes, "spark_ref_" + safeSeg(refs[i].def.role || String(i)) + "_" + seed.slice(0, 6) + "_" + i + ".png"));
     }
     while (names.length < 3) names.push(names[names.length - 1]);
-    const ir = h3ir.buildRef2VA({ subjects: refs.map((r) => r.def), shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文", style: STYLE, sec, refImages: names.map((_, i) => "<Picture " + (i + 1) + ">"), song });
+    const ir = h3ir.buildRef2VA({
+      subjects: refs.map((r) => r.def), shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文",
+      style: prompts.style.irStyleEn(pkg), sec,
+      refImages: names.map((_, i) => "<Picture " + (i + 1) + ">"),
+      sizeEn: prompts.sizeEn(scr.size || prompts.guessSize(scr.desc)),
+      cameraEn: prompts.moveEn(move), ambienceEn: ambience, gender: gender0, song
+    });
     const rewritten = await h3ir.rewriteWithLLM(ir, ctx.cfg);
     irLlmUsed = rewritten.llm_used === true;
+    if (rewritten.reject_reason) log2(j, "IR 重写产物弃用（" + rewritten.reject_reason + "）——回退规则 IR");
     tmplId = TMPL_REF2VA;
     params = { SEED: seedNum, PROMPT: rewritten.ir, WIDTH: width, HEIGHT: height, LENGTH: length, STEPS: 4, REF_IMAGE_1: names[0], REF_IMAGE_2: names[1], REF_IMAGE_3: names[2] };
   } else {
@@ -293,6 +350,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     sec, length, shotId, episodeId,
     // 受控链透明化（2026-11-21）：最终下发 IR 提示词＋首帧来源——UI 可展示每镜「怎么被控制」
     prompt: params && params.PROMPT ? String(params.PROMPT) : null,
+    shot_camera: prompts.moveZh(move), shot_ambience: ambience, shot_gender: gender0 || null,
     first_frame: sbArt || null,
     prompt_id: rMeta ? rMeta.promptId : (reusedPid || null),
     tmpl_sha16: rMeta ? rMeta.tmpl_sha16 : null, comfy_commit: rMeta ? rMeta.comfy_commit : null, cn_commits: rMeta ? rMeta.cn_commits : null, weights: rMeta ? rMeta.weights : null,
@@ -304,7 +362,17 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const abs = writeOut(ctx, fileName, mp4Bytes);
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   meta.art_abs = abs;
-  const take = { id: takeId, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true };
+  // H3 全家桶原生语音（2026-11-22 配音修复）：IR 带台词 → H3 直接生成「说话＋口型同步」音轨。
+  // take 打 native_speech 标记 → compose 见标跳过 TTS 对位（旧链永远叠 TTS＝口型和配音两张皮）。
+  const dlgText = String((scr && scr.dialogue) || "").trim();
+  const hasDlg = dlgText.length > 0;
+  const nativeSpeech = hasDlg ? await probeHasAudio(abs) : false;
+  if (nativeSpeech) {
+    meta.native_speech = true;
+    meta.speech_text = dlgText;
+  }
+  const take = { id: takeId, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true,
+    native_speech: nativeSpeech, speech_text: nativeSpeech ? dlgText : undefined };
   const bag = { ok: true, cents, art, path: art, meta, take, engine: ENGINE_USER, cost_cents: cents, license: take.license, sec, tier: TIER };
   j.result = bag; j.art = bag;
   return { ok: true, cents, art, meta };

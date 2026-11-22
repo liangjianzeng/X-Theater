@@ -101,4 +101,65 @@ function cas(entity, ver) {
   return entity;
 }
 
-module.exports = { uid, hash12, now, sign, verify, cas, SECRET };
+/* ---------- stub 占位图（素材中心 2026-11-22 修复：图片「显示不出」） ----------
+ * 旧 stub 产物是 1×1 透明 PNG——网格里放大等于一片空白，用户看到的就是「没有图」。
+ * 行业口径：占位图必须可见且自明。零依赖手写 PNG（CRC32 + zlib.deflateSync）：
+ * 深底斜纹＋边框＋中缝留白，740×1280 竖屏，任何卡片/灯箱里一眼可辨「这是占位不是成品」。 */
+const CRC_TABLE = (function () {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([len, body, crc]);
+}
+
+/** 可见占位 PNG（RGB）：底 #232936，斜纹 #2E3646，边框 #46516A，中线留白。确定性输出。 */
+function stubPng(width, height) {
+  const w = Math.max(1, Math.min(4096, Number(width) || 720)) | 0;
+  const h = Math.max(1, Math.min(4096, Number(height) || 1280)) | 0;
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  const base = [0x23, 0x29, 0x36], stripe = [0x2e, 0x36, 0x46], frame = [0x46, 0x51, 0x6a], mid = [0x1c, 0x21, 0x2b];
+  let p = 0;
+  for (let y = 0; y < h; y++) {
+    raw[p++] = 0; // filter: none
+    for (let x = 0; x < w; x++) {
+      let c = base;
+      const isFrame = x < 6 || y < 6 || x >= w - 6 || y >= h - 6;
+      if (isFrame) c = frame;
+      else if (((x + y) / 48) % 2 < 1) c = stripe;
+      else if (Math.abs(x - w / 2) < 3) c = mid;
+      raw[p++] = c[0]; raw[p++] = c[1]; raw[p++] = c[2];
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;  // bit depth
+  ihdr[9] = 2;  // color type: RGB
+  const zlib = require("zlib");
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw, { level: 6 })),
+    pngChunk("IEND", Buffer.alloc(0))
+  ]);
+}
+
+module.exports = { uid, hash12, now, sign, verify, cas, stubPng, SECRET };

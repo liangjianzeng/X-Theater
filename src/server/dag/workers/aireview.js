@@ -13,6 +13,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "aireview";
 const ENGINE = "规则机检（多人格视角）";
@@ -263,13 +264,18 @@ async function llmReviewPersonas(ctx, card, rulePersonas) {
   if (!ctx.llm || typeof ctx.llm.chat !== "function" || !ctx.llm.enabled()) return null;
   const names = LLM_PERSONA_NAMES[card.type] || [];
   if (!names.length) return null;
-  const sys = [
-    "你是剧场 Studio 的卡流节点审片组。对当前提交的卡内容，以指定人格视角各给审查意见。",
-    "卡类型：" + card.type + "。要求审查的人格：" + names.join("、") + "。",
-    "规则：意见必须来自对输入内容的真实检查（指出具体问题或确认通过），每条一句话；不许编造数据； verdict 只能 pass|warn|fail。",
-    "只输出 JSON 数组：[{\"persona\":\"编剧视角\",\"verdict\":\"warn\",\"findings\":[\"…\"]},…]，人格名必须与要求完全一致。"
-  ].join("\n");
-  const usr = "当前卡 payload：" + JSON.stringify(card.payload || {}).slice(0, 3000);
+  // 提示词迁入注册中心（2026-11-22 方案 §5.8/A12）：按卡类型 rubric 化（与规则机检维度对齐），
+  // payload 经 q() 定界（用户数据非指令，收窄注入面）
+  const sys = prompts.buildAireviewSys(card.type, names);
+  // 设定域注入（素材中心 C1，2026-11-22）：canon.reject_rules（判废表）随 sys 注入——
+  // 行业口径：判废标准是库资产，AI 审查与人工复审共读同一份
+  try {
+    const st = ctx.store.get();
+    const rules = st && st.asset_lib && st.asset_lib.canon && Array.isArray(st.asset_lib.canon.reject_rules) ? st.asset_lib.canon.reject_rules : [];
+    const lines = rules.filter((r) => r && (r.title || r.content)).map((r, i) => (i + 1) + ". " + (r.title || "判废") + "：" + (r.content || "")).slice(0, 12);
+    if (lines.length) sys += "\n\n判废表（命中任一条即至少 warn，明显违规给 fail）：\n" + lines.join("\n");
+  } catch (e) { /* 判废注入失败不阻断审查 */ }
+  const usr = prompts.buildAireviewUsr(card.payload);
   const r = await ctx.llm.chat(
     [{ role: "system", content: sys }, { role: "user", content: usr }],
     { temperature: 0.3, maxTokens: 900, timeoutMs: 30000 }

@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-21T13:24:03.511Z",
+  "generated_at": "2026-11-22T08:08:22.502Z",
   "node": "v25.2.0",
   "summary": {
-    "total": 10,
-    "pass": 10,
+    "total": 12,
+    "pass": 12,
     "fail": 0,
     "skip": 0
   },
@@ -11,17 +11,17 @@
     {
       "case": "V1_full_chain",
       "status": "PASS",
-      "detail": "login user=u2/ops; episode=ep_5923274b22f2; decisions=5; ledger job rows=141 (本集 141)"
+      "detail": "login user=u2/ops; episode=ep_1b53433b30a9; decisions=5; ledger job rows=141 (本集 141)"
     },
     {
       "case": "V10_music_precheck_export",
       "status": "PASS",
-      "detail": "episode=ep_f6fc2abd29d5; C7/C8 未完成（export 不依赖）：timeout(25000ms) 等待 卡 C8 出现在 pending；last=null; scene=sc_d8900ab48578(mood=离别); 候选影子计费=7,6,5; export artifacts: ep_f6fc2abd29d5_final.mp4,ep_f6fc2abd29d5_final.mp4.meta.json,job_000302bfb23d.mp3,job_000302bfb23d.mp3.meta.json,job_3fe93219078f.mp3,job_3fe93219078f.mp3.meta.json,job_464265bb135e.png,job_464265bb135e.png.meta.json,job_5ae7d6da9369.png,job_5ae7d6da9369.png.meta.json,job_9dab6c5ca333.mp3,job_9dab6c5ca333.mp3.meta.json,job_e67136f91137.mp3,job_e67136f91137.mp3.meta.json,music_mus_0a2c3913_1.mp3,music_mus_0a2c3913_1.mp3.meta.json,music_mus_11c68978_2.mp3,music_mus_11c68978_2.mp3.meta.json,music_mus_1e5c225a_0.mp3,music_mus_1e5c225a_0.mp3.meta.json,music_mus_36eb404b_0.mp3,music_mus_36eb404b_0.mp3.meta.json,music_mus_3a8884cf_1.mp3,music_mus_3a8884cf_1.mp3.meta.json,music_mus_74a64815_2.mp3,music_mus_74a64815_2.mp3.meta.json,music_mus_8f02d9af_2.mp3,music_mus_8f02d9af_2.mp3.meta.json,music_mus_94fbdb39_2.mp3,music_mus_94fbdb39_2.mp3.meta.json,music_mus_971f2ac3_0.mp3,music_mus_971f2ac3_0.mp3.meta.json,music_mus_a186bb58_1.mp3,music_mus_a186bb58_1.mp3.meta.json,music_mus_a5b3fe31_0.mp3,music_mus_a5b3fe31_0.mp3.meta.json,music_mus_a73639e1_0.mp3,music_mus_a73639e1_0.mp3.meta.json,music_mus_be9d1c3d_2.mp3,music_mus_be9d1c3d_2.mp3.meta.json,music_mus_c3daea94_1.mp3,music_mus_c3daea94_1.mp3.meta.json,music_mus_c4452d03_1.mp3,music_mus_c4452d03_1.mp3.meta.json,tk_07437fb5.mp4,tk_07437fb5.mp4.meta.json,tk_1b6b4c30.mp4,tk_1b6b4c30.mp4.meta.json,tk_22b909f7.mp4,tk_22b909f7.mp4.meta.json,tk_26782124.mp4,tk_26782124.mp4.meta.json,tk_43446ffc.mp4,tk_43446ffc.mp4.meta.json,tk_5cddd61d.mp4,tk_5cddd61d.mp4.meta.json,tk_690aeb47.mp4,tk_690aeb47.mp4.meta.json,tk_8d0a7bf5.mp4,tk_8d0a7bf5.mp4.meta.json,tk_9f0eee75.mp4,tk_9f0eee75.mp4.meta.json,tk_a568fb4c.mp4,tk_a568fb4c.mp4.meta.json,tk_af761f5e.mp4,tk_af761f5e.mp4.meta.json,tk_b35a64ed.mp4,tk_b35a64ed.mp4.meta.json,tk_bbf94711.mp4,tk_bbf94711.mp4.meta.json,tk_c3f2ad46.mp4,tk_c3f2ad46.mp4.meta.json,tk_f782c98d.mp4,tk_f782c98d.mp4.meta.json,tk_f94153ba.mp4,tk_f94153ba.mp4.meta.json"
+      "detail": "episode=ep_6de0d40000c2; C7/C8 未完成（export 不依赖）：timeout(25000ms) 等待 卡 C8 出现在 pending；last=null; scene=sc_93a086881e4b(mood=离别); 候选影子计费=12,15,12; export artifacts: ep_6de0d40000c2_final.mp4,ep_6de0d40000c2_final.mp4.meta.json,job_23aa183b8a1d.mp3,job_23aa183b8a1d.mp3.meta.json,job_4e04a9c0b4b4.mp3,job_4e04a9c0b4b4.mp3.meta.json,job_5da0882d7e02.png,job_5da0882d7e02.png.meta.json,job_5e36191cfad3.mp3,job_5e36191cfad3.mp3.meta.json,job_9254a9fcda18.mp3,job_9254a9fcda18.mp3.meta.json,job_e623e31c7e32.png,job_e623e31c7e32.png.meta.json,music_mus_13a73f42_2.mp3,music_mus_13a73f42_2.mp3.meta.json,music_mus_32a057fd_2.mp3,music_mus_32a057fd_2.mp3.meta.json,music_mus_42dce9b3_0.mp3,music_mus_42dce9b3_0.mp3.meta.json,music_mus_5f3c84a1_1.mp3,music_mus_5f3c84a1_1.mp3.meta.json,music_mus_740d13dd_2.mp3,music_mus_740d13dd_2.mp3.meta.json,music_mus_775070fb_1.mp3,music_mus_775070fb_1.mp3.meta.json,music_mus_7d4c2099_0.mp3,music_mus_7d4c2099_0.mp3.meta.json,music_mus_83582649_2.mp3,music_mus_83582649_2.mp3.meta.json,music_mus_87de882d_0.mp3,music_mus_87de882d_0.mp3.meta.json,music_mus_89edbf53_2.mp3,music_mus_89edbf53_2.mp3.meta.json,music_mus_917bc7a2_1.mp3,music_mus_917bc7a2_1.mp3.meta.json,music_mus_9ccc27cb_0.mp3,music_mus_9ccc27cb_0.mp3.meta.json,music_mus_9f4273aa_0.mp3,music_mus_9f4273aa_0.mp3.meta.json,music_mus_fad39065_1.mp3,music_mus_fad39065_1.mp3.meta.json,music_mus_fd9eec52_1.mp3,music_mus_fd9eec52_1.mp3.meta.json,tk_001e1325.mp4,tk_001e1325.mp4.meta.json,tk_2129a3b9.mp4,tk_2129a3b9.mp4.meta.json,tk_2d88feb5.mp4,tk_2d88feb5.mp4.meta.json,tk_400ac263.mp4,tk_400ac263.mp4.meta.json,tk_46dc3fbb.mp4,tk_46dc3fbb.mp4.meta.json,tk_825b3ae7.mp4,tk_825b3ae7.mp4.meta.json,tk_8640ffce.mp4,tk_8640ffce.mp4.meta.json,tk_8ebc9ca1.mp4,tk_8ebc9ca1.mp4.meta.json,tk_908f089f.mp4,tk_908f089f.mp4.meta.json,tk_a2934c63.mp4,tk_a2934c63.mp4.meta.json,tk_ba095eb6.mp4,tk_ba095eb6.mp4.meta.json,tk_c57edb0c.mp4,tk_c57edb0c.mp4.meta.json,tk_d09348e3.mp4,tk_d09348e3.mp4.meta.json,tk_d5ce9936.mp4,tk_d5ce9936.mp4.meta.json,tk_d73f9b4a.mp4,tk_d73f9b4a.mp4.meta.json,tk_f565c0d4.mp4,tk_f565c0d4.mp4.meta.json"
     },
     {
       "case": "V5_billing_invariant",
       "status": "PASS",
-      "detail": "episode=ep_47a980c98dba; bootstrap 降级：timeout(30000ms) 等待 GET /api/episodes/:id/estimate 200；last=null; billing 对账通过 2 集（rows=24）; job 账本：user=6 system(free)=6"
+      "detail": "episode=ep_41d875a53447; bootstrap 降级：timeout(30000ms) 等待 GET /api/episodes/:id/estimate 200；last=null; billing 对账通过 2 集（rows=24）; job 账本：user=6 system(free)=6"
     },
     {
       "case": "V8_phase2_endpoints_404",
@@ -31,7 +31,7 @@
     {
       "case": "V8_state_langlint",
       "status": "PASS",
-      "detail": "/state 219 个字符串值过禁词表 clean"
+      "detail": "/state 223 个字符串值过禁词表 clean"
     },
     {
       "case": "V4_lite_static_sse",
@@ -46,17 +46,27 @@
     {
       "case": "V9_l2_modeA",
       "status": "PASS",
-      "detail": "mode=A session=l2s_2c5ad5655fcf; mode=A：5 类查询消息均路由到白名单工具; mode=A：reroll approval→job 通过（jobs 1→3）; mode=A：红队三案零越权"
+      "detail": "mode=A session=l2s_7c3be5c3e256; mode=A：5 类查询消息均路由到白名单工具; mode=A：reroll approval→job 通过（jobs 1→3）; mode=A：红队三案零越权"
     },
     {
       "case": "V9_l2_modeB",
       "status": "PASS",
-      "detail": "mode=B session=l2s_2cb72734d11b; mode=B：5 类查询消息均路由到白名单工具; mode=B：reroll approval→job 通过（jobs 1→3）; mode=B：红队三案零越权"
+      "detail": "mode=B session=l2s_f18121a5ece2; mode=B：5 类查询消息均路由到白名单工具; mode=B：reroll approval→job 通过（jobs 1→3）; mode=B：红队三案零越权"
     },
     {
       "case": "V6_review_audit_alerts",
       "status": "PASS",
       "detail": "alerts 0→9"
+    },
+    {
+      "case": "V11_studio_library",
+      "status": "PASS",
+      "detail": "迁移：music=2 条（晚风/码头暮色在列）; 冷启动闭环：生成 3 候选 → adopt mus_983afc36_0; 多挂：sc1 绑/解绑不影响 sc2（1:N 语义）; 兼容：/api/music/* 三路由走素材库语义; img_free：生成→候选池→入库通; 角色回流：老陈 → 角色库（used_by 带集）; 就绪度：ready=false（theme 缺），场景/角色项齐全; 素材包：export→import（added=5）; 设定域：lore/判废表/风格包入库; 音色域：音色库＋集级 voice_map; MV：skipped（本机没有 ffmpeg——MV 清单已生成，装好 ffmpeg 重试即可出片）; 公共科目：rows=2 total=41; V11 素材中心全链通过"
+    },
+    {
+      "case": "V12_nodes_registry_ops",
+      "status": "PASS",
+      "detail": "ok"
     }
   ]
 }

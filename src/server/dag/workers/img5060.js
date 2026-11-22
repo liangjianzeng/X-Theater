@@ -12,6 +12,7 @@
 const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "img5060";
 const ENGINE = "qwen-image-2.1-turbo-Q5_K_M";
@@ -20,11 +21,9 @@ const WEIGHTS = "Q5_K_M";
 const TMPL_T2I = "qwen-image-turbo";
 const TMPL_I2I = "qwen-image-turbo-i2i";
 const TMPL_EDIT = "qwen-image-edit-cast";
-const STYLE_SUFFIX = "实拍电影剧照，真实摄影，35mm 胶片颗粒，自然皮肤纹理与真实光影，青橙影调，雨夜烛光，浅景深";
-const PNG_1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64"
-);
+// stub 占位图（素材中心 2026-11-22 修复）：1×1 透明 PNG 在界面上＝看不见——
+// 换 util.stubPng 可见真 PNG（深底斜纹竖屏），网格/灯箱一眼可辨「这是占位」
+const PNG_STUB = require("../../core/util.js").stubPng(720, 1280);
 
 function fnv1a(str) {
   let h = 0x811c9dc5;
@@ -100,9 +99,10 @@ async function genOne(ctx, job, { tmplId, prompt, negative, image, seedHex, widt
   const params = {
     SEED: numFrom(seedHex) % 4294967295,
     PROMPT: prompt,
-    NEGATIVE: negative || "低质量，模糊，变形，水印，文字，多人，插画，动漫，卡通，二次元，绘画感，CG渲染，3D，磨皮过度",
-    WIDTH: width || 1024,
-    HEIGHT: height || 1024,
+    // 负面词分层库（2026-11-22 prompts/dicts.js）：按节点类型取用，默认双人镜安全档（不禁多人）
+    NEGATIVE: negative || prompts.negativeFor("t2i_multi"),
+    WIDTH: width || 864,
+    HEIGHT: height || 1536,
     STEPS: steps || 8,
     CFG: cfgv || 1.0
   };
@@ -146,16 +146,39 @@ async function runComfy(ctx, job, p, seed, cents) {
     // 逐镜分镜首帧：镜内角色带参考图 → i2i；否则按镜描述 t2i
     const script = scriptOf(ctx, p.episodeId) || { scenes: [] };
     const cast = castOf(ctx, p.episodeId);
+    const pkg = prompts.style.resolve(ctx, p.episodeId);
     const shots = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name }, sh))));
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name, sceneMood: sc.mood }, sh))));
     const images = [];
     for (let i = 0; i < shots.length; i++) {
       const sh = shots[i];
       if ((sh.cast || []).length) continue; // 角色镜 → storyboard_char（编辑模型保脸换姿势）
+      // 分镜五要素（2026-11-22 方案 §5.4/A5）：风格锚最前 → 景别构图 → 画面 → 光线
+      // 光线四级（素材中心 C4，2026-11-22）：镜 light → 场景卡 light_preset（库资产，跨集一致）→ mood 词典 → 风格包默认
+      const sceneCardLight = (function () {
+        try {
+          const st = ctx.store.get();
+          // state 场景与 script.scenes 按 1:1 序对齐（ensureScenesAndShots 有序创建，tts.js 同口径）
+          const stScenes = Object.keys(st.scenes || {}).map((k) => st.scenes[k])
+            .filter((s) => s && s.episodeId === p.episodeId)
+            .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+          const sc = stScenes[i];
+          const cards = (st.asset_lib && st.asset_lib.scenes) || [];
+          const card = cards.filter((c) => c && c.status !== "retired" && sc && (c.boundSceneId === sc.id || String(c.name) === String(sc.name)))[0];
+          return card && card.light_preset ? String(card.light_preset) : "";
+        } catch (e) { return ""; }
+      })();
+      const light = String(sh.light || "").trim() || sceneCardLight || prompts.lightZh(sh.sceneMood, pkg);
       const r = await genOne(ctx, j, {
         tmplId: TMPL_T2I,
-        prompt: ["空镜/氛围镜头：", sh.desc, STYLE_SUFFIX].filter(Boolean).join(" "),
+        prompt: [
+          pkg.t2i_suffix,
+          "空镜/氛围镜头：" + (prompts.sizeZh(sh.size || prompts.guessSize(sh.desc || ""))) + "。",
+          sh.desc,
+          "光线：" + light
+        ].filter(Boolean).join(" "),
         image: null,
+        negative: prompts.negativeFor("t2i_empty"),
         seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
         width: 720, height: 1280, steps: 8, cfgv: 1.0
       });
@@ -170,6 +193,52 @@ async function runComfy(ctx, job, p, seed, cents) {
     return bagRes;
   }
 
+  if (type === "img_free") {
+    // 素材中心自由生图（施工 B1/B2）：风格锚（L0）＋五要素＋可选参考图（i2i）；不挂集（裁决 K1）
+    const pkg = prompts.style.resolve(ctx, p.episodeId || "");
+    const lookPkg = (p.styleLook && prompts.style.BUILTIN_LOOKS[p.styleLook]) || null;
+    const suffix = (lookPkg && lookPkg.t2i_suffix) || pkg.t2i_suffix;
+    let image = null;
+    if (p.refImage) {
+      // 参考图解析（素材中心 2026-11-22 修复）：库内 var/ 相对路径 ＋ 裸文件名（var/assets/cast 约定）
+      const r1 = resolveArt(ctx, p.refImage);
+      const r2 = path.join(process.cwd(), "var", "assets", "cast", path.basename(String(p.refImage).replace(/\\/g, "/")));
+      const local = (r1 && fs.existsSync(r1)) ? r1 : (fs.existsSync(r2) ? r2 : null);
+      const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
+      if (local && inputDir) {
+        const inputName = "libref_" + safeSeg(path.basename(local));
+        try {
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.copyFileSync(local, path.join(inputDir, inputName));
+          image = inputName; // genOne.ensureInComfyInput 见 dst 已存在则直用
+        } catch (e) { image = null; }
+      }
+    }
+    const promptTxt = prompts.buildFreeImagePrompt({
+      desc: p.desc,
+      styleSuffix: suffix,
+      size: p.size,
+      light: p.light,
+      refNote: image ? "以参考图为基准：主体、场景与色调与参考图保持一致。" : "",
+      negative: [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，")
+    });
+    const negFinal = [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，");
+    const r = await genOne(ctx, j, {
+      tmplId: image ? TMPL_I2I : TMPL_T2I,
+      prompt: promptTxt,
+      image: image || undefined,
+      negative: negFinal,
+      seedHex: seed,
+      width: p.ratio === "16:9" ? 1280 : p.ratio === "1:1" ? 1024 : 864,
+      height: p.ratio === "16:9" ? 720 : p.ratio === "1:1" ? 1024 : 1536,
+      steps: 8, cfgv: 1.0
+    });
+    const fn = idSeg + ".png";
+    writeOut(ctx, fn, r.bytes);
+    const meta = Object.assign({}, baseMeta, { kind: "image-comfy-free", seed });
+    return bag(ctx, j, { bytes: r.bytes, fileName: fn, meta, cents });
+  }
+
   if (type === "storyboard_char") {
     // 角色镜：编辑模型（定妆主选图为身份输入）＋镜描述指令＝保脸换姿势
     const st0 = ctx.store.get();
@@ -178,7 +247,7 @@ async function runComfy(ctx, job, p, seed, cents) {
     const actors = (c2 && c2.payload && c2.payload.actors) || [];
     const script = scriptOf(ctx, p.episodeId) || { scenes: [] };
     const shots = [];
-    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name }, sh))));
+    (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name, sceneMood: sc.mood }, sh))));
     const images = [];
     for (let i = 0; i < shots.length; i++) {
       const sh = shots[i];
@@ -198,27 +267,29 @@ async function runComfy(ctx, job, p, seed, cents) {
       // 身份锚点前置＋如实描述参考图本人＋服装锁（T2 实测：泛写或与图像矛盾的锚点会换人/发型跑偏）
       const anchor = (castDef && (castDef.anchor || castDef.desc)) || "";
       const wardrobe = (castDef && castDef.wardrobe) || "";
-      const pron = /女/.test(refName) ? "她" : "他";
+      const pkg = prompts.style.resolve(ctx, p.episodeId);
+      const pron = prompts.pronZh(prompts.genderOf(castDef, refName));
       const r = await genOne(ctx, j, {
         tmplId: TMPL_EDIT,
         prompt: [
           "画面中是参考图里同一位人物（同一人）：" + anchor + "。",
           pron + "正在" + sh.desc + "。",
-          // 双人镜：第二角色用形象块文字锚定（否则漂成女性——实测 char7/tk_92624377）
+          // 双人镜：第二角色用形象块文字锚定（否则漂成女性——实测 char7/tk_92624377）；性别走 gender 词典
           (sh.cast || []).slice(1, 2).map((role2) => {
             const cd2 = castOf(ctx, p.episodeId).find((x) => x.role === role2 || x.name === role2);
             const an2 = (cd2 && (cd2.anchor || cd2.desc)) || "";
             const wd2 = (cd2 && cd2.wardrobe) || "";
             const nm2 = (cd2 && cd2.name) || role2;
             if (!an2) return "";
-            return nm2 + "：" + (/女/.test(role2) ? "一位年轻东亚女性" : "一位年轻东亚男性") + "，" + an2 + (wd2 ? "，穿" + wd2 : "") + "。";
+            return nm2 + "：" + prompts.genderNounZh(prompts.genderOf(cd2, role2)) + "，" + an2 + (wd2 ? "，穿" + wd2 : "") + "。";
           }).join(""),
           "单幅剧照（single frame）：整个画面只有一个镜头时刻，禁止分屏、多格拼贴、连环画分镜。",
           wardrobe ? "服装：" + wardrobe + "，与参考图一致。" : "",
           ((castDef && castDef.name) || refName) + "的面部五官、脸型与发型与参考图完全一致，全片同一人。",
-          STYLE_SUFFIX
+          pkg.t2i_suffix
         ].filter(Boolean).join(" "),
         image: inputName,
+        negative: prompts.negativeFor("edit"),
         seedHex: hash12(ctx, { jobId: j.id, i, shot: sh.desc }),
         width: 720, height: 1280, steps: 25, cfgv: 1.0
       });
@@ -234,12 +305,15 @@ async function runComfy(ctx, job, p, seed, cents) {
     if (type === "casting") {
     const cast = castOf(ctx, p.episodeId);
     const actor = cast[p.castIdx] || { desc: p.prompt || "", refImage: null };
+    const pkg = prompts.style.resolve(ctx, p.episodeId);
     const r = await genOne(ctx, j, {
       tmplId: actor.refImage ? TMPL_I2I : TMPL_T2I,
-      prompt: [actor.name, actor.role, actor.desc, "定妆照", STYLE_SUFFIX].filter(Boolean).join(" "),
+      // 定妆照构图指令（2026-11-22 方案 §5.2/A3）：竖屏 9:16 半身＋平视＋柔光轮廓光＋棚拍背景
+      prompt: prompts.buildCastingPrompt({ name: actor.name, role: actor.role, desc: actor.desc, styleSuffix: pkg.t2i_suffix }),
       image: actor.refImage,
+      negative: prompts.negativeFor("t2i_single"),
       seedHex: hash12(ctx, { jobId: j.id, actor: p.castIdx }),
-      width: 1024, height: 1024, steps: 8, cfgv: 1.0
+      width: 864, height: 1536, steps: 8, cfgv: 1.0
     });
     const fn = idSeg + "_cast.png";
     const meta = Object.assign({}, baseMeta, {
@@ -254,11 +328,15 @@ async function runComfy(ctx, job, p, seed, cents) {
 
   // c1plan（默认）：封面图＋剧本 plan
   const script = scriptOf(ctx, p.episodeId);
+  const epTitle = (() => { try { const st = ctx.store.get(); const ep = st.episodes[p.episodeId]; return (ep && ep.title) || p.title || ""; } catch (e) { return p.title || ""; } })();
   const brief = (() => { try { const st = ctx.store.get(); const ep = st.episodes[p.episodeId]; return (ep && ep.brief) || p.brief || ""; } catch (e) { return p.brief || ""; } })();
+  const pkg = prompts.style.resolve(ctx, p.episodeId);
   const r = await genOne(ctx, j, {
     tmplId: TMPL_T2I,
-    prompt: [brief, "主视觉海报", STYLE_SUFFIX].filter(Boolean).join(" "),
-    seedHex: seed, width: 1024, height: 1024, steps: 8, cfgv: 1.0
+    // 海报（2026-11-22 方案 §5.4）：brief 不再整段直拼——title＋首冲突意象＋标题负空间
+    prompt: prompts.buildPosterPrompt({ title: epTitle, brief, styleSuffix: pkg.t2i_suffix }),
+    negative: prompts.negativeFor("poster"),
+    seedHex: seed, width: 864, height: 1536, steps: 8, cfgv: 1.0
   });
   const fn = idSeg + ".png";
   const meta = Object.assign({}, baseMeta, {
@@ -287,7 +365,7 @@ async function runStub(ctx, job, p, seed, cents) {
     seed, tmpl_hash: "h_" + seed.slice(8, 20), comfy_commit: "c" + seed.slice(0, 7),
     cn_commit: "c" + seed.slice(4, 11), weights: WEIGHTS, cents
   };
-  return bag(ctx, j, { bytes: PNG_1x1, fileName, meta, cents });
+  return bag(ctx, j, { bytes: PNG_STUB, fileName, meta, cents });
 }
 
 async function run(job, ctx) {

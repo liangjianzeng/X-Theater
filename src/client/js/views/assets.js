@@ -1,6 +1,7 @@
-/* 剧场 Studio · 资产/音乐视图（视图 C 负责）
-   #/ep/:id/assets：曲库表（标题/心情/时长/许可/影子成本/挂接场）＋挂到本场＋生成候选。
-   数据来自 store.loadMusic()（GET /api/music/library）与 store.state.scenes_by_episode。 */
+/* 剧场 Studio · 集侧素材挂接视图（2026-11-22 素材中心施工 A7）
+   #/ep/:id/assets：本集「开拍就绪」清单＋每场主曲绑定器。
+   职责变化（裁决 K1/K6）：本视图不再生成素材——生成在一级「素材中心」（#/studio）；
+   这里只做消费：把库里的曲绑定到本集场景（1:N + 主曲），缺素材直达素材中心补。 */
 (function (global) {
   "use strict";
   const T = global.__T;
@@ -8,172 +9,154 @@
   const Vue = global.Vue;
   const views = (global.__VIEWS = global.__VIEWS || {});
 
-  const MOODS = ["释然", "离别", "压抑", "对峙", "其它"];
-
   views.Assets = {
     props: { epId: { type: String, required: true } },
     components: {
       "err-state": T.components.ErrState,
       "empty-state": T.components.EmptyState,
       "loading": T.components.Loading,
-      "money": T.components.Money,
       "license-badge": T.components.LicenseBadge
     },
     setup(props) {
-      const music = Vue.computed(() => store.music);
-      const library = Vue.computed(() => store.music.library || []);
-      const loading = Vue.computed(() => store.music.loading && store.music.library == null);
-      const err = Vue.computed(() => store.music.error);
-
-      /* 本集场景（挂接候选） */
+      const lib = Vue.computed(() => store.studio.lib.music || []);
       const scenes = Vue.computed(() => {
         const s = store.state;
         return (s && s.scenes_by_episode && s.scenes_by_episode[props.epId]) || [];
       });
-      /* 全局场景索引：id → {name, episodeId}（显示曲库行「挂接场」用） */
-      const sceneMap = Vue.computed(() => {
-        const out = {};
-        const s = store.state;
-        if (s && s.scenes_by_episode) {
-          Object.keys(s.scenes_by_episode).forEach(k => {
-            (s.scenes_by_episode[k] || []).forEach(sc => { out[sc.id] = sc; });
-          });
-        }
+      const readiness = Vue.computed(() => store.studio.readiness);
+      const loading = Vue.ref(true);
+      const err = Vue.ref(null);
+
+      /* 每场当前绑定：primary 主曲 + 其它绑定 */
+      function bindingsOf(sceneId) {
+        const sid = String(sceneId);
+        const bound = lib.value.filter(m => (m.used_by || []).some(u => u.kind === "scene" && String(u.id) === sid) && m.status !== "retired");
+        const primary = bound.filter(m => (m.used_by || []).some(u => u.kind === "scene" && String(u.id) === sid && u.primary));
+        return { primary: primary[0] || null, others: bound.filter(m => !primary.includes(m)) };
+      }
+      /* 旧 music_lib 语义兼容显示（迁移前旧数据 sceneId 直挂） */
+      function legacyOf(sceneId) {
+        const sid = String(sceneId);
+        return lib.value.filter(m => m.sceneId && String(m.sceneId) === sid && !(m.used_by || []).length && m.status !== "retired");
+      }
+
+      const pick = Vue.reactive({});
+      const busy = Vue.ref("");
+      async function bindPrimaryMusic(sc) {
+        const id = pick[sc.id];
+        if (!id || busy.value) return;
+        busy.value = sc.id;
+        try {
+          await store.studioBind("music", id, "scene", sc.id, true);
+          pick[sc.id] = "";
+        } catch (e) { /* toast 已发 */ }
+        finally { busy.value = ""; }
+      }
+      async function unbind(m, sc) {
+        busy.value = sc.id;
+        try { await store.studioUnbind("music", m.id, "scene", sc.id); }
+        finally { busy.value = ""; }
+      }
+
+      async function refresh() {
+        loading.value = true;
+        err.value = null;
+        try {
+          if (!store.state) await store.refreshState();
+          await store.loadStudioDomain("music");
+          await store.studioReadiness(props.epId);
+        } catch (e) { err.value = e; }
+        finally { loading.value = false; }
+      }
+      Vue.onMounted(refresh);
+      Vue.watch(() => props.epId, refresh);
+
+      const missing = Vue.computed(() => {
+        const r = readiness.value;
+        if (!r) return [];
+        const out = [];
+        if (!r.theme) out.push({ label: "还没选主题曲", tab: "music" });
+        (r.items || []).forEach(i => {
+          if (i.kind === "scene") {
+            if (!i.hasMusic) out.push({ label: "场景「" + i.name + "」没有配乐", tab: "music" });
+            if (!i.hasCard) out.push({ label: "场景「" + i.name + "」没有场景卡/定场图", tab: "scenes" });
+          } else {
+            if (!i.hasCharacter) out.push({ label: "角色「" + i.name + "」未入角色库", tab: "characters" });
+            if (i.hasCharacter && !i.hasCast) out.push({ label: "角色「" + i.name + "」缺定妆图", tab: "characters" });
+          }
+        });
         return out;
       });
-      function sceneLabel(scid) {
-        if (!scid) return "未挂接";
-        const sc = sceneMap.value[scid];
-        return sc ? sc.name : String(scid);
-      }
-
-      function loadMusic() { return store.loadMusic().catch(() => {}); }
-      function retryState() { store.refreshState().catch(() => {}); }
-
-      /* ---------- 挂到本场 ---------- */
-      const pick = Vue.reactive({});
-      const adopting = Vue.ref("");
-      async function adopt(m) {
-        const sid = pick[m.id];
-        if (!sid || adopting.value) return;
-        adopting.value = String(m.id);
-        try {
-          await store.adoptMusic(m.id, sid);
-          pick[m.id] = "";
-        } catch (e) { /* store 已 toast */ }
-        finally { adopting.value = ""; }
-      }
-
-      /* ---------- 生成候选 ---------- */
-      const genScene = Vue.ref("");
-      const genMood = Vue.ref("释然");
-      const moodOther = Vue.ref("");
-      const genBusy = Vue.ref(false);
-      let refreshTimer = null;
-      Vue.watch(scenes, list => {
-        if (!genScene.value && list.length) genScene.value = String(list[0].id);
-      }, { immediate: true });
-      const effectiveMood = Vue.computed(() => {
-        if (genMood.value === "其它") return String(moodOther.value || "").trim();
-        return genMood.value;
-      });
-      const canGen = Vue.computed(() => !!genScene.value && !!effectiveMood.value && !genBusy.value);
-
-      async function gen() {
-        if (!canGen.value) return;
-        genBusy.value = true;
-        try {
-          const r = await store.genCandidates(genScene.value, effectiveMood.value);
-          if (r) {
-            /* 候选由队列异步落库：3 秒后重取曲库 */
-            clearTimeout(refreshTimer);
-            refreshTimer = setTimeout(() => loadMusic(), 3000);
-          }
-        } catch (e) { /* store 已 toast */ }
-        finally { genBusy.value = false; }
-      }
-
-      Vue.onMounted(() => {
-        loadMusic();
-        if (!store.state) store.refreshState().catch(() => {});
-      });
-      Vue.onUnmounted(() => clearTimeout(refreshTimer));
 
       return {
-        music, library, loading, err, scenes, sceneLabel,
-        loadMusic, retryState, pick, adopting, adopt,
-        genScene, genMood, moodOther, MOODS, genBusy, canGen, gen
+        lib, scenes, readiness, loading, err, refresh,
+        bindingsOf, legacyOf, pick, busy, bindPrimaryMusic, unbind, missing,
+        artUrl: T.artUrl
       };
     },
     template: `
       <div class="v-assets">
         <div class="panel">
-          <div class="panel-title">曲库 </div>
-          <loading v-if="loading && !err"></loading>
-          <err-state v-else-if="err" :err="err" :on-retry="loadMusic"></err-state>
-          <empty-state v-else-if="!library.length" icon="🎵" text="曲库还是空的"
-            sub="用下方「生成候选」给某场先来三段，出来后在这里挑。"></empty-state>
-          <div class="table-scroll" v-else>
-          <table class="table v-assets-tools">
-            <thead>
-              <tr>
-                <th>曲目</th><th>心情</th><th>时长</th><th>许可</th>
-                <th>成本</th><th>挂接场</th><th>挂到本场</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in library" :key="m.id">
-                <td><b>{{ m.title }}</b></td>
-                <td><span class="badge">{{ m.mood }}</span></td>
-                <td class="num">{{ m.sec == null ? '—' : m.sec }} 秒</td>
-                <td><license-badge :license="m.license"></license-badge></td>
-                <td><money :cents="m.shadow_cents"></money></td>
-                <td class="weak">{{ sceneLabel(m.sceneId) }}</td>
-                <td>
-                  <div class="row v-assets-adopt">
-                    <select class="select v-assets-sel" v-model="pick[m.id]">
-                      <option value="">选本场…</option>
-                      <option v-for="sc in scenes" :key="sc.id" :value="String(sc.id)">{{ sc.name }}</option>
-                    </select>
-                    <button class="btn btn-sm" :disabled="!pick[m.id] || adopting === String(m.id)"
-                      @click="adopt(m)">挂到本场</button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="panel-title">开拍就绪 <span class="weak">素材先铺满，再进拍摄——缺什么去
+            <a href="#/studio">素材中心</a> 补</span>
+            <span class="badge" :class="readiness && readiness.ready ? 'badge-ok' : ''"
+              v-if="readiness">{{ readiness.ready ? '✓ 就绪' : '缺素材' }}</span>
           </div>
+          <loading v-if="loading && !err"></loading>
+          <err-state v-else-if="err" :err="err" :on-retry="refresh"></err-state>
+          <template v-else>
+            <div class="kv num" v-if="missing.length">
+              <div v-for="(m,i) in missing" :key="i">⚠ {{ m.label }}　<a :href="'#/studio/'+m.tab">去补 →</a></div>
+            </div>
+            <empty-state v-else-if="readiness" icon="✅" text="素材就绪"
+              sub="本集场景都有配乐与场景卡，角色都已入库。"></empty-state>
+          </template>
         </div>
 
         <div class="panel">
-          <div class="panel-title">生成候选 <span class="weak">一次出 3 段，进待选</span></div>
-          <div class="v-assets-gen">
-            <label class="field">
-              <span class="field-label">场次</span>
-              <select class="select" v-model="genScene" :disabled="!scenes.length">
-                <option value="" v-if="!scenes.length">本集还没有场次</option>
-                <option v-for="sc in scenes" :key="sc.id" :value="String(sc.id)">{{ sc.name }}</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-label">心情</span>
-              <select class="select" v-model="genMood">
-                <option v-for="md in MOODS" :key="md" :value="md">{{ md === '其它' ? '其它（自填）' : md }}</option>
-              </select>
-            </label>
-            <div class="v-assets-acts">
-              <button class="btn btn-primary" :disabled="!canGen" :aria-busy="genBusy" @click="gen">
-                {{ genBusy ? '排队中…' : '生成候选' }}
-              </button>
-              <loading v-if="genBusy"></loading>
-            </div>
-            <label class="field" v-if="genMood === '其它'" style="grid-column: 1 / 3;">
-              <span class="field-label">自填心情</span>
-              <input class="input" v-model.trim="moodOther" maxlength="12" placeholder="例：暗涌" />
-            </label>
+          <div class="panel-title">本集场景 × 配乐绑定 <span class="weak">每场一首主曲；同一首曲可挂多场（互不影响）</span></div>
+          <loading v-if="loading && !err"></loading>
+          <err-state v-else-if="err" :err="err" :on-retry="refresh"></err-state>
+          <empty-state v-else-if="!scenes.length" icon="🎬" text="本集还没有场次"
+            sub="先去「创作卡流」把分场卡走完，再回来挂配乐。"></empty-state>
+          <div class="table-scroll" v-else>
+            <table class="table">
+              <thead><tr><th>场次</th><th>氛围</th><th>主曲</th><th>备选（其它绑定）</th><th>换主曲</th></tr></thead>
+              <tbody>
+                <tr v-for="sc in scenes" :key="sc.id">
+                  <td><b>{{ sc.name }}</b></td>
+                  <td><span class="badge">{{ sc.mood }}</span></td>
+                  <td>
+                    <template v-if="bindingsOf(sc.id).primary">
+                      <b>{{ bindingsOf(sc.id).primary.title }}</b>
+                      <audio v-if="bindingsOf(sc.id).primary.art" controls preload="none"
+                        :src="artUrl(bindingsOf(sc.id).primary.art)" style="max-width:150px;height:26px"></audio>
+                      <button class="btn btn-sm btn-ghost" :disabled="busy===sc.id" @click="unbind(bindingsOf(sc.id).primary, sc)">解绑</button>
+                    </template>
+                    <template v-else-if="legacyOf(sc.id).length">
+                      <b>{{ legacyOf(sc.id)[0].title }}</b> <span class="weak">（旧挂接）</span>
+                    </template>
+                    <span v-else class="weak">未挂接</span>
+                  </td>
+                  <td class="weak">
+                    <span v-for="(m,i) in bindingsOf(sc.id).others" :key="m.id">{{ m.title }}{{ i < bindingsOf(sc.id).others.length-1 ? '、' : '' }}</span>
+                    <span v-if="!bindingsOf(sc.id).others.length">—</span>
+                  </td>
+                  <td>
+                    <div class="row v-assets-adopt">
+                      <select class="select v-assets-sel" v-model="pick[sc.id]">
+                        <option value="">从曲库选…</option>
+                        <option v-for="m in lib" :key="m.id" :value="m.id">{{ m.title }}（{{ m.mood }}）</option>
+                      </select>
+                      <button class="btn btn-sm" :disabled="!pick[sc.id] || busy===sc.id" @click="bindPrimaryMusic(sc)">设为主曲</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="weak" v-if="!scenes.length" style="margin-top:8px;">
-            本集还没有场次：先去「创作卡流」把分场卡走完，再回来配配乐。
+          <div class="weak" v-if="scenes.length && !(lib.length)" style="margin-top:8px;">
+            曲库还是空的：去 <a href="#/studio/music">素材中心 · 音频</a> 生成或上传，再回来绑定。
           </div>
         </div>
       </div>`

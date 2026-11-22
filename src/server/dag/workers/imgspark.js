@@ -12,6 +12,7 @@
 const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
+const prompts = require("../../prompts/index.js");
 
 const NAME = "imgspark";
 const ENGINE = "MiniMax-H3-Image int8_convrot 6step";
@@ -20,46 +21,47 @@ const COST_CENTS = 20;
 const TMPL_CAST = "h3-image-cast";
 const TMPL_EDIT = "h3-image-edit";
 const TMPL_FL2VA = "h3-fl2va-video";
-const STYLE_SUFFIX = "实拍电影剧照质感，真实摄影，自然皮肤纹理与真实光影，浅景深";
 // 试妆试镜视频规格：与原图 720×1280 等比例最近的 32 倍数画幅（736×1312，比例误差 0.27%）；
 // 10 秒档＝243 帧（17k+5 网格：243/24≈10.1s，训练范围 124-362 内），turbo 4 步。
 const ST_W = 736, ST_H = 1312, ST_LEN = 243, ST_STEPS = 4, ST_SEC = 10.13;
 const ST_STEP = 8; // 抽帧步长：243/8≈30 帧（场景巡游段多，加密抽帧保证每段 3~4 帧可用）
-// 试妆试镜动作设计（2026-11-21 v3 场景巡游）：动作序列与段落表同源生成——抽帧按时间轴标注
-// 「场景×动作段」（几何 yaw/pitch 对低头等姿态不敏感，kps 5 点估不准；段落表+停顿设计才是可靠标注）。
-// 一条视频内由人物走位完成场景转场（床头→阳台落地窗城市夜景）：帧池获得真实转场的多场景素材，
-// 人脸同源零合成零漂移——这正是「背景只是壳、人脸才是关键」的取材方式。
-function screenTestPlan(script) {
-  const needs = new Set(["front", "left", "right", "up", "down"]); // 兜底全集
+// 试妆试镜动作设计（2026-11-22 v5 场景参数化）：动作序列与段落表同源不变，但两场景组合由
+// 剧本场景关键词挑选（prompts.SCENE_PAIRS：卧室→阳台／办公室→走廊／妆台→庭院回廊／棚拍兜底），
+// 动作代词随角色性别（prompts.genderOf）——替代「床头→阳台 + she/her」演示剧写死。
+// 段落表纪律不变：抽帧按时间轴标注「场景×动作段」，转场段 prod:false 仅取材不进生产。
+function screenTestPlan(script, castDef) {
+  const g = prompts.genderOf(castDef, castDef && castDef.role); // 无线索 → 「女」兜底（与旧默认一致）
+  const pair = prompts.pickScenePair(script);
+  const needs = new Set(["front", "left", "right", "down"]); // 仰头段按剧本分镜需求条件插入
   (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => {
-    const a = shotAngleNeed(String((sh && sh.desc) || ""));
-    if (a) needs.add(a);
+    if (shotAngleNeed(String((sh && sh.desc) || "")) === "up") needs.add("up");
   }));
   const acts = [];          // 英文动作序列（拼 prompt）
   const segs = [];          // 段落表 {tag, w, scene}——w=时长权重；scene 供后续按镜场景选帧
-  // —— 场景一：床头（初始图环境）——
-  acts.push("she sits at the bedside facing the camera and holds still for a moment"); segs.push({ tag: "front", w: 1.1, scene: "bedside" });
-  acts.push("then slowly turns her head into a left three-quarter profile and holds"); segs.push({ tag: "left", w: 0.9, scene: "bedside" });
-  acts.push("then slowly turns into a right three-quarter profile and holds"); segs.push({ tag: "right", w: 0.9, scene: "bedside" });
-  acts.push("then lowers her head with eyes cast down and a soft smile"); segs.push({ tag: "down", w: 0.9, scene: "bedside" });
-  if (needs.has("up")) { acts.push("gently tilts her head up with eyes closed"); segs.push({ tag: "up", w: 0.9, scene: "bedside" }); }
-  // —— 场景巡游转场：起身走向落地窗阳台（走位即转场，镜头轻跟）。prod:false＝转场段仅用于
-  //    「新背景定场首帧」的取材（用户裁决 2026-11-21）：转场帧不进生产内容、选帧直出时跳过，
-  //    生产价值在转场两端两个场景块的干净 hold 段——相当于「11 秒产出＝1 秒转场＋两端干净内容」。——
-  acts.push("then rises from the bed and slowly walks to the floor-to-ceiling window of the balcony, the camera gently following her, revealing the glittering city night view outside the glass"); segs.push({ tag: "walk", w: 1.0, scene: "balcony", prod: false });
-  // —— 场景二：阳台落地窗（城市夜景）——
-  acts.push("stands by the window facing the camera with the city lights bokeh behind her and holds"); segs.push({ tag: "wfront", w: 1.1, scene: "balcony" });
-  acts.push("slowly turns into a left three-quarter profile by the window with city light rim light on her face and holds"); segs.push({ tag: "wleft", w: 0.9, scene: "balcony" });
-  acts.push("finally turns her head to gaze out at the city night view with soft glow on her face and holds"); segs.push({ tag: "wgaze", w: 1.1, scene: "balcony" });
+  const poss = prompts.possEn(g);
+  // —— 场景 A（初始图环境，组合库 actFront）——
+  acts.push(prompts.fillAct(pair.actFront, g)); segs.push({ tag: "front", w: 1.1, scene: pair.sceneA });
+  acts.push("then slowly turns " + poss + " head into a left three-quarter profile and holds"); segs.push({ tag: "left", w: 0.9, scene: pair.sceneA });
+  acts.push("then slowly turns into a right three-quarter profile and holds"); segs.push({ tag: "right", w: 0.9, scene: pair.sceneA });
+  acts.push("then lowers " + poss + " head with eyes cast down and a soft smile"); segs.push({ tag: "down", w: 0.9, scene: pair.sceneA });
+  if (needs.has("up")) { acts.push("gently tilts " + poss + " head up with eyes closed"); segs.push({ tag: "up", w: 0.9, scene: pair.sceneA }); }
+  // —— 场景巡游转场（走位即转场，镜头轻跟）。prod:false＝转场段仅用于「新背景定场首帧」的
+  //    取材（用户裁决 2026-11-21）：转场帧不进生产内容、选帧直出时跳过，生产价值在转场两端
+  //    两个场景块的干净 hold 段——相当于「11 秒产出＝1 秒转场＋两端干净内容」。——
+  acts.push(prompts.fillAct(pair.walk, g)); segs.push({ tag: "walk", w: 1.0, scene: pair.sceneB, prod: false });
+  // —— 场景 B（组合库 actFrontB/actLeftB/actGazeB）——
+  acts.push(prompts.fillAct(pair.actFrontB, g)); segs.push({ tag: "wfront", w: 1.1, scene: pair.sceneB });
+  acts.push(prompts.fillAct(pair.actLeftB, g)); segs.push({ tag: "wleft", w: 0.9, scene: pair.sceneB });
+  acts.push(prompts.fillAct(pair.actGazeB, g)); segs.push({ tag: "wgaze", w: 1.1, scene: pair.sceneB });
   const prompt = [
-    "Beauty screen test, one continuous shot, the camera stays close to her and gently follows her movement.",
+    "Beauty screen test, one continuous shot, the camera stays close to " + prompts.pronEn(g) + " and gently follows " + (g === "男" ? "him" : "her") + " movement.",
     acts.join(", then ") + ".",
     "Each pose holds clearly and distinctly so every head angle is easy to see.",
-    "Keep her face, facial features, hairstyle, eyes and outfit exactly consistent throughout the scene change.",
-    "Soft diffused bedside lamp glow at first, then cool blue city night light with warm street light bokeh through the glass, matte skin with natural fine texture and no oily shine, subtle hair movement, shallow depth of field.",
+    "Keep " + poss + " face, facial features, hairstyle, eyes and outfit exactly consistent throughout the scene change — the same person as the first frame.",
+    pair.light + ", matte skin with natural fine texture and no oily shine, subtle hair movement, shallow depth of field.",
     "No dialogue."
   ].join(" ");
-  return { prompt, segments: segs };
+  return { prompt, segments: segs, pair };
 }
 
 /** 按段落表把帧时间戳映射到段落对象（权重均分总时长）；返回 {tag, scene} */
@@ -73,10 +75,8 @@ function segmentAngle(segments, t, secTotal) {
   }
   return segments[segments.length - 1];
 }
-const PNG_1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64"
-);
+// stub 占位图（素材中心 2026-11-22 修复）：1×1 透明 PNG＝界面上看不见——换可见真 PNG
+const PNG_STUB = require("../../core/util.js").stubPng(720, 1280);
 
 function fnv1a(str) {
   let h = 0x811c9dc5;
@@ -274,12 +274,13 @@ async function runSparkCastInit(ctx, job, p, seed, cents) {
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { cast: [] };
   const castDef = script.cast.find((c) => c.role === p.role) || {};
-  const prompt = [
-    String(p.prompt || "").trim(),
-    castDef.desc,
-    "角色初始定妆照，竖屏 9:16 构图，半身景别，面部清晰锐利",
-    STYLE_SUFFIX
-  ].filter(Boolean).join(" ");
+  // 初始定妆（2026-11-22 方案 §5.2/A3）：用户词优先、人设兜底；不写死背景（该图是试镜首帧，场景交给巡游组合 A）
+  const pkg = prompts.style.resolve(ctx, p.episodeId);
+  const prompt = prompts.buildCastInitPrompt({
+    userPrompt: String(p.prompt || "").trim(),
+    desc: castDef.desc,
+    styleSuffix: pkg.t2i_suffix
+  });
   await comfy.ensureFree(base, 8);
   const sd = numFrom(seed) % 18446744073709551615;
   const r = await comfy.runTemplate(ctx, j, {
@@ -329,7 +330,7 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
   //    试妆产物直接领回续跑（抽帧/打分/出卡），不再重渲浪费 GPU。已消费的 prompt_id 落账防重复。
   //    计划代际校验（2026-11-21 v3）：领回前比对产物 prompt 与当前段落计划——计划换代（如床头→
   //    阳台巡游）后的同规格旧产物不领，防「旧动作视频按新段落表错位标注」。
-  const plan = screenTestPlan(script);
+  const plan = screenTestPlan(script, castDef);
   const st0c = ctx.store.get();
   st0c.settings = st0c.settings || {};
   const usedPool = st0c.settings.spark_reuse_pool || (st0c.settings.spark_reuse_pool = []);
@@ -445,54 +446,143 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
     ok: true, cents, art: "var/out/" + mp4Name, meta, engine: ENGINE_USER,
     role: castDef.role, views, grid: "var/out/" + gridName, sec: ST_SEC, frames: ST_LEN,
     refImage: castDef.refImage,
-    checklist: ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按本集分镜需求）", "场景巡游（床头→阳台落地窗）转场自然度"]
+    checklist: ["五官与脸型", "身材与体态", "服装与细节", "多角度头部人脸（按本集分镜需求）", "场景巡游（" + plan.pair.label + "）转场自然度"]
   };
   j.result = bag; j.art = bag;
   return bag;
 }
-/** 角色分镜＝选帧直出（2026-11-21 用户裁决）：C2S 试妆抽帧直接作分镜首帧（每镜视频的 I2V 输入），
- *  不再 edit 重绘——生成毁图（服装漂移/换脸/构图自嗨）。按镜角度需求从拍板帧中直选，
- *  该角度无合格帧时用全局最优帧兜底；未走试妆的旧集回退初始定妆原图。 */
+/** 角色分镜首帧 v2（2026-11-22「热舞派对全在床上」复盘）：
+ *  旧 v1「选帧直出」把试棚环境原样带进正片（试妆帧=卧室 → 分镜首帧=卧室 → FL2VA=卧室）。
+ *  新 v2＝参考条件生成：h3-image-cast 保留 REF 节点——试妆拍板帧只作**身份参考**，
+ *  场景按镜头描述全新生成（舞池/霓虹/露台…），服装走人设锁。单镜生成失败回退 v1 直选帧
+ *  （批次不破）；真空镜（desc 不含任何角色名）走纯 T2I。 */
 async function runSparkCharShots(ctx, job, p, seed, cents) {
   const j = job || {};
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, "");
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
   const cast = script.cast || [];
   const shots = [];
-  (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name }, sh))));
+  (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name, mood: sc.mood }, sh))));
   const viewsByRole = (st0.viewRefs || {})[p.episodeId] || {};
   const castDef0 = cast.find((x) => x.refImage) || cast[0] || {};
-  const fallbackPath = castDef0.refImage ? castAssetPath(castDef0.refImage) : null;
   const outDirAbs = path.join(process.cwd(), "var", "out");
   const images = [];
+  let rendered = 0;
   for (let i = 0; i < shots.length; i++) {
     const sh = shots[i];
-    if (!(sh.cast || []).length) continue; // 空镜不在本 worker 范围
-    const refName = sh.cast[0];
-    const castDef = cast.find((x) => x.role === refName || x.name === refName) || {};
-    const need = shotAngleNeed(String(sh.desc || "") + " " + String(castDef.anchor || ""));
-    const view = pickView(viewsByRole[refName], need, i);
-    const srcAbs = view ? castAssetPath(view.art) : fallbackPath;
-    if (!srcAbs) throw Object.assign(new Error("镜 " + (i + 1) + " 无可用参考帧：请先完成试妆试镜（C2S）拍板"), { code: "CAST_FILE_MISSING" });
     const fn = safeSeg(j.id) + "_h3char" + (i + 1) + ".png";
     const artPath = "var/out/" + fn;
-    writeOut(ctx, fn, fs.readFileSync(srcAbs)); // 选帧直出——零生成
-    images.push({
-      shotId: null, seq: i + 1, art: artPath,
-      bytes: fs.statSync(path.join(outDirAbs, fn)).size,
-      gate: view ? view.score : null,
-      refAngle: view ? view.angle : "original", refT: view ? view.t : null,
-      source: view ? "screen_test_frame" : "cast_ref"
+    const need = shotAngleNeed(String(sh.desc || ""));
+    // 在场角色：显式 cast 优先；LLM 剧本镜头 cast 常为空 → 按描述里点名的角色回退
+    const mentioned = cast.filter((c) => sh.desc && (sh.desc.indexOf(c.role) >= 0 || (c.name && sh.desc.indexOf(c.name) >= 0)));
+    const roles = (sh.cast || []).length ? sh.cast.slice(0, 3) : mentioned.map((c) => c.role).slice(0, 3);
+    // 身份参考帧：各角色按角度需求选拍板帧，缺者回退其初始定妆原图
+    const refFrames = [];
+    roles.forEach((role) => {
+      const cd = cast.find((x) => x.role === role || x.name === role) || {};
+      const view = pickView(viewsByRole[role], need, i);
+      const srcAbs = view ? castAssetPath(view.art) : (cd.refImage ? castAssetPath(cd.refImage) : null);
+      if (srcAbs && fs.existsSync(srcAbs)) refFrames.push({ bytes: fs.readFileSync(srcAbs), def: cd, role });
     });
-    log2(j, "shot " + (i + 1) + "/" + shots.length + " ← " + (view ? (view.angle + "@" + view.t + "s ArcFace " + view.score) : "初始定妆原图") + " (need=" + need + ")");
+    const view0 = roles.length ? pickView(viewsByRole[roles[0]], need, i) : null;
+    // 不再回退「别人的定妆图/试棚帧」——那正是场景污染源（热舞派对复盘）。无拍板帧 → 跳过该镜
+    // 首帧，视频走参考条件路径（R2VA 按 desc 出场景）。
+    const copyAbs = view0 ? castAssetPath(view0.art) : null;
+    let done = false, usedSeed = numFrom(seed) + i;
+    if (refFrames.length) {
+      // —— v2 参考条件生成（场景按描述，身份按参考）——
+      try {
+        await comfy.ensureFree(base, 8);
+        const names = [];
+        for (let r = 0; r < refFrames.length; r++) {
+          names.push(await comfy.uploadAsset(base, refFrames[r].bytes, "sbref_" + safeSeg(refFrames[r].role) + "_" + seed.slice(0, 6) + "_" + r + ".png"));
+        }
+        while (names.length < 3) names.push(names[names.length - 1]);
+        const anchors = refFrames.map((rf) => {
+          const cd = rf.def || {};
+          const an = cd.anchor || cd.desc || "";
+          return "画面中是" + (cd.name || rf.role) + "（参考图里同一位人物，同一人）：" + an + "。";
+        });
+        // 禁用「场景：X（Y）——Z」标头式行——H3 会把这类标题结构直接烧成画面字幕（热舞派对复盘）；
+        // 场景/氛围改织入叙述句。desc 里的后期指令（定格/淡出/字幕等）会诱发「片尾卡」模式
+        // 把人名烧成片名——先剥掉含这些词的从句，只留纯视觉描述。
+        const visualDesc = String(sh.desc || "")
+          .split(/(?<=[。；;])/)
+          .filter((seg) => !/(定格|淡出|叠化|黑场|黑屏|字幕|标题|片名|片头|片尾)/.test(seg))
+          .join("") || String(sh.desc || "");
+        // 年龄硬约束（2026-11-22 用户反馈「显老」）：desc 里的岁数埋在开头权重太低、
+        // 参考图人脸年龄会压过文字——把岁数单独提成末段强约束行；缺省按短剧主力观众带年轻化。
+        const ageLines = refFrames.map((rf) => {
+          const cd = rf.def || {};
+          const m = String(cd.desc || cd.anchor || "").match(/(\d{1,2})\s*岁/);
+          return "年龄硬约束：" + (cd.name || rf.role) + (m ? " " + m[1] + " 岁" : " 20～25 岁") + "——面容必须呈现同龄的年轻状态，禁止显老、禁止中年化。";
+        });
+        // 多角色在场强制（角色消失修复）：镜头点名了几个人，画面就必须有几人
+        const presenceLine = roles.length > 1
+          ? "在场人数硬约束：画面必须同时出现 " + roles.length + " 位角色（" + roles.map((r) => cast.find((c) => c.role === r) ? (cast.find((c) => c.role === r).name || r) : r).join("、") + "），各自按上述参考图保持身份，任何角色不得消失或换人。"
+          : "在场人数硬约束：画面只出现 1 位主角（" + (refFrames[0] ? (refFrames[0].def.name || roles[0]) : "主角") + "），不添加多余人物。";
+        const prompt = anchors.concat([
+          "剧情发生在" + (sh.scene || "剧情现场") + (sh.mood ? "，整体氛围" + sh.mood : "") + "。" + visualDesc,
+          "服装与发型严格按上述人物设定，不要漂移；背景与光线按镜头描述，忽略参考图中的环境。",
+          "电影感实拍质感，竖屏构图，" + (sh.mood || "") + "氛围。",
+          ageLines.join(" "),
+          presenceLine,
+          "严格禁止：画面中出现任何文字、字幕、标题、水印或 logo，画面必须是纯摄影内容。"
+        ]).join("\n");
+        const sd = (numFrom(seed) + i) % 18446744073709551615;
+        const r = await comfy.runTemplate(ctx, j, {
+          base,
+          tmplId: TMPL_CAST,
+          params: {
+            SEED: sd, PROMPT: prompt,
+            WIDTH: Number(sh.width) > 0 ? Number(sh.width) : 768,
+            HEIGHT: Number(sh.height) > 0 ? Number(sh.height) : 1344,
+            REF_IMAGE_1: names[0], REF_IMAGE_2: names[1], REF_IMAGE_3: names[2]
+          },
+          pollMs: 1500,
+          timeoutMs: 300000
+        });
+        writeOut(ctx, fn, r.bytes);
+        rendered++;
+        done = true;
+        images.push({
+          shotId: null, seq: i + 1, art: artPath,
+          bytes: fs.statSync(path.join(outDirAbs, fn)).size,
+          gate: view0 ? view0.score : null,
+          refAngle: view0 ? view0.angle : "castref", refT: view0 ? view0.t : null,
+          source: "ref_cond_t2i", roles
+        });
+        log2(j, "shot " + (i + 1) + "/" + shots.length + " ← 参考条件生成（refs=" + refFrames.length + "，场景=" + (sh.scene || "") + "）");
+      } catch (e) {
+        log2(j, "shot " + (i + 1) + " 参考生成失败回退直选帧：" + (e && e.message || e));
+      }
+    }
+    if (!done) {
+      // —— v1 直选帧兜底（试棚环境随帧——批次不破优先）——
+      const srcAbs = copyAbs;
+      if (!srcAbs || !fs.existsSync(srcAbs)) {
+        if (!roles.length) { log2(j, "shot " + (i + 1) + " 空镜且无参考帧，跳过"); continue; }
+        throw Object.assign(new Error("镜 " + (i + 1) + " 无可用参考帧：请先完成试妆试镜（C2S）拍板"), { code: "CAST_FILE_MISSING" });
+      }
+      writeOut(ctx, fn, fs.readFileSync(srcAbs));
+      images.push({
+        shotId: null, seq: i + 1, art: artPath,
+        bytes: fs.statSync(path.join(outDirAbs, fn)).size,
+        gate: view0 ? view0.score : null,
+        refAngle: view0 ? view0.angle : "original", refT: view0 ? view0.t : null,
+        source: view0 ? "screen_test_frame" : "cast_ref"
+      });
+      log2(j, "shot " + (i + 1) + "/" + shots.length + " ← 直选帧兜底 (need=" + need + ")");
+    }
   }
   const metaC = {
-    kind: "image-screen-test-frame", lane: NAME, engine: "试妆抽帧直选（零生成）", engine_user: ENGINE_USER,
-    jobType: "storyboard_char", episodeId: p.episodeId, images, cents: 0,
-    ai_label: "AI 生成内容（MiniMax H3 试妆视频抽帧）"
+    kind: "image-storyboard-refcond", lane: NAME, engine: "分镜首帧·参考条件生成", engine_user: ENGINE_USER,
+    jobType: "storyboard_char", episodeId: p.episodeId, images, cents: rendered * COST_CENTS,
+    ai_label: "AI 生成内容（MiniMax H3-Image）"
   };
-  const bagC = { ok: true, cents: 0, art: images.length ? images[0].art : null, meta: metaC, engine: ENGINE_USER, images };
+  const bagC = { ok: true, cents: rendered * COST_CENTS, art: images.length ? images[0].art : null, meta: metaC, engine: ENGINE_USER, images };
   j.result = bagC; j.art = bagC;
   return bagC;
 }
@@ -505,13 +595,15 @@ async function runSparkC1Plan(ctx, job, p, seed, cents) {
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
   const brief = (ep && ep.brief) || p.brief || "";
+  const pkg = prompts.style.resolve(ctx, p.episodeId);
   await comfy.ensureFree(base, 8);
   const r = await comfy.runTemplate(ctx, j, {
     base,
     tmplId: TMPL_CAST,
     params: {
       SEED: numFrom(seed) % 18446744073709551615,
-      PROMPT: [brief, "主视觉海报，竖屏，电影感", STYLE_SUFFIX].filter(Boolean).join(" "),
+      // 海报（2026-11-22 方案 §5.4）：brief 不整段直拼——title＋首冲突意象＋标题负空间留白
+      PROMPT: prompts.buildPosterPrompt({ title: (ep && ep.title) || "", brief, styleSuffix: pkg.t2i_suffix }),
       WIDTH: 768, HEIGHT: 1344,
       REF_IMAGE_1: "cast___.png", REF_IMAGE_2: "cast___.png", REF_IMAGE_3: "cast___.png"
     },
@@ -549,7 +641,9 @@ async function runSparkComfy(ctx, job, p, seed, cents) {
   const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const cast = castOf(ctx, p.episodeId);
   const actor = cast[p.castIdx] || { desc: p.prompt || "", refImage: null, role: "", name: "" };
-  const prompt = [actor.name, actor.role, actor.desc, "定妆照", "Use <Picture 1> as identity reference; keep facial identity consistent.", STYLE_SUFFIX].filter(Boolean).join(" ");
+  // 定妆照（2026-11-22 方案 §5.2/A3）：构图指令＋身份参考句（Spark 档）＋风格包后缀
+  const pkg = prompts.style.resolve(ctx, p.episodeId);
+  const prompt = prompts.buildCastingPrompt({ name: actor.name, role: actor.role, desc: actor.desc, styleSuffix: pkg.t2i_suffix, withIdentityRef: true });
 
   const names = [];
   const refBytes = readRefBytes(ctx, actor.refImage);
@@ -566,7 +660,7 @@ async function runSparkComfy(ctx, job, p, seed, cents) {
     params: {
       SEED: numFrom(seed) % 18446744073709551615,
       PROMPT: prompt,
-      WIDTH: 1024, HEIGHT: 1024,
+      WIDTH: 864, HEIGHT: 1536, // 定妆照改竖屏 9:16（2026-11-22 方案 §5.2，与成片画幅一致）
       REF_IMAGE_1: names[0], REF_IMAGE_2: names[1], REF_IMAGE_3: names[2]
     },
     pollMs: 1500,
@@ -636,7 +730,7 @@ async function run(job, ctx) {
     weights: "MXFP8+FP8",
     cents
   };
-  const abs = writeOut(ctx, fileName, PNG_1x1);
+  const abs = writeOut(ctx, fileName, PNG_STUB);
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   meta.art_abs = abs;
 

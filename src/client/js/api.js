@@ -50,7 +50,33 @@
     get: p => call("GET", "/api" + p),
     post: (p, body) => call("POST", "/api" + p, body === undefined ? {} : body),
     put: (p, body) => call("PUT", "/api" + p, body === undefined ? {} : body),
-    del: p => call("DELETE", "/api" + p)
+    patch: (p, body) => call("PATCH", "/api" + p, body === undefined ? {} : body),
+    del: p => call("DELETE", "/api" + p),
+    /* 原始字节上传（素材中心上传面；服务端 raw:true 面配套，素材中心施工 A5） */
+    rawPost: async (p, bytes) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60000);
+      const headers = { "content-type": "application/octet-stream" };
+      const tok = tokenGetter();
+      if (tok) headers["authorization"] = "Bearer " + tok;
+      try {
+        const res = await fetch("/api" + p, { method: "POST", headers, signal: ctrl.signal, body: bytes });
+        const text = await res.text();
+        let data = null;
+        if (text) { try { data = JSON.parse(text); } catch (e) { data = { raw: text }; } }
+        if (!res.ok) {
+          const code = (data && data.error && data.error.code) || (data && data.code) || "";
+          const msg = (data && data.error && data.error.message) || (data && data.message) || "";
+          throw new ApiError(res.status, code, msg);
+        }
+        return data || {};
+      } catch (e) {
+        clearTimeout(timer);
+        if (e instanceof ApiError) throw e;
+        throw new ApiError(0, "NETWORK", e && e.name === "AbortError" ? "上传超时" : "网络不通，检查一下服务");
+      }
+      finally { clearTimeout(timer); }
+    }
   };
 
   /* SSE 地址（EventSource 走 ?token= 兜底，服务端仅 /api/events 接受） */

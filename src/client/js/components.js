@@ -90,7 +90,10 @@
           </div>
         </div>
         <nav class="ep-tabs">
-          <a v-for="t in tabs" :key="t.key" :href="href(t.key)" :class="{active: tab===t.key}">{{ t.label }}</a>
+          <a v-for="t in tabs" :key="t.key" :href="href(t.key)" :class="{active: tab===t.key}">
+            {{ t.label }}<span v-if="t.key==='assets' && ready===false" class="nav-badge warn" title="素材未就绪：去素材中心补">!</span>
+            <span v-else-if="t.key==='assets' && ready===true" class="nav-badge" style="background:var(--ok,#2e7d32)" title="素材就绪">✓</span>
+          </a>
         </nav>
       </div>
       <div class="ep-head" v-else>
@@ -103,12 +106,21 @@
         const s = store.state;
         return s && s.episodes && (Array.isArray(s.episodes) ? s.episodes.find(e => e.id === props.epId) : s.episodes[props.epId]);
       });
+      /* 就绪度门禁（素材中心施工 B9）：素材不齐 → assets tab 挂红点；齐 → 绿勾 */
+      const ready = global.Vue.ref(null);
+      function checkReady() {
+        if (!props.epId) return;
+        store.studioReadiness(props.epId).then(r => { ready.value = !!(r && r.ready); }).catch(() => { ready.value = null; });
+      }
+      global.Vue.onMounted(checkReady);
+      global.Vue.watch(() => props.epId, checkReady);
+      global.Vue.watch(() => store.state && store.state.cards_pending, () => { global.Vue.nextTick(checkReady); });
       const tabs = [
         { key: "flow", label: "创作卡流" }, { key: "shoot", label: "拍摄" },
-        { key: "assets", label: "资产/音乐" }, { key: "deliver", label: "交付" }, { key: "costs", label: "成本" }
+        { key: "assets", label: "素材挂接" }, { key: "deliver", label: "交付" }, { key: "costs", label: "成本" }
       ];
       return {
-        ep, tabs,
+        ep, tabs, ready,
         href: k => global.__ROUTER.ep(k, props.epId),
         tab: global.Vue.computed(() => (global.__ROUTER.current.view || "").toLowerCase().replace("assets", "assets"))
       };

@@ -92,9 +92,10 @@
         });
       }
       function act(a) { if (a && a.onClick) a.onClick(closeSheet); else closeSheet(); }
+      function goSettings() { T.__ROUTER.go("#/settings"); }
       /* 键盘：Esc 关 sheet */
       global.addEventListener("keydown", e => { if (e.key === "Escape" && store.sheet) closeSheet(); });
-      return { store, route, viewComp, showNav, showRail, isEpRoute, isOps, navBadge, act, closeSheet, epId: Vue.computed(() => route.value.epId), gpu, gpuText, gpuCls, openGpu };
+      return { store, route, viewComp, showNav, showRail, isEpRoute, isOps, navBadge, act, closeSheet, goSettings, epId: Vue.computed(() => route.value.epId), gpu, gpuText, gpuCls, openGpu };
     },
     template: `
     <div class="app-shell" :class="{ 'no-rail': !showRail }">
@@ -102,6 +103,7 @@
         <div class="nav-brand"><span class="brand-mark">剧</span><b>剧场 Studio</b></div>
         <nav>
           <a class="nav-item" :class="{on: route.view==='Home'}" href="#/home">🏠 项目工作区</a>
+          <a class="nav-item" :class="{on: route.view==='Studio'}" href="#/studio">🎨 素材中心</a>
           <a class="nav-item" :class="{on: route.view==='Review'}" href="#/review" v-if="isOps">🧐 复审台
             <span class="nav-badge" v-if="navBadge.review">{{ navBadge.review }}</span></a>
           <a class="nav-item" :class="{on: route.view==='Admin'}" href="#/admin" v-if="isOps">🛠 运维台
@@ -117,6 +119,9 @@
           </div>
           <div class="who weak" v-if="store.auth.user">{{ store.auth.user.name }}
             <span class="badge">{{ store.auth.user.role==='ops' ? '运营' : '创作者' }}</span></div>
+          <div class="who weak" v-if="store.tenant && store.tenant.currentName" role="button" tabindex="0"
+            style="cursor:pointer" title="当前域（主账户）· 点击去设置切换/管理"
+            @click="goSettings" @keydown.enter="goSettings">🌐 {{ store.tenant.currentName }}</div>
         </div>
       </aside>
       <main class="app-main">

@@ -31,7 +31,8 @@
       loading: false, error: null, sending: false
     },
     toasts: [],
-    sheet: null
+    sheet: null,
+    tenant: { list: [], current: null, currentName: null, loading: false } // 域（S3-8）
   });
   T.store = store;
 
@@ -42,6 +43,23 @@
     store.auth.user = u ? JSON.parse(u) : null;
   } catch (e) { /* 隐私模式 */ }
   T.setTokenGetter(() => store.auth.token);
+
+  /* cookie 引导（2026-11-22）：/var/* 资产墙凭据走同源 cookie——img/video 标签带不上
+     Authorization 头，登录后/已有会话启动时把 token 同步进 cookie，登出即清 */
+  function syncAuthCookie() {
+    try {
+      if (store.auth.token) {
+        document.cookie = "theater_tok=" + encodeURIComponent(store.auth.token) + "; Path=/; Max-Age=604800; SameSite=Lax";
+      } else {
+        document.cookie = "theater_tok=; Path=/; Max-Age=0";
+      }
+    } catch (e) { /* 隐私模式 */ }
+  }
+  syncAuthCookie();
+  /* 守卫（2026-11-22 跨线补丁）：loadTenants 以属性赋值挂载在本文件后段，IIFE 此处直接调用
+     会在挂载前抛 TypeError → 整个 store.js 中断，toast/l2Create/SSE 全部失挂（客户端全瘫）。
+     延迟到脚本装载完成后执行，语义不变。 */
+  setTimeout(function () { if (store.auth.token && store.loadTenants) store.loadTenants().catch(function () {}); }, 0); // 域列表随会话引导（S3-8）
 
   let toastSeq = 0;
   store.toast = function (text, kind) {
@@ -85,6 +103,7 @@
       localStorage.setItem(LS_TOKEN, r.token);
       localStorage.setItem(LS_USER, JSON.stringify(r.user || {}));
     } catch (e) { /* 忽略 */ }
+    syncAuthCookie();
     store.connectSSE();
     store.refreshState().catch(() => {});
     return r.user;
@@ -92,6 +111,7 @@
   store.logout = function () {
     store.auth.token = null; store.auth.user = null;
     try { localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_USER); } catch (e) {}
+    syncAuthCookie();
     store.closeSSE();
     store.state = null;
     T.__ROUTER.go("#/login");
@@ -105,6 +125,11 @@
       const r = await T.api.get("/state");
       store.state = T.sanitizeDeep(r);
       store.err.state = null;
+      // 域上下文跟随服务端投影（S3-8）：顶栏域名显示的单一事实源
+      if (store.state && store.state.tenant_id) {
+        store.tenant.current = store.state.tenant_id;
+        store.tenant.currentName = store.state.tenant_name || null;
+      }
     } catch (e) {
       store.err.state = e;
       throw e;
@@ -266,6 +291,66 @@
       return r;
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
+  /* ---- 节点/引擎注册表 CRUD（2026-11-22 运维台化：加节点/撤节点/登记引擎不再改代码） ---- */
+  store.addNode = async function (payload) {
+    try {
+      const r = await T.api.post("/nodes", payload);
+      store.toast((r && r.note) || "节点已登记");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.updateNode = async function (id, payload) {
+    try {
+      const r = await T.api.put("/nodes/" + encodeURIComponent(id), payload);
+      store.toast("节点「" + ((r && r.node && r.node.label) || id) + "」已更新");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeNode = async function (id, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "撤掉节点「" + id + "」？",
+        body: "有引擎绑定或剧集指向时会被拦下；撤掉的节点随时可以重新登记。"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.post("/nodes/" + encodeURIComponent(id) + "/remove", {});
+      store.toast((r && r.note) || "节点已撤");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.addEngine = async function (payload) {
+    try {
+      const r = await T.api.post("/admin/registry", payload);
+      store.toast("引擎「" + payload.engineId + "」已登记");
+      store.loadRegistry().catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeEngine = async function (engineId, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "注销引擎「" + engineId + "」？",
+        body: "注册表里删掉这个引擎；指向其车道的新任务将按注册表重新解析归属。"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.post("/admin/registry/remove", { engineId, confirmed: true });
+      store.toast((r && r.note) || "引擎已注销");
+      store.loadRegistry().catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.rebindEngine = async function (engineId, node) {
+    try {
+      const r = await T.api.post("/admin/registry/node", { engineId, node: node || null, confirmed: true });
+      store.toast((r && r.note) || "引擎归属节点已改绑");
+      store.loadRegistry().catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
   store.probeRegistry = async function () {
     try {
       const r = await T.api.post("/admin/registry/endpoint", {});
@@ -319,6 +404,193 @@
     try {
       const r = await T.api.post("/music/candidates", { sceneId, mood });
       store.toast("候选生成中，稍后进曲库");
+      return T.sanitizeDeep(r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+
+  /* ---------------- 素材中心（2026-11-22 施工 A5：五域资产库＋候选池＋绑定） ---------------- */
+  store.studio = {
+    summary: null, loading: false, error: null,
+    drafts: { music: [], images: [] },
+    lib: { music: [], images: [], characters: [], scenes: [], sfx: [], ambience: [], voices: [] },
+    readiness: null
+  };
+  store.loadStudioSummary = async function () {
+    try { store.studio.summary = T.sanitizeDeep(await T.api.get("/studio/summary")); }
+    catch (e) { store.toast(T.humanErr(e).text, "err"); }
+    return store.studio.summary;
+  };
+  store.loadStudioDomain = async function (domain) {
+    try {
+      const r = await T.api.get("/studio/" + encodeURIComponent(domain));
+      store.studio.lib[domain] = T.sanitizeDeep(r.list || []);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+    return store.studio.lib[domain];
+  };
+  store.loadStudioDrafts = async function () {
+    try {
+      const r = await T.api.get("/studio/drafts");
+      const d = T.sanitizeDeep(r.drafts || {});
+      store.studio.drafts.music = d.music || [];
+      store.studio.drafts.images = d.images || [];
+    } catch (e) { /* 静默：轮询面 */ }
+    return store.studio.drafts;
+  };
+  store.studioGenerateMusic = async function (spec) {
+    try {
+      const r = await T.api.post("/studio/audio/music/generate", spec);
+      store.toast("配乐候选生成中（一次 " + (r.expected || 6) + " 段），出来后进「候选池」挑选入库");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioGenerateImage = async function (spec) {
+    try {
+      const r = await T.api.post("/studio/images/generate", spec);
+      store.toast("图像生成中（" + (r.expected || 2) + " 张），出来后进「候选池」挑选入库");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioAdoptDraft = async function (domain, id, payload) {
+    try {
+      const r = await T.api.post("/studio/drafts/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id) + "/adopt", payload || {});
+      store.toast("已入素材库");
+      store.loadStudioDrafts().catch(() => {});
+      store.loadStudioDomain(domain).catch(() => {});
+      return T.sanitizeDeep(r.entry || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioDiscardDraft = async function (domain, id) {
+    try { await T.api.del("/studio/drafts/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id)); store.loadStudioDrafts().catch(() => {}); }
+    catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioBind = async function (domain, id, kind, targetId, primary) {
+    try {
+      const r = await T.api.post("/studio/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id) + "/bind",
+        { kind, id: targetId, primary: !!primary });
+      store.toast("已绑定" + (primary ? "（主曲）" : ""));
+      store.loadStudioDomain(domain).catch(() => {});
+      return T.sanitizeDeep(r.entry || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioUnbind = async function (domain, id, kind, targetId) {
+    try {
+      await T.api.post("/studio/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id) + "/unbind", { kind, id: targetId });
+      store.toast("已解绑");
+      store.loadStudioDomain(domain).catch(() => {});
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioPatch = async function (domain, id, patch) {
+    try {
+      const rr = await T.api.patch("/studio/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id), patch);
+      store.loadStudioDomain(domain).catch(() => {});
+      return T.sanitizeDeep(rr.entry || rr);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioUsedBy = async function (domain, id) {
+    try {
+      const r = await T.api.get("/studio/used_by/" + encodeURIComponent(domain) + "/" + encodeURIComponent(id));
+      return T.sanitizeDeep(r.used_by || []);
+    } catch (e) { return []; }
+  };
+  store.studioUpload = async function (domain, file, meta) {
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const qs = new URLSearchParams();
+      qs.set("domain", domain);
+      const m = meta || {};
+      if (m.title) qs.set("title", String(m.title).slice(0, 60));
+      if (m.type) qs.set("type", String(m.type));
+      if (m.licenseModel) qs.set("licenseModel", String(m.licenseModel).slice(0, 40));
+      if (m.licenseUsage) qs.set("licenseUsage", String(m.licenseUsage));
+      if (m.desc) qs.set("desc", String(m.desc).slice(0, 400));
+      const r = await T.api.rawPost("/studio/upload?" + qs.toString(), buf);
+      store.toast("素材已上传入库");
+      store.loadStudioDomain(domain).catch(() => {});
+      return T.sanitizeDeep(r.entry || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioExtractCharacter = async function (episodeId, role) {
+    try {
+      const r = await T.api.post("/studio/characters/extract", { episodeId, role });
+      store.toast(r.existed ? "该角色已在素材库中" : "角色已提取入库（含试镜帧池）");
+      store.loadStudioDomain("characters").catch(() => {});
+      return T.sanitizeDeep(r.character || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioPromoteFrames = async function (id, episodeId, role) {
+    try {
+      const r = await T.api.post("/studio/characters/" + encodeURIComponent(id) + "/promote_frames", { episodeId, role });
+      store.toast("试镜帧池已入库" + (r.added >= 0 ? "（新增 " + r.added + " 帧）" : ""));
+      store.loadStudioDomain("characters").catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioRecast = async function (id) {
+    try {
+      const r = await T.api.post("/studio/characters/" + encodeURIComponent(id) + "/recast", {});
+      store.toast("重定妆已排队：候选出来后在「候选池」收藏并挂回该角色（生成新版本）");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioCreateScene = async function (spec) {
+    try {
+      const r = await T.api.post("/studio/scenes", spec);
+      store.toast("场景卡已建");
+      store.loadStudioDomain("scenes").catch(() => {});
+      return T.sanitizeDeep(r.scene || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioEstablishing = async function (id, variantTag) {
+    try {
+      const r = await T.api.post("/studio/scenes/" + encodeURIComponent(id) + "/establishing", { variantTag: variantTag || null });
+      store.toast("定场图生成中，候选出来后收藏并挂回该场景卡");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioReadiness = async function (epId) {
+    try {
+      const r = await T.api.get("/studio/readiness/" + encodeURIComponent(epId));
+      store.studio.readiness = T.sanitizeDeep(r);
+    } catch (e) { store.studio.readiness = null; }
+    return store.studio.readiness;
+  };
+  store.studioCanon = async function (kind) {
+    try {
+      const r = await T.api.get("/studio/canon/" + encodeURIComponent(kind));
+      return T.sanitizeDeep(r.list || []);
+    } catch (e) { return []; }
+  };
+  store.studioSaveCanon = async function (kind, entry) {
+    try {
+      const r = await T.api.post("/studio/canon/" + encodeURIComponent(kind), entry);
+      store.toast("设定已保存");
+      return T.sanitizeDeep(r.entry || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioExportPack = async function () {
+    try {
+      const r = await T.api.post("/studio/packs/export", {});
+      store.toast("素材包已导出（元数据清单）");
+      return r.pack;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioImportPack = async function (pack) {
+    try {
+      const r = await T.api.post("/studio/packs/import", { pack });
+      store.toast("素材包已导入（新增 " + (r.added || 0) + " 条）");
+      ["music", "images", "characters", "scenes"].forEach(d => store.loadStudioDomain(d).catch(() => {}));
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioAiLyrics = async function (spec) {
+    try {
+      const r = await T.api.post("/studio/ai/lyrics", spec);
+      return T.sanitizeDeep(r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioAiImage = async function (spec) {
+    try {
+      const r = await T.api.post("/studio/ai/image-prompt", spec);
       return T.sanitizeDeep(r);
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
@@ -409,6 +681,172 @@
       const r = await T.api.post("/admin/templates/remove", { id, confirmed: !!confirmed });
       store.toast("模板已删除");
       store.loadTemplates().catch(() => {});
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+
+  /* ---------------- 删除（2026-11-22：二次确认内置，confirmed=true 跳过弹窗） ---------------- */
+  store.deleteEpisode = async function (id, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "删除这一集？（不可恢复）",
+        html: "该集的卡、镜头、场景、试妆参考与过程产物文件将<b>一并删除</b>；排队中的任务取消，账本保留审计记录。",
+        okLabel: "确认删除"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.del("/episodes/" + encodeURIComponent(id));
+      store.toast("该集已删除");
+      refreshStateSoon();
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.deleteProject = async function (id, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "删除这个项目？（不可恢复）",
+        html: "仅空项目可删——项目下还有集时请先删集，再删项目。",
+        okLabel: "确认删除"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.del("/projects/" + encodeURIComponent(id));
+      store.toast("项目已删除");
+      refreshStateSoon();
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+
+  /* ---------------- 邀请码管理（2026-11-22 按人发码，ops 运维台） ---------------- */
+  store.loadInvites = async function () {
+    const r = await T.api.get("/admin/invites");
+    return r.invites || [];
+  };
+  store.addInvite = async function (name, role) {
+    try {
+      const r = await T.api.post("/admin/invites", { name, role });
+      store.toast("新码已生成：" + r.code);
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeInvite = async function (code, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "吊销这个邀请码？",
+        html: "吊销后该码无法再登录（已绑定账号不受影响）。",
+        okLabel: "确认吊销"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.post("/admin/invites/remove", { code });
+      store.toast("邀请码已吊销");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+
+  /* ---------------- 域（主账户）切换与管理（S3-8） ---------------- */
+  store.loadTenants = async function () {
+    store.tenant.loading = true;
+    try {
+      const r = await T.api.get("/auth/tenants");
+      store.tenant.list = r.tenants || [];
+      store.tenant.current = r.current || null;
+      store.tenant.currentName = r.current_name || null;
+      return store.tenant.list;
+    } catch (e) {
+      return [];
+    } finally { store.tenant.loading = false; }
+  };
+  store.switchTenant = async function (tid) {
+    if (tid === store.tenant.current) return null;
+    try {
+      const r = await T.api.post("/auth/switch", { tid });
+      store.auth.token = r.token;
+      if (r.user) store.auth.user = r.user;
+      try {
+        localStorage.setItem(LS_TOKEN, r.token);
+        localStorage.setItem(LS_USER, JSON.stringify(r.user || {}));
+      } catch (e) { /* 忽略 */ }
+      syncAuthCookie();
+      store.closeSSE();
+      store.connectSSE();
+      await store.refreshState();
+      store.loadTenants().catch(() => {});
+      const t = (store.tenant.list || []).find(x => x.id === tid);
+      store.toast("已切换到「" + ((t && t.name) || tid) + "」");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.createTenant = async function (name) {
+    try {
+      const r = await T.api.post("/tenants", { name });
+      store.toast("域已创建：" + (r.tenant && r.tenant.name));
+      await store.loadTenants();
+      return r.tenant;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.loadTenantDetail = async function (tid) {
+    const r = await T.api.get("/tenants/" + encodeURIComponent(tid));
+    return r; // {tenant, members, invites}
+  };
+  store.addTenantInvite = async function (tid, name, role) {
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/invites", { name, role });
+      store.toast("域邀请码已生成：" + r.code);
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeTenantMember = async function (tid, uid) {
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/members/remove", { uid });
+      store.toast("成员已移出本域");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.loadTenantBilling = async function (tid) {
+    const r = await T.api.get("/tenants/" + encodeURIComponent(tid) + "/billing");
+    return r; // {total_cents, budget_cents, pct, by_episode, by_kind}
+  };
+  store.setTenantBudget = async function (tid, cents) {
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/budget", { budget_cents: cents });
+      store.toast(cents === null ? "域预算已清除（无上限）" : "域预算已设为 " + cents + " 分");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.setTenantMemberRole = async function (tid, uid, role) {
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/members/role", { uid, role });
+      store.toast("成员身份已更新");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.transferTenant = async function (tid, uid) {
+    const ok = await store.confirm({
+      title: "转让域主身份？",
+      html: "你将降为管理员，新域主拥有全部管理权（含转让与删域）。可再转回。",
+      okLabel: "确认转让"
+    });
+    if (!ok) return null;
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/transfer", { uid });
+      store.toast("域主已转让");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeTenantInvite = async function (tid, code) {
+    const ok = await store.confirm({
+      title: "吊销这个域邀请码？",
+      html: "吊销后该码无法再入域（已入域成员不受影响）。",
+      okLabel: "确认吊销"
+    });
+    if (!ok) return null;
+    try {
+      const r = await T.api.post("/tenants/" + encodeURIComponent(tid) + "/invites/remove", { code });
+      store.toast("域邀请码已吊销");
       return r;
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };

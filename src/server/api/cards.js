@@ -14,6 +14,15 @@
  */
 
 const musicMod = require("./music.js");
+const libMod = require("./library.js");
+const prompts = require("../prompts/index.js");
+const Tenants = require("../core/tenants.js");
+
+/** 卡→域归属（经 episode）；缺集时退默认域（upsertCard 缺集守卫会拦派生） */
+function cardTid(st, card) {
+  const ep = (st.episodes || {})[card.episodeId];
+  return (ep || {}).tenantId || Tenants.defaultTid(st);
+}
 
 const DEFAULT_SCENES = [
   { name: "场1·重逢", mood: "释然" },
@@ -63,6 +72,9 @@ function upsertCard(ctx, spec) {
   // spec: {episodeId,type,payload,key?(card)=>bool,skipIfDecided?:bool}
   const st = ctx.store.get();
   st.cards = st.cards || {};
+  // 缺集守卫（2026-11-22）：集已删除后，在跑任务完成回写不再产孤儿卡（删除时排队中任务
+  // 已取消，running 任务任其跑完——费用已发生；其派生卡一律拦截）。调用方均容忍 card:null。
+  if (!(st.episodes || {})[spec.episodeId]) return { card: null, created: false };
   const match = (c) =>
     c.episodeId === spec.episodeId && c.type === spec.type && (!spec.key || spec.key(c));
   const ids = Object.keys(st.cards);
@@ -191,18 +203,6 @@ function realStoryboardImages(ctx, episodeId) {
   return { images: ok, note: "分镜首帧（真机）· 逐格可查" };
 }
 
-function synthesizeStoryboard(ctx, episodeId) {
-  const shots = shotsOf(ctx, episodeId);
-  return {
-    images: shots.map((sh) => ({
-      shotId: sh.id,
-      seq: sh.seq,
-      art: "var/out/sb_" + ctx.util.hash12({ episodeId, shotId: sh.id, k: "sb" }) + ".png"
-    })),
-    note: "分镜图已生成 · 逐格可查"
-  };
-}
-
 function synthesizeMusicCandidates(ctx, episodeId, sceneId, mood) {
   const out = [];
   for (let j = 1; j <= 3; j++) {
@@ -300,8 +300,8 @@ function ensureScenesAndShots(ctx, episode, card) {
 /* ---------------- accept 推进（链式派生） ---------------- */
 
 function adoptedForScene(ctx, sceneId) {
-  const st = ctx.store.get();
-  return (st.music_lib || []).some((m) => m.sceneId === sceneId);
+  // 素材中心（2026-11-22）：场景绑定读 asset_lib（1:N 绑定/旧 sceneId 字段兼容）
+  return libMod.hasSceneBinding(ctx, sceneId);
 }
 
 function pendingForScene(ctx, episodeId, sceneId) {
@@ -319,11 +319,23 @@ function advanceOnAccept(ctx, card, episode, operator) {
     const job = ctx.engine.enqueue(
       "storyboard",
       { episodeId: epId },
-      // Spark 通道启用 → storyboard 走 imgspark（结构化 no-op，分镜首帧由 storyboard_char 在试妆后产出）
-      { episodeId: epId, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+      // 分镜任务落注册表绑定的车道（episode.driver→lane→node；结构化 no-op，分镜首帧由 storyboard_char 在试妆后产出）
+      { episodeId: epId, initiated_by: "user" }
     );
     derived.push({ kind: "job", job });
   } else if (t === "C2") {
+    // 拍板闸（2026-11-22）：全员初始定妆确认后才许拍板——否则下游 C4 空图、开机视频全断
+    //（热舞派对 事故复盘：2/3 角色未确认就拍板 → C4 悬空引用 → 16 镜全灭）。
+    // castref/confirm（上传/生成→确认）会自动派试妆试镜，全流程不需要绕过本闸。
+    const st0 = ctx.store.get();
+    const ep0 = (st0.episodes || {})[epId] || {};
+    const missing = ((ep0.script && ep0.script.cast) || []).filter((c) => !c.refImage).map((c) => c.role);
+    if (missing.length) {
+      throw {
+        code: "NOT_READY",
+        message: "还有 " + missing.length + " 位角色没确认初始定妆图（" + missing.join("、") + "）——在卡上逐人「确认」后再拍板"
+      };
+    }
     const cast = ((card.payload || {}).actors || []).map((a) => {
       const pick = (a.candidates || [])[0] || null;
       return { actorId: a.id, role: a.role, name: a.name, chosen: pick };
@@ -343,7 +355,9 @@ function advanceOnAccept(ctx, card, episode, operator) {
     const r = upsertCard(ctx, {
       episodeId: epId,
       type: "C4",
-      payload: realImages || synthesizeStoryboard(ctx, epId),
+      // 诚实空（2026-11-22 热舞派对复盘）：真图缺失不再伪造 var/out/sb_*.png 悬空引用——
+      // H3 线分镜首帧由试妆拍板（C2S→storyboard_char）产出，此卡此时就该如实说「待生成」
+      payload: realImages || { images: [], note: "分镜首帧待产出：全员确认定妆 → 试妆试镜拍板后自动生成" },
       skipIfDecided: true
     });
     if (r.created) {
@@ -551,7 +565,7 @@ function enqueueStoryboardChar(ctx, epId, opts) {
     ctx,
     "storyboard_char",
     { episodeId: epId },
-    { episodeId: epId, initiated_by: initiatedBy, tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+    { episodeId: epId, initiated_by: initiatedBy }
   );
   return r;
 }
@@ -569,16 +583,14 @@ function reEnqueueOnReject(ctx, card, body) {
       if (ep && (!hasScript || ep.script_source === "scriptgen")) {
         return ctx.engine.enqueue("scriptgen", scriptgenPayload(ctx, ep), Object.assign(opts, { free: true }));
       }
-      // tier 随 Spark 通道（对齐 C2/C3 分支）：LLM 在线时缺 tier 会让 c1plan 落本机 img5060 被 GPU 闸 409
-      return withDedup(idemEnqueue(ctx, "c1plan", { episodeId: epId }, Object.assign(opts, {
-        tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined
-      })));
+      // 车道路由唯一权威＝剧集驱动节点（episode.driver→注册表 lane→node，dag/engine.js enqueue）：
+      return withDedup(idemEnqueue(ctx, "c1plan", { episodeId: epId }, opts));
     }
     case "C2":
       // 分镜图由 storyboard_char 产出（试妆抽帧换背景壳）——驳回重出＝重跑角色分镜（幂等：活任务不重派）
-      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined })));
+      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, opts));
     case "C3":
-      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, Object.assign(opts, { tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined })));
+      return withDedup(idemEnqueue(ctx, "storyboard_char", { episodeId: epId }, opts));
     case "C2S": {
       // 试妆重出：驳回意见（edit 留的 note / 本次 reject 附言）→ 试妆动作提示（幂等：同角色活任务不重派）
       const p = card.payload || {};
@@ -784,11 +796,15 @@ function onCastInitDone(ctx, job, episodeId) {
 function onScreenTestDone(ctx, job, episodeId) {
   const art = job.art || job.result || {};
   if (!art.art) return false;
+  const role = art.role || (job.payload || {}).role || "主角色";
   const r = upsertCard(ctx, {
     episodeId,
     type: "C2S",
+    // 按角色隔离（2026-11-22 热舞派对复盘）：C2S 无 key 时同集 pending 卡被跨角色互相覆盖
+    //（顾森的结果被路人甲冲掉）。key 锁定 payload.role，每角色一张卡。
+    key: (c) => (c.payload || {}).role === role,
     payload: {
-      role: art.role || (job.payload || {}).role || "主角色",
+      role,
       video: {
         art: art.art,
         sec: art.sec || 10.13,
@@ -1033,7 +1049,6 @@ function handleJobDone(ctx, evt) {
             episodeId,
             initiated_by: "system",
             free: true,
-            tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined
           }
         );
       } catch (e) { /* GPU_BUSY 等：海报缺席不阻断 C1 卡 */ }
@@ -1145,7 +1160,14 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const q = parseQuery(req);
       const st = store.get();
-      let list = Object.keys(st.cards || {}).map((k) => st.cards[k]);
+      // 域过滤（S3-5）：只出本域集的卡（漏 stamp 集视为默认域，自愈）
+      const dt = Tenants.defaultTid(st);
+      const tid = Tenants.contextTid(st, auth);
+      const epIds = new Set(
+        Object.keys(st.episodes || {})
+          .filter((k) => ((st.episodes[k] || {}).tenantId || dt) === tid)
+      );
+      let list = Object.keys(st.cards || {}).map((k) => st.cards[k]).filter((c) => c && epIds.has(c.episodeId));
       if (q.episodeId) list = list.filter((c) => c.episodeId === q.episodeId);
       if (q.status) list = list.filter((c) => c.status === q.status);
       list = list.filter((c) => {
@@ -1170,18 +1192,16 @@ function register(router, ctx) {
       const st = store.get();
       const card = (st.cards || {})[params.id];
       if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
+      Tenants.guardWrite(st, auth, cardTid(st, card)); // 域外一律 404
       if (card.type !== "C1") throw { code: "BAD_REQUEST", message: "建议片一期只支持 C1 故事方向卡" };
       if (card.status !== "pending") throw { code: "ALREADY_DECIDED", message: "卡片已决策" };
       const note = String((body || {}).note || "").trim();
       if (!note) throw { code: "BAD_REQUEST", message: "note（修改意见）必填" };
       if (!ctx.llm || !ctx.llm.enabled()) throw { code: "NOT_READY", message: "LLM 未在线（本机 8090 未起或未配置），建议片不可用" };
       const p = card.payload || {};
-      const sys = [
-        "你是剧场 Studio 的剧本策划顾问。依据修改意见修订分场分镜表，输出 JSON。",
-        "硬约束：scenes 数组长度必须与输入一致；每场 shots 长度必须与输入一致；只改 name/mood/desc/dialogue/sec 的内容，不改结构；台词 ≤40 字；sec 取 3–15 整数；cast 只能用输入里出现的角色名。",
-        "只输出：{\"reply\":\"给制片人的一句话说明（≤120字）\",\"scenes\":[…完整新数组…]}"
-      ].join("\n");
-      const usr = "当前卡内容：" + JSON.stringify({ summary: p.summary, cast: p.cast, scenes: p.scenes }).slice(0, 4000) + "\n修改意见：" + note.slice(0, 300);
+      // 提示词单一来源（2026-11-22 方案 §6.1）：与 l2/tools.js suggest_card 共用注册中心构建器
+      const sys = prompts.buildSuggestSys();
+      const usr = prompts.buildSuggestUsr(p, note);
       const r = await ctx.llm.chat([{ role: "system", content: sys }, { role: "user", content: usr }], { temperature: 0.4, maxTokens: 1600, timeoutMs: 60000 });
       if (!r.ok) throw { code: "NOT_READY", message: "LLM 未给出建议（" + (r.error || "超时") + "），请稍后再试" };
       const m = String(r.content).match(/\{[\s\S]*\}/);
@@ -1224,6 +1244,7 @@ function register(router, ctx) {
       const st = store.get();
       const epId = params.id;
       if (!(st.episodes || {})[epId]) throw { code: "NOT_FOUND", message: "剧集不存在: " + epId };
+      Tenants.guardWrite(st, auth, ((st.episodes || {})[epId] || {}).tenantId || Tenants.defaultTid(st)); // 域外一律 404
       const c2sList = Object.keys(st.cards || {}).map((k) => st.cards[k])
         .filter((c) => c.episodeId === epId && c.type === "C2S" && c.status === "decided")
         .sort((a, b) => (b.decided_at || 0) - (a.decided_at || 0));
@@ -1253,6 +1274,7 @@ function register(router, ctx) {
       const card = (st.cards || {})[params.id];
       if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
       if (card.status === "decided") throw { code: "PROTECTED", message: "已拍板卡是版本档案，不能删除（历史区自动收档）" };
+      Tenants.guardWrite(st, auth, cardTid(st, card)); // 域外一律 404
       const fs = require("fs");
       const path = require("path");
       const outs = [];
@@ -1291,6 +1313,7 @@ function register(router, ctx) {
       if (!card) throw { code: "NOT_FOUND", message: "卡片不存在: " + params.id };
       if (card.type !== "C2S") throw { code: "BAD_REQUEST", message: "仅试妆试镜卡（C2S）支持帧勾选" };
       if (card.status !== "pending") throw { code: "ALREADY_DECIDED", message: "卡片已决策，勾选不可再改" };
+      Tenants.guardWrite(st, auth, cardTid(st, card)); // 域外一律 404
       const sel = (body || {}).sel || {};
       const views = (card.payload || {}).views || [];
       let n = 0;
@@ -1322,6 +1345,7 @@ function register(router, ctx) {
       if (["accept", "edit", "reject"].indexOf(action) < 0) {
         throw { code: "BAD_ACTION", message: "action 必须为 accept|edit|reject" };
       }
+      Tenants.guardWrite(st, auth, cardTid(st, card)); // 域外一律 404；viewer 不可拍板
       util.cas(card, b.ver); // ver 不符 → {code:"STALE"} → HTTP 409
       const operator = (auth && (auth.uid || auth.id)) || null;
       const episode = (st.episodes || {})[card.episodeId] || null;

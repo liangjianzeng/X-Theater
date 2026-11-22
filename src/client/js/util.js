@@ -123,5 +123,19 @@
       + (s && s.sec ? " · " + s.sec + "s" : "");
   };
 
+  /* ---------------- 产物/素材 URL（素材中心 2026-11-22 修复：图片显示不出） ----------------
+     统一寻址口径（与服务端 cards.js cast 候选拼装同约定）：
+     - 裸文件名＝定妆参考（var/assets/cast/ 相对名）→ /var/assets/cast/<fn>
+     - var/out|var/assets 相对路径 → 根路径（登录墙靠同源 Cookie theater_tok 自动携带）
+     - 绝对 URL / 以 / 开头 → 原样 */
+  T.artUrl = function (art) {
+    const a = String(art == null ? "" : art).trim().replace(/\\/g, "/");
+    if (!a) return "";
+    if (/^https?:\/\//i.test(a)) return a;
+    if (/^var\//i.test(a)) return "/" + a;
+    if (a.charAt(0) === "/") return a;
+    return "/var/assets/cast/" + a;
+  };
+
   global.__T = T;
 })(window);

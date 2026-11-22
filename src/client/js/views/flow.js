@@ -41,10 +41,8 @@
   }
 
   function srcOf(art) {
-    const a = String(art || "");
-    if (!a) return "";
-    if (/^https?:\/\//i.test(a)) return a;
-    return a.charAt(0) === "/" ? a : "/" + a;
+    // 统一走 T.artUrl（素材中心 2026-11-22 修复：裸文件名=cast 参考、var/=产物面、登录墙靠 Cookie）
+    return T.artUrl(art);
   }
 
   views.Flow = {
@@ -259,11 +257,12 @@
       /* C6 开机的前提：本集 C6 卡已拍板（后端 shoot 也强制校验） */
       const c6Decided = computed(() => (list.value || []).some(c => c.type === "C6" && c.status !== "pending"));
       const hasC6 = computed(() => (list.value || []).some(c => c.type === "C6"));
-      /* GPU 互斥：本机 LLM 在线＝独显被占，开机被服务端闸挡（此处前置提示） */
+      /* GPU 互斥：渲染节点与 LLM 同机时＝独显被占，开机被服务端闸挡（此处前置提示）。
+         driver＝节点注册表任意节点 id；「local」＝本机（默认），其余节点一律视为不占本机独显 */
       const epDriver = computed(() => {
         const eps = (store.state && store.state.episodes) || [];
         const ep = eps.find(e => e.id === props.epId);
-        return ep && ep.driver === "dgx" ? "dgx" : "local";
+        return (ep && ep.driver) || "local";
       });
       const gpuBusy = computed(() => epDriver.value === "local" && !!(store.gpu && store.gpu.data && store.gpu.data.gpu_busy));
 
@@ -477,6 +476,26 @@
         catch (e) { /* store 已 toast 人话 */ }
         finally { busyId.value = ""; }
       }
+      /* 收藏入库（素材中心施工 B8 回流）：候选不挂场直接进素材库，跨集复用 */
+      async function collectTrack(c) {
+        if (busyId.value || !c) return;
+        busyId.value = "collect-" + c.id;
+        try {
+          await T.api.post("/music/" + encodeURIComponent(c.id) + "/adopt", {});
+          adopted[c.id] = true;
+          store.toast("已收藏进素材中心曲库（未挂场，可跨集复用）");
+        } catch (e) { /* api 层已 toast */ }
+        finally { busyId.value = ""; }
+      }
+      /* 角色提取入库（素材中心施工 B8 回流）：C2 定妆角色 → 素材中心角色库 */
+      async function extractToLibrary(card, a) {
+        if (busyId.value || !a || !a.role) return;
+        busyId.value = "extract-" + a.role;
+        try {
+          await store.studioExtractCharacter(card.episodeId, a.role);
+        } catch (e) { /* store 已 toast */ }
+        finally { busyId.value = ""; }
+      }
 
       /* ---- C2 定妆入口：上传 / AI 生成 / 确认（试妆试镜流程 2026-11-21） ---- */
       const uploaded = reactive({});   // key → 刚上传的文件名（待确认）
@@ -642,11 +661,11 @@
       }
       function altArts(a) {
         const cs = ((a && a.candidates) || []).slice(1);
-        return cs.filter(c => c && c.art).map(c => '/' + c.art);
+        return cs.filter(c => c && c.art).map(c => T.artUrl(c.art));
       }
       function firstArt(a) {
         const cs = (a && a.candidates) || [];
-        for (const c of cs) if (c && c.art) return '/' + c.art;
+        for (const c of cs) if (c && c.art) return T.artUrl(c.art);
         return null;
       }
 
@@ -693,7 +712,7 @@
         typeLabel, cardTitle, summary, c7Items, cands,
         clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, lbItem, lbPrev, lbNext, closeLb,
         accept, reject, openNote, editSubmit,
-        gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, reload, pauseAudio,
+        gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, collectTrack, extractToLibrary, reload, pauseAudio,
         uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
         castRefGenerate, castRefConfirm, pickCand, selCandArt, angleCn, viewsOf, toggleView,
         sbGroup, previewViews, nodeDot,
@@ -857,11 +876,15 @@
                 <div class="v-flow-actor-meta">
                   <b>{{ clean(a.name || a.role) }}</b>
                   <span class="badge">{{ clean(a.role) }}</span>
+                  <button v-if="firstArt(a)" class="btn btn-sm btn-ghost"
+                    title="连锚点带定妆图提取进素材中心角色库（跨集复用）"
+                    :disabled="busyId === ('extract-' + a.role)"
+                    @click="extractToLibrary(card, a)">入库为角色资产</button>
                   <div class="weak">{{ clean(a.desc || '') }}</div>
                   <div class="v-flow-actor-alts" v-if="(a.candidates || []).filter(c => c && c.art).length > 1">
                     <template v-for="(c, k) in (a.candidates || []).filter(c => c && c.art)" :key="k">
                       <img v-if="k > 0"
-                        :src="'/' + c.art" :title="'点击选定 · 候选 ' + (k + 1)" loading="lazy" alt="候选"
+                        :src="srcOf(c.art)" :title="'点击选定 · 候选 ' + (k + 1)" loading="lazy" alt="候选"
                         :style="selCandArt(card, a) === c.art ? 'cursor:pointer;outline:3px solid #f5a623' : 'cursor:pointer'"
                         @click="pickCand(card, a, c.art)" />
                     </template>
@@ -953,6 +976,9 @@
                   <span class="badge" v-if="adopted[c.id]">已采用 ✓</span>
                   <button v-else class="btn btn-sm btn-primary" :disabled="busyId === ('mus-' + c.id)"
                     @click="useTrack(card, c)">用这条</button>
+                  <button v-if="!adopted[c.id]" class="btn btn-sm btn-ghost" :disabled="busyId === ('collect-' + c.id)"
+                    title="不挂场，直接收藏进素材中心曲库（跨集复用）"
+                    @click="collectTrack(c)">收藏入库</button>
                 </template>
                 <span class="badge" v-else-if="adopted[c.id]">已采用 ✓</span>
               </div>
@@ -992,7 +1018,7 @@
               <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting || gpuBusy"
                 :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>
               <span class="weak" v-if="!c6Decided">先点「就这个」确认报价，才能开机。</span>
-              <span class="weak" v-if="gpuBusy" style="color:#B3261E">本集走本机节点，与本机 LLM 抢独显——运维台把本集驱动切到 DGX，或左下角停 LLM 让路。</span>
+              <span class="weak" v-if="gpuBusy" style="color:#B3261E">本集走本机节点，与本机 LLM 抢独显——运维台把本集驱动切到其它节点，或左下角停 LLM 让路。</span>
               <span class="weak" v-else-if="!est.data && !est.loading && !est.err">报价加载中…</span>
             </div>
 

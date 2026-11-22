@@ -7,6 +7,9 @@
     { re: /^#?\/?$/, view: "Home" },
     { re: /^#\/login$/, view: "Login" },
     { re: /^#\/home$/, view: "Home" },
+    // 素材中心（一级菜单，施工 A5）：#/studio 及 #/studio/<tab>
+    { re: /^#\/studio$/, view: "Studio" },
+    { re: /^#\/studio\/([a-z]+)$/, view: "Studio" },
     { re: /^#\/ep\/([^/]+)$/, view: "Flow", ep: true },
     { re: /^#\/ep\/([^/]+)\/flow$/, view: "Flow", ep: true },
     { re: /^#\/ep\/([^/]+)\/shoot$/, view: "Shoot", ep: true },
