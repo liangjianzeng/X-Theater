@@ -337,3 +337,19 @@ E2E 实测记录（浏览器真机）：登录→素材中心六 tab→音频生
 - **真机实测**（LLM 在线）：AI 歌词扩写（灯塔素材→完整结构化歌词，意象全保留，副歌记忆点）；AI 画面扩写（雨夜码头老兵→四层描述＋negative＋tags）；UI 两按钮全流程通过
 - **修复**：渲染空白根因＝return 块丢失 musicFilter/musicList（渲染期 TypeError 被 prod 静默吞掉）——vnode 解剖定位后补回
 - 回归 **12/12 PASS**（含并行会话新增 V12；TEST_BASE_PORT 避让）
+
+### 追加迭代（2026-11-22 下午⑤·候选池溯源＋生成中可见性＋选项中文化）
+
+用户三连反馈：「候选池要加生成要素，不然搞不清什么要素生成的样本」「得把引擎/节点/时间显示出来」「风格那些不要用英文，可能不懂」。
+
+- **草稿溯源落库**（api/library.js）：
+  - 生成 payload 快照 `gen` 配置块（音乐：mode/genres/instruments/bpm/vocal/instrumental；图像：mode/size/light/negativeExtra）随任务走
+  - bus 回流监听给草稿盖章：`gen`＋`caption`＋`lyrics_head`＋`engine`（worker 实报）＋`lane`（真实车道，可能被驱动改道）＋`node`（注册表解析车道→节点标签 `nodeLabelForLane`）＋`created_at`
+  - 存量草稿（加戳前）诚实降级：引擎/时间有则显，节点缺省不造假
+- **候选池 UI**（views/studio.js）：
+  - 每张草稿卡三行溯源：`要素：标准 · 中景 · 霓虹夜色，湿地面反光`（gen 块中文渲染，词典值→中文标签映射）／`引擎 tags（模型英文词汇）：…`（引擎收英文 tag 的口径说明）／`⚙ 生成引擎 × · 节点 · MM-DD HH:mm`
+  - **生成中横幅**：派发即挂（音乐/图像分道，含模式与张数摘要＋已等秒数实时跳），候选回流（计数超基线）自动收；轮询窗口音乐 60→180s、图像 60→150s（盖过真机 ≈70–120s，根治「没结果」错觉）；tick 同时刷新 summary 计数
+  - **选项全部中文**：曲风/乐器 chips 改 {值,中文标签} 双列（值仍英文发引擎，界面只讲中文；Lo-fi/R&B/City Pop 属行业通用叫法保留），AI 歌词辅助的 style 参数同表转中文
+- **真机验证**：音乐 3 候选 ≈70s 回流（晚风×3：`要素：标准 · 纯音乐`＋`⚙ 生成引擎 1.5 · 本机 · 17:54`）；图像 LLM 在线下零弹窗直跑（写死兜底生效：深夜便利店→真 DGX H3 引擎 `MiniMax-H3-Image int8_convrot 6step · DGX H3 全家桶 · 17:59`；清晨码头→imgspark 车道 `MiniMax-H3-Image 6step`）；横幅出现→回流自动收
+- **修复**：`draftDomain is not defined`（helper 块落在 setup 作用域外，改内联 domain 判断）；横幅首帧「已等 -51 秒」（tickNow 未同步，markGoing 时置基准＋Math.max(0)）
+- 回归 **12/12 PASS**（TEST_BASE_PORT=19420）；客户端缓存戳 ch11
