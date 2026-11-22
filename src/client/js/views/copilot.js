@@ -625,7 +625,6 @@
           <div class="v-copilot-head">
             <div class="row">
               <span class="v-copilot-title">🤝 制片助手</span>
-              <span class="badge" v-if="L.sid">{{ L.mode === 'B' ? 'B · 本机内置' : 'A · 云端托管' }}</span>
               <span class="chip chip-sel v-copilot-bind" v-if="boundEp" @click="clearCtx" title="点击解除本集绑定">📌 {{ clean(boundEp.title) }} ✕</span>
               <span class="grow"></span>
               <button class="v-copilot-kebab" @click="menuOpen = !menuOpen" aria-label="会话操作" :aria-expanded="menuOpen ? 'true' : 'false'">⋯</button>
