@@ -295,11 +295,17 @@ async function llmReviewPersonas(ctx, card, rulePersonas) {
   // payload 经 q() 定界（用户数据非指令，收窄注入面）
   const sys = prompts.buildAireviewSys(card.type, names);
   // 设定域注入（素材中心 C1，2026-11-22）：canon.reject_rules（判废表）随 sys 注入——
-  // 行业口径：判废标准是库资产，AI 审查与人工复审共读同一份
+  // 行业口径：判废标准是库资产，AI 审查与人工复审共读同一份。
+  // 2026-11-23 加项目作用域（灯塔事故防线）：只注入绑定本集所属项目的判废条目，未绑定不生效。
   try {
     const st = ctx.store.get();
+    const ep = (st.episodes || {})[card.episodeId] || {};
+    const pid = ep.projectId ? String(ep.projectId) : "";
     const rules = st && st.asset_lib && st.asset_lib.canon && Array.isArray(st.asset_lib.canon.reject_rules) ? st.asset_lib.canon.reject_rules : [];
-    const lines = rules.filter((r) => r && (r.title || r.content)).map((r, i) => (i + 1) + ". " + (r.title || "判废") + "：" + (r.content || "")).slice(0, 12);
+    const lines = pid ? rules
+      .filter((r) => r && (r.title || r.content) && String(r.projectId || "") === pid)
+      .map((r, i) => (i + 1) + ". " + (r.title || "判废") + "：" + (r.content || ""))
+      .slice(0, 12) : [];
     if (lines.length) sys += "\n\n判废表（命中任一条即至少 warn，明显违规给 fail）：\n" + lines.join("\n");
   } catch (e) { /* 判废注入失败不阻断审查 */ }
   const usr = prompts.buildAireviewUsr(card.payload);

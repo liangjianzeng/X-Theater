@@ -640,6 +640,13 @@
       return T.sanitizeDeep(r.entry || r);
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
+  store.studioDeleteCanon = async function (kind, id) {
+    try {
+      const r = await T.api.del("/studio/canon/" + encodeURIComponent(kind) + "/" + encodeURIComponent(id));
+      store.toast("设定条目已删除");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
   store.studioExportPack = async function () {
     try {
       const r = await T.api.post("/studio/packs/export", {});

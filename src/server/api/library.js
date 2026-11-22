@@ -20,6 +20,7 @@
 const fs = require("fs");
 const path = require("path");
 const prompts = require("../prompts/index.js");
+const Tenants = require("../core/tenants.js");
 
 /* ---------------- 数据面 ---------------- */
 
@@ -201,7 +202,7 @@ function register(router, ctx) {
             tags: c.tags || p.tags || "",
             gen: p.gen || null,
             caption: p.caption || "",
-            lyrics_head: String(p.lyrics || "").replace(/s+/g, " ").slice(0, 60),
+            lyrics_head: String(p.lyrics || "").replace(/\s+/g, " ").slice(0, 60),
             engine: c.engine || "",
             voiceId: c.voiceId || p.voiceId || null, // 声纹克隆候选标记（2026-11-22）
             lane: "music", node: nodeLabelForLane(st, "music"),
@@ -250,7 +251,10 @@ function register(router, ctx) {
           }
         }
       }
-    } catch (e) { /* 回流异常隔离：不影响任务链 */ }
+    } catch (e) {
+      // 异常隔离不打挂总线，但留痕：候选池回流断链若无日志只能靠人工巡检（2026-11-23 深审）
+      console.error("[library] jobs 回流处理失败:", (evt && evt.job && (evt.job.type + "/" + evt.job.id)) || "?", e && (e.stack || e.message || e));
+    }
   });
 
   /* ================= summary / readiness ================= */
@@ -279,6 +283,7 @@ function register(router, ctx) {
     const st = store.get();
     const ep = (st.episodes || {})[params.episodeId];
     if (!ep) throw { code: "NOT_FOUND", message: "集不存在: " + params.episodeId };
+    Tenants.guardRead(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404（素材库是公共库，集不是）
     const l = libOf(st);
     const scenes = Object.keys(st.scenes || {}).map((k) => st.scenes[k]).filter((s) => s.episodeId === ep.id);
     const sceneItems = scenes.map((s) => ({
@@ -394,10 +399,18 @@ function register(router, ctx) {
     const b = body || {};
     if (KINDS.indexOf(b.kind) < 0) throw { code: "BAD_REQUEST", message: "kind 取值非法" };
     const st = store.get();
-    // 绑定目标存在性
+    // 绑定目标存在性＋域归属（2026-11-23 深审：素材库全域共享是设计，但绑定目标必须域内——
+    // 否则可把素材绑到他域场景/集，篡改他域的出片配置）
     if (b.kind === "scene" && !(st.scenes || {})[b.id]) throw { code: "NOT_FOUND", message: "场景不存在: " + b.id };
     if (b.kind === "episode" && !(st.episodes || {})[b.id]) throw { code: "NOT_FOUND", message: "集不存在: " + b.id };
     if (b.kind === "project" && !(st.projects || {})[b.id]) throw { code: "NOT_FOUND", message: "项目不存在: " + b.id };
+    if (b.kind === "scene") {
+      Tenants.guardWrite(st, auth, ((st.scenes || {})[b.id] || {}).tenantId || Tenants.defaultTid(st));
+    } else if (b.kind === "episode") {
+      Tenants.guardWrite(st, auth, ((st.episodes || {})[b.id] || {}).tenantId || Tenants.defaultTid(st));
+    } else if (b.kind === "project") {
+      Tenants.guardWrite(st, auth, ((st.projects || {})[b.id] || {}).tenantId || Tenants.defaultTid(st));
+    }
     if (b.kind === "character" && !findEntry(ctx, "characters", b.id)) throw { code: "NOT_FOUND", message: "角色不存在: " + b.id };
     const e = findEntry(ctx, params.domain, params.id);
     if (!e) throw { code: "NOT_FOUND", message: "素材不存在: " + params.id };
@@ -726,6 +739,7 @@ function register(router, ctx) {
     const st = store.get();
     const ep = (st.episodes || {})[b.episodeId];
     if (!ep) throw { code: "NOT_FOUND", message: "集不存在: " + b.episodeId };
+    Tenants.guardRead(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404（2026-11-23 深审）
     const cast = ((ep.script || {}).cast || []).filter((c) => c && c.role);
     const c = cast.filter((x) => x.role === b.role)[0] || cast[0];
     if (!c) throw { code: "NOT_FOUND", message: "剧本里找不到角色: " + (b.role || "（cast 为空）") };
@@ -779,6 +793,10 @@ function register(router, ctx) {
     const st = store.get();
     const ch = findEntry(ctx, "characters", params.id);
     if (!ch) throw { code: "NOT_FOUND", message: "角色不存在: " + params.id };
+    // 帧池是集级域数据：域外集的 viewRefs 不读（2026-11-23 深审）
+    if (b.episodeId && (st.episodes || {})[b.episodeId]) {
+      Tenants.guardRead(st, auth, ((st.episodes || {})[b.episodeId] || {}).tenantId || Tenants.defaultTid(st));
+    }
     const refs = ((st.viewRefs || {})[b.episodeId] || {})[b.role || ch.role] || [];
     if (!Array.isArray(refs) || !refs.length) throw { code: "NOT_FOUND", message: "该集/角色没有已固化的试镜帧池" };
     const before = (ch.views || []).length;
@@ -934,6 +952,9 @@ function register(router, ctx) {
         kind: params.kind,
         title: String(b.title || "未命名").slice(0, 60),
         content: String(b.content || "").slice(0, 2000),
+        // 设定绑定项目（2026-11-23 灯塔事故防线）：剧本生成/审查只消费绑定本项目的设定；
+        // 不绑定＝暂不生效——设定库是全局池，无作用域会把 A 剧的世界观灌进每一部剧
+        projectId: String(b.projectId || "").trim().slice(0, 40) || undefined,
         created_at: Date.now()
       };
       get(st.asset_lib).push(entry);
@@ -941,6 +962,20 @@ function register(router, ctx) {
     store.commit();
     audit(ctx, auth, "canon_update", params.kind, { title: (entry && entry.look) || (entry && entry.title) || "" });
     return router.json(res, 201, { entry });
+  }, { auth: true });
+
+  // 删除设定条目（lore/reject_rules/beats/style_pkgs 通用）
+  router.add("DELETE", "/api/studio/canon/:kind/:id", (req, res, body, params, auth) => {
+    if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+    const get = CANON_KINDS[params.kind];
+    if (!get) throw { code: "NOT_FOUND", message: "未知设定种类: " + params.kind };
+    const arr = get(store.get().asset_lib);
+    const i = arr.findIndex((x) => x.id === params.id);
+    if (i < 0) throw { code: "NOT_FOUND", message: "条目不存在" };
+    const gone = arr.splice(i, 1)[0];
+    store.commit();
+    audit(ctx, auth, "canon_delete", params.kind, { title: (gone && (gone.title || gone.look)) || "" });
+    return router.json(res, 200, { deleted: gone.id });
   }, { auth: true });
 
   /* ================= 公共库与素材包（C5） ================= */
@@ -1075,6 +1110,7 @@ function register(router, ctx) {
     const st = store.get();
     const ep = (st.episodes || {})[params.episodeId];
     if (!ep) throw { code: "NOT_FOUND", message: "集不存在: " + params.episodeId };
+    Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404（2026-11-23 深审）
     const b = body || {};
     const map = b.voice_map && typeof b.voice_map === "object" ? b.voice_map : {};
     ep.voice_map = ep.voice_map && typeof ep.voice_map === "object" ? ep.voice_map : {};

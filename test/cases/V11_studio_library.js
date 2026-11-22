@@ -168,7 +168,7 @@ async function fn(ctx) {
 
   /* ---- 10) 设定域 / 音色 / MV / 公共科目（C1/C3/C7/C8） ---- */
   // 设定域：lore + 判废表 + 风格包
-  await api('POST', '/api/studio/canon/lore', { title: '世界观', content: '故事发生在南方海滨小城，灯塔建于 1946 年。' });
+  await api('POST', '/api/studio/canon/lore', { title: '世界观', content: '故事发生在南方海滨小城，渔港码头建于 1946 年。' });
   await api('POST', '/api/studio/canon/reject_rules', { title: '面部判废', content: '五官漂移、多人拼贴、口型错位一律判废。' });
   await api('POST', '/api/studio/canon/style_pkgs', { look: 'V11测试包', t2i_suffix: '实拍质感，冷色调', music_tags: 'piano, 70 bpm' });
   const loreList = await jget('GET', '/api/studio/canon/lore');

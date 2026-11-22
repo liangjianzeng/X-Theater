@@ -73,7 +73,8 @@
     { v: "烛光暖黄，明暗交界", label: "烛光" }, { v: "霓虹夜色，湿地面反光", label: "霓虹夜色" }
   ];
   const LOOKS = ["写实电影感", "柔光唯美", "冷冽悬疑", "夜色胶片"];
-  const MOODS = ["释然", "离别", "压抑", "对峙", "温馨", "中性", "其它"];
+  // 与服务端 MOOD_LIGHT 词表（dicts.js）对齐：紧张/惊悚有光线映射；C1 兜底分场会用「紧张」
+  const MOODS = ["释然", "离别", "压抑", "对峙", "温馨", "紧张", "惊悚", "中性", "其它"];
   const SECS = [15, 30, 45, 60];
   const TABS = [
     { key: "music", label: "🎵 音频" },
@@ -665,7 +666,7 @@
 
       /* ================= 设定域 ================= */
       const canonLists = Vue.reactive({ style_pkgs: [], reject_rules: [], lore: [] });
-      const gCanon = Vue.reactive({ look: "", t2iSuffix: "", musicTags: "", ruleTitle: "", ruleContent: "", loreTitle: "", loreContent: "" });
+      const gCanon = Vue.reactive({ look: "", t2iSuffix: "", musicTags: "", ruleTitle: "", ruleContent: "", loreTitle: "", loreContent: "", loreProject: "" });
       async function loadCanon() {
         canonLists.style_pkgs = await store.studioCanon("style_pkgs");
         canonLists.reject_rules = await store.studioCanon("reject_rules");
@@ -681,10 +682,19 @@
         const t = kind === "reject_rules" ? gCanon.ruleTitle : gCanon.loreTitle;
         const c = kind === "reject_rules" ? gCanon.ruleContent : gCanon.loreContent;
         if (!t.trim() || !c.trim()) return;
-        await store.studioSaveCanon(kind, { title: t.trim(), content: c.trim() });
+        // 设定绑定项目（2026-11-23 灯塔事故防线）：只绑定项目的设定才进剧本生成/审查
+        await store.studioSaveCanon(kind, { title: t.trim(), content: c.trim(), projectId: kind === "lore" ? (gCanon.loreProject || "") : undefined });
         if (kind === "reject_rules") { gCanon.ruleTitle = ""; gCanon.ruleContent = ""; }
         else { gCanon.loreTitle = ""; gCanon.loreContent = ""; }
         loadCanon();
+      }
+      async function delCanon(kind, id) {
+        await store.studioDeleteCanon(kind, id);
+        loadCanon();
+      }
+      function projectName(pid) {
+        const p = (projects.value || []).filter((x) => String(x.id) === String(pid))[0];
+        return p ? p.title : pid;
       }
 
       /* ================= 候选池 ================= */
@@ -709,7 +719,7 @@
         upFile, upMeta, doUpload,
         exPick, exRoles, extractChar, promoteFrames, recast,
         gScene, createScene, estVariant, genEstablishing,
-        canonLists, gCanon, loadCanon, saveStylePkg, saveRule,
+        canonLists, gCanon, loadCanon, saveStylePkg, saveRule, delCanon, projectName,
         adoptMusic, discardDraft, draftsAll, draftDomain, genGoing, draftGenLine, draftMetaLine
       };
     },
@@ -1140,16 +1150,21 @@
                 <label class="field" style="grid-column:1/3"><span class="field-label">判废标准</span><input class="input" v-model.trim="gCanon.ruleContent" maxlength="500" /></label>
                 <div class="v-studio-acts"><button class="btn" @click="saveRule('reject_rules')">保存判废条目</button></div>
               </div>
-              <div class="weak" v-for="r in canonLists.reject_rules" :key="r.id">· {{ r.title }}：{{ r.content }}</div>
+              <div class="weak" v-for="r in canonLists.reject_rules" :key="r.id">· {{ r.title }}：{{ r.content }}　<button type="button" class="btn btn-ghost" style="padding:0 8px" @click="delCanon('reject_rules', r.id)">删</button></div>
             </div>
             <div>
               <div class="v-studio-sec">世界观/人物小传（{{ canonLists.lore.length }}）</div>
               <div class="v-studio-gen">
                 <label class="field"><span class="field-label">标题</span><input class="input" v-model.trim="gCanon.loreTitle" maxlength="60" /></label>
                 <label class="field" style="grid-column:1/3"><span class="field-label">内容</span><input class="input" v-model.trim="gCanon.loreContent" maxlength="500" /></label>
+                <label class="field" style="grid-column:1/3"><span class="field-label">绑定项目（设定只对这部剧生效——不绑定不进剧本生成，防跨剧污染）</span>
+                  <select class="select" v-model="gCanon.loreProject">
+                    <option value="">不绑定（暂不进剧本生成）</option>
+                    <option v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.title }}</option>
+                  </select></label>
                 <div class="v-studio-acts"><button class="btn" @click="saveRule('lore')">保存设定</button></div>
               </div>
-              <div class="weak" v-for="l in canonLists.lore" :key="l.id">· {{ l.title }}：{{ l.content }}</div>
+              <div class="weak" v-for="l in canonLists.lore" :key="l.id">· {{ l.title }}：{{ l.content }}　<span v-if="l.projectId" style="color:#9fc2ff">{{ projectName(l.projectId) }}</span><span v-else>未绑定·暂不生效</span>　<button type="button" class="btn btn-ghost" style="padding:0 8px" @click="delCanon('lore', l.id)">删</button></div>
             </div>
           </div>
         </div>

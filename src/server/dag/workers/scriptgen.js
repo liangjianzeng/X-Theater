@@ -109,14 +109,22 @@ function buildSys(tpl) {
   return prompts.buildScriptgenSys(tpl, { maxScenes: MAX_SCENES, maxShots: MAX_SHOTS });
 }
 
-function buildUsr(p, brief, kind, tpl, ctx) {
+function buildUsr(p, brief, kind, tpl, ctx, job) {
   let usr = prompts.buildScriptgenUsr(p, brief, kind);
-  // 设定域注入（素材中心 C1，2026-11-22）：canon.lore（世界观/人物小传/称谓表）随 usr 定界注入——
-  // 长剧集连续性的结构化源头；空设定无感（q() 由注册中心统一消毒）
+  // 设定域注入（素材中心 C1，2026-11-22；2026-11-23 加项目作用域——灯塔事故防线）：
+  // 只注入「绑定到本集所属项目」的 lore。设定库是全局池，无作用域会把 A 剧的世界观灌进
+  // 每一部剧（事故：全局「灯塔1946」世界观让「恋情纠结」这种 brief 也被写进灯塔城）。
+  // 未绑定项目的设定一律不注入（设定页绑定项目后才生效）。
   try {
     const st = ctx && ctx.store && typeof ctx.store.get === "function" ? ctx.store.get() : null;
+    const episodeId = (job && (job.episodeId || (job.payload && job.payload.episodeId))) || null;
+    const ep = st && episodeId ? (st.episodes || {})[episodeId] : null;
+    const pid = ep && ep.projectId ? String(ep.projectId) : "";
     const lore = st && st.asset_lib && st.asset_lib.canon && Array.isArray(st.asset_lib.canon.lore) ? st.asset_lib.canon.lore : [];
-    const lines = lore.filter((l) => l && (l.title || l.content)).map((l) => (l.title || "设定") + "：" + (l.content || "")).slice(0, 8);
+    const lines = pid ? lore
+      .filter((l) => l && (l.title || l.content) && String(l.projectId || "") === pid)
+      .map((l) => (l.title || "设定") + "：" + (l.content || ""))
+      .slice(0, 8) : [];
     if (lines.length) {
       usr += "\n" + prompts.q("剧集设定（世界观/人物小传/称谓表——剧情、台词与锚点必须与设定一致）", lines.join("\n"), 1500);
     }
@@ -207,7 +215,7 @@ async function run(job, ctx) {
   }
 
   try {
-    const bag = await generate(ctx, job, buildSys(tpl), buildUsr(p, brief, kind, tpl, ctx));
+    const bag = await generate(ctx, job, buildSys(tpl), buildUsr(p, brief, kind, tpl, ctx, job));
     return attach(job, bag);
   } catch (e) {
     return attach(job, {

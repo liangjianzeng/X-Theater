@@ -95,7 +95,7 @@ function buildCard(tool, args, r, ctx, session) {
         return { kind: "choices", options: [{ label: "去成本页看逐镜账", href: costsHref(epId) }] };
       case "query_projects": {
         const n = (res.projects || []).length;
-        if (!n) return { kind: "ask", question: "新剧叫什么名字？直接回复就行，比如「就叫灯塔来信」。" };
+        if (!n) return { kind: "ask", question: "新剧叫什么名字？直接回复就行，比如「就叫夜航来信」。" };
         return null;
       }
       case "create_project":

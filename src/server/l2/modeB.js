@@ -218,7 +218,7 @@ function parseIntent(text, chips, ctx, session) {
   }
   // —— 新建剧（规则模式保守引导：没剧名不能盲建；LLM 在线时由 LLM 追问剧名一步到位）——
   if (wantNewShow) {
-    return { refusal: "新建一部剧得先有剧名，比如「帮我新建一部剧，就叫灯塔来信」。", name: "create_project" };
+    return { refusal: "新建一部剧得先有剧名，比如「帮我新建一部剧，就叫夜航来信」。", name: "create_project" };
   }
   // —— 导出（覆盖意图但白名单无此工具 → 人话拒答，不算注入）——
   if (wantExport) {
