@@ -237,6 +237,10 @@ async function runTurn(opts) {
     if (r.ok && ctx.llm && typeof ctx.llm.chat === "function" && ctx.llm.enabled()) {
       try { rep = await require("./llmintent.js").llmReply(tool, args, r, ctx, session, fallback); } catch (e) { rep = fallback; }
     }
+    /* 链式语境：本会话刚建的项目留给下一步（建集 ask 链的承接，toIntent 兜底读这里） */
+    if (r.ok && tool === "create_project" && r.result && r.result.project_id) {
+      session.lastProject = { id: r.result.project_id, title: r.result.title || "" };
+    }
     await say(rep, advisor.buildCard(tool, args, r, ctx, session)); // 顾问卡：现状之后直接给可点的下一步
   }
   return {

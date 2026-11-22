@@ -78,6 +78,10 @@ function systemPrompt(ctx, session, chips) {
     '- decide_card {"card_id":"card_..." 或 "card_type":"C1","action":"accept|reject"} 拍板卡（card_id 见上下文「待拍板卡」清单；会出确认卡，用户确认后才执行）',
     '- shoot_episode {"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）',
     '- export_episode {"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）',
+    '- search_assets {"domain":"music|images|characters|scenes","q":"关键词"} 检索素材中心资产库（只读）',
+    '- library_stats {} 素材中心库存统计（各域计数＋候选池）',
+    '- bind_asset {"domain":"music","asset_id":"mus_...","scene_no":N,"primary":true} 把素材绑定到场景（主曲/备选；不花钱）',
+    '- generate_music {"mood":"中文情绪词","type":"bgm|theme|ambient|mv","sec":45} 素材中心生成配乐候选（不挂场进候选池；花钱，会出确认卡）',
     "",
     "绑定纪律：你只服务上下文里的绑定剧集；对话历史若涉及其它剧集，一律以本次绑定为准，不要延续旧剧的语境、数字或进度。",
     "上下文：",
@@ -85,7 +89,7 @@ function systemPrompt(ctx, session, chips) {
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",
-    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。",
+    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
     "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
     "3. 与工具无关的一般问题（问剧情、要创作建议、闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内。",
     "4. 数据引用纪律（防幻觉）：镜头/任务状态必须逐字引用上下文里的标记——✓=已通过，⚠=待复审，无标记=还没拍；禁止把「未拍」说成「已就绪」，禁止编造成本/进度数字。所有 ID（card_id/project_id/shot_id 等）只能从上下文复制，绝不许编造——上下文没有就改用 card_type/project_name 等名称定位。",
@@ -136,7 +140,12 @@ const TOOL_ARG_KEYS = {
   adopt_music: ["candidate_id", "scene_id"],
   shoot_episode: ["episode_id"],
   export_episode: ["episode_id"],
-  query_episodes: ["project_id"]
+  query_episodes: ["project_id"],
+  // 素材中心（2026-11-22 施工 C6）
+  search_assets: ["domain", "q"],
+  library_stats: [],
+  bind_asset: ["domain", "asset_id", "scene_no", "scene_id", "primary"],
+  generate_music: ["mood", "type", "sec", "project_id"]
 };
 const TEXT_KEYS = { title: 60, brief: 300, note: 300 };
 
@@ -147,7 +156,9 @@ function toIntent(ctx, session, out, epId, text) {
     return { refusal: String(out.refusal).trim().slice(0, 200), name: "llm_refusal" };
   }
   if (typeof out.say === "string" && out.say.trim()) {
-    return { say: String(out.say).trim().slice(0, 400) };
+    /* ID 纪律机械兜底：直答文本剥除 ep_/pj_/card_ 类编号（模型偶发不守规矩，清洗层保底） */
+    const said = String(out.say).trim().replace(/[A-Za-z]{1,4}_[0-9a-fA-F]{6,}/g, "…").slice(0, 400);
+    return { say: said };
   }
   const tool = typeof out.tool === "string" ? out.tool : null;
   if (!tool || !governance.WHITELIST.some(function (t) { return t === tool; })) return null;
@@ -185,12 +196,16 @@ function toIntent(ctx, session, out, epId, text) {
     if (id) args.scene_id = id;
     delete args.scene_no;
   }
-  // create_episode：LLM 忘传项目定位时，用原文匹配项目名兜底（真实项目名出现在用户话里）
+  // create_episode：LLM 忘传项目定位时的三级兜底——①用户话里提到项目名（原文匹配）；
+  // ②会话链式语境（本会话刚建的项目＝lastProject，承接「建完项目答梗概就建集」的 ask 链）
   if (tool === "create_episode" && args.project_id == null && args.project_name == null) {
     const st2 = ctx.store.get();
     const hit = Object.keys(st2.projects || {}).map(function (k) { return st2.projects[k]; })
       .filter(function (p) { return p.title && String(text || "").indexOf(p.title) >= 0; });
     if (hit.length === 1) args.project_name = hit[0].title;
+    else if (hit.length === 0 && session.lastProject && st2.projects[session.lastProject.id]) {
+      args.project_name = session.lastProject.title;
+    }
   }
   // card_id 幻觉清理（decide_card/suggest_card/query_card 通用）：state 无此 ID → 按类型/唯一 pending 补全
   if (["decide_card", "suggest_card", "query_card"].indexOf(tool) >= 0 && args.card_id && !(ctx.store.get().cards || {})[args.card_id]) {
@@ -246,7 +261,8 @@ async function llmReply(tool, args, r, ctx, session, fallbackText) {
     { temperature: 0.4, maxTokens: 280, timeoutMs: 20000 }
   );
   if (!out.ok || !out.content || out.content.length < 2) return fallbackText;
-  const t = String(out.content).trim().slice(0, 280);
+  /* ID 纪律机械兜底：回执文本剥除 ep_/pj_/card_/sh_/sc_ 类编号（模型不守规矩时清洗层保底） */
+  const t = String(out.content).trim().replace(/[A-Za-z]{1,4}_[0-9a-fA-F]{6,}/g, "…").slice(0, 280);
   return t;
 }
 

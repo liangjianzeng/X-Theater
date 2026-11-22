@@ -275,6 +275,7 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const p = {
         id: util.uid("pj"),
         title: String(args.title).trim().slice(0, 40),
+        tenantId: (ctx.tenants && ctx.tenants.contextTid ? ctx.tenants.contextTid(st, auth) : null) || undefined,
         style_pkg: { look: args.look || "写实电影感", palette: "青橙", ratio: "9:16" },
         music_enabled: true
       };
@@ -295,6 +296,8 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const ep = {
         id: util.uid("ep"),
         projectId: proj.id,
+        /* 租户戳（2026-11-22 真机发现：漏戳＝scopedView 全域隐形）——与 api/episodes.js 同口径 */
+        tenantId: proj.tenantId || (ctx.tenants && ctx.tenants.defaultTid ? ctx.tenants.defaultTid(st) : null) || undefined,
         title: String(args.title).trim().slice(0, 60),
         brief: String(args.brief).trim().slice(0, 300),
         kind: "one_liner",

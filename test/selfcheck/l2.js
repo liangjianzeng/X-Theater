@@ -443,9 +443,9 @@ async function main() {
     ok(l2.createSession(null, "A").code === "FORBIDDEN", "无 auth → FORBIDDEN");
     const badPost = await l2.postMessage("nope", { text: "hi", ctx: [] }, AUTH);
     ok(badPost.code === "NOT_FOUND", "postMessage 缺会话 → NOT_FOUND");
-    // 白名单完整性
-    ok(Object.keys(governance.TOOLS).length === 21,
-      "TOOLS 白名单＝21 工具");
+    // 白名单完整性（只增不减：后续扩容素材中心等工具不破坏基线）
+    ok(Object.keys(governance.TOOLS).length >= 21,
+      "TOOLS 白名单≥21 工具（基线 21，只增不减）");
     ok(governance.TOOLS.reroll_shot.expensive && governance.TOOLS.music_candidates.expensive &&
       governance.TOOLS.decide_card.expensive && governance.TOOLS.shoot_episode.expensive &&
       governance.TOOLS.export_episode.expensive && governance.TOOLS.revise_scenes.expensive &&
@@ -519,6 +519,14 @@ async function main() {
     ok(cc.options.some(function (o) { return o.tab === "apv"; }), "清洗：tab 白名单放行");
     ok(!cc.options.some(function (o) { return o.tool; }), "清洗：越权键位不透传");
     ok(adapter.cleanCardOf(env2.ctx, null) === null, "清洗：空卡→null");
+    /* 链式语境：建完项目答梗概 → create_episode 兜底 project_name（ask 链承接） */
+    const llmi = require("../../src/server/l2/llmintent");
+    const sessChain = { uid: "u1", id: "s_chain", ctx: [], lastProject: { id: "pj_chain1", title: "链路测试" } };
+    st3c.projects["pj_chain1"] = { id: "pj_chain1", title: "链路测试" };
+    const ie = llmi.toIntent(env3.ctx, sessChain, { tool: "create_episode", args: { title: "第一集", brief: "深夜便利店的影子" } }, ep3.id, "第一集：深夜便利店，店员发现监控里的影子");
+    ok(!!ie && ie.tool === "create_episode" && ie.args.project_name === "链路测试", "链式语境：建集无项目参数 → lastProject 兜底");
+    const ie2 = llmi.toIntent(env3.ctx, sessChain, { say: "已建好，ID是 pj_ab12cd34ef56，编号 ep_ef56ab12cd34 可跟进。" }, ep3.id, "x");
+    ok(!!ie2 && ie2.say && ie2.say.indexOf("pj_ab12cd34ef56") < 0 && ie2.say.indexOf("ep_ef56ab12cd34") < 0, "ID 机械兜底：直答文本剥除编号");
   }
 
   /* ---------- 汇总 ---------- */
