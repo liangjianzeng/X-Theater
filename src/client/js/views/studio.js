@@ -70,6 +70,13 @@
 
   // 素材寻址统一走 T.artUrl（素材中心 2026-11-22 修复：裸文件名=cast 参考、var/=产物面）
   function srcOf(art) { return T.artUrl(art); }
+  /* 灯箱预览（2026-11-22 用户裁决：图片要可以预览，否则没法判断） */
+  const preview = Vue.ref(null);
+  function openPreview(art, title) { preview.value = { art: srcOf(art), title: title || "" }; }
+  function closePreview() { preview.value = null; }
+  /* 音频诚实化：占位/坏文件加载失败 → 如实标注（不再让空文件冒充候选） */
+      const audioFail = Vue.reactive({});
+      global.addEventListener("keydown", function (e) { if (e.key === "Escape") preview.value = null; });
   function fmtSec(s) { return s == null ? "—" : s + " 秒"; }
 
   views.Studio = {
@@ -130,7 +137,7 @@
         mode: "standard", type: "bgm", mood: "释然", moodOther: "",
         freeTags: "", genres: [], instruments: [], bpm: "", vocal: "", instrumental: true,
         structure: "", lyrics: "", caption: "",
-        sec: 45, count: 2, projectId: "", _dirtyLyrics: false
+        sec: 45, count: 1, projectId: "", _dirtyLyrics: false
       });
       const mBusy = Vue.ref(false);
       const mWarns = Vue.ref([]);
@@ -240,7 +247,7 @@
       const gImage = Vue.reactive({
         mode: "standard", type: "establishing", idea: "", desc: "",
         size: "远景", light: "", ratio: "9:16", styleLook: "", refImage: "", negativeExtra: "",
-        count: 2, projectId: ""
+        count: 1, projectId: ""
       });
       const iBusy = Vue.ref(false);
       const imgPreset = Vue.computed(() => IMAGE_TYPES.find(t => t.v === gImage.type) || {});
@@ -405,6 +412,7 @@
         TABS, MUSIC_TYPES, MUSIC_MODES, MUSIC_GENRES, MUSIC_INSTRUMENTS, MUSIC_VOCALS, MUSIC_TYPE_PRESETS, LYRIC_MARKS,
         IMAGE_TYPES, IMAGE_SIZES, IMAGE_LIGHTS, LOOKS, MOODS, SECS,
         tab, goTab, summary, drafts, lib, projects, episodes, srcOf, fmtSec,
+        preview, openPreview, closePreview, audioFail,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
         assistPaste, assistShow, aiMusicBusy, aiLyrics, aiImgBusy, aiImage,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
@@ -639,7 +647,7 @@
           <empty-state v-if="!imageList.length" icon="🖼" text="图库还是空的" sub="上面生成候选，或去「候选池」收藏。"></empty-state>
           <div class="v-studio-grid" v-else>
             <div class="card v-studio-img" v-for="m in imageList" :key="m.id">
-              <img v-if="m.art" :src="srcOf(m.art)" loading="lazy" alt="" />
+              <img v-if="m.art" :src="srcOf(m.art)" loading="lazy" alt="" style="cursor:zoom-in" title="点击放大预览" @click="openPreview(m.art, m.title || m.desc)" />
               <div class="v-studio-img-meta">
                 <b>{{ m.title }}</b> <span class="badge">{{ (IMAGE_TYPES.find(t=>t.v===m.type)||{}).label || m.type }}</span>
                 <div class="weak">{{ m.desc }}</div>
@@ -762,9 +770,15 @@
                   <td><b>{{ d.title }}</b><div class="weak" v-if="d.mood">{{ d.mood }} · {{ fmtSec(d.sec) }}</div><div class="weak" v-if="d.tags">{{ d.tags }}</div><div class="weak" v-if="d.desc">{{ d.desc }}</div></td>
                   <td><span class="badge">{{ draftDomain(d)==='music' ? '音频' : '图像' }}</span></td>
                   <td>
-                    <audio v-if="draftDomain(d)==='music' && d.art" controls preload="none" :src="srcOf(d.art)" style="max-width:170px;height:28px"></audio>
-                    <img v-else-if="d.art" :src="srcOf(d.art)" loading="lazy" style="max-height:90px" alt="" />
-                    <span v-else class="weak">生成中…</span>
+                    <template v-if="draftDomain(d)==='music'">
+                      <audio v-if="d.art && !audioFail[d.id]" controls preload="none" :src="srcOf(d.art)" style="max-width:170px;height:28px" @error="audioFail[d.id]=true"></audio>
+                      <span v-else-if="d.art" class="weak">音频文件不可用（占位或生成失败——音乐生成服务未运行时产物为占位）</span>
+                      <span v-else class="weak">生成中…</span>
+                    </template>
+                    <template v-else>
+                      <img v-if="d.art" :src="srcOf(d.art)" loading="lazy" style="max-height:90px;cursor:zoom-in" alt="" title="点击放大预览" @click="openPreview(d.art, d.title || d.desc)" />
+                      <span v-else class="weak">生成中…</span>
+                    </template>
                   </td>
                   <td><license-badge v-if="d.license" :license="d.license"></license-badge><money v-if="d.shadow_cents" :cents="d.shadow_cents"></money></td>
                   <td>
@@ -784,6 +798,15 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- 灯箱预览（点击遮罩或图关闭；Esc 亦关） -->
+        <div class="v-studio-lightbox" v-if="preview" @click.self="closePreview">
+          <div class="v-studio-lightbox-inner">
+            <img :src="preview.art" alt="" />
+            <div class="v-studio-lightbox-t">{{ preview.title }}</div>
+            <button class="v-studio-lightbox-x" @click="closePreview" aria-label="关闭预览">✕</button>
           </div>
         </div>
       </div>`
