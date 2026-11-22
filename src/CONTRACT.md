@@ -33,10 +33,12 @@ test/*.js                    tests     自动化验收套件（只经 HTTP＋账
   cards:{},                        // {id,episodeId,type:"C1..C9＋C2S（试妆试镜拍板，2026-11-21）",payload,status:"pending|decided|expired",ver,decided_by,decided_at}
   viewRefs:{},                     // {episodeId:{role:[{art,t,score,angle}]}} 试妆抽帧参考库——C2S 拍板固化（score≥0.6 硬线），分镜「换背景壳」的身份输入源（2026-11-21）
   music_lib:[],                    // {id,title,mood,sec,engine,license:{model:"MIT",usage:"ok|missing"},shadow_cents,sceneId|null}
+  transitions:{},                  // {trId:{id,episodeId,fromShotId,toShotId,take:{id,art,cost_cents,engine,sec,license},created}} 转场衔接镜台账（FR-506 落地，2026-11-22）
   review_q:[],                     // {id,shotId,reason,status:"pending|pass|reject|offline",sla_left}
   alerts:[],                       // {id,kind,msg,ts,acked}
   l2_sessions:{},                  // {id,mode:"A|B",msgs:[],tasks:[],approvals:[],ctx:[],budget_cents,used_cents,broken:false}
-  settings:{ registry:{...§4}, runtime_mode:"A", peak_valley:true, moderation_pass:true }
+  settings:{ registry:{...§4}, runtime_mode:"A", peak_valley:true, moderation_pass:true, subtitles:"on", interp_fps:0 }
+                                   // subtitles=off 关字幕烧录；interp_fps>24 触发终混升帧（minterpolate，慢，默认 0=关）
 }
 ```
 
@@ -85,7 +87,12 @@ engine.retry(jobId) engine.stop(jobId) engine.queueState()
 | | GET /cards?episodeId=&status= | 卡列表（含 C9 配乐卡，music_enabled=false 的项目不出 C9；含 **C2S 试妆试镜卡**） |
 | | POST /cards/:id/decide {action:"accept|edit|reject",payload?,ver} | **cas(card,ver)** 409；accept→decisions++（C9/C2S/C3/C4/C5 例外不加）＋派生下一批 job/卡；reject→重出（新 ver）；**C2S accept→score≥0.6 硬线固化 viewRefs→自动派 storyboard_char；C2S reject→带 note 重出 screen_test** |
 | 预估/开机 | GET /episodes/:id/estimate | 预估卡 {shots,time_min,cents,breakdown[]}，带 ver |
-| | POST /episodes/:id/shoot {ver} | cas(estimate_ver)→ 批量 enqueue video；写 job 账本 initiated_by:"user" |
+| | POST /episodes/:id/shoot {ver,mode?,shotIds?} | cas(estimate_ver)→ 批量 enqueue video；**mode:"group"＝多镜串拍**（同场相邻镜 Σsec≤10s 成组→job video_ms 一次前向生成后按时间码分段落 take，每镜 take 带 multishot_group，2026-11-22 梯队①）；写 job 账本 initiated_by:"user" |
+| 后期 | POST /episodes/:id/transitions {pairs:[{fromShotId,toShotId}],sec?,tier?} | **转场衔接镜派单**（FR-506 落地，2026-11-22）：A 尾帧+B 首帧→桥接段（LTX FLF 模板）；transitionId 确定性幂等（tr_hash(集+起+止)）；done→state.transitions 记账，compose 导出时按「from 镜之后」织入 |
+| | GET /episodes/:id/transitions | 本集衔接镜清单（含 take 状态） |
+| | POST /shots/:id/lipsync {takeId?} | **口型重绘**（梯队⑤）：take＋台词配音音轨→口型对齐新 take「自部署·口型档」（10 分）；默认 stub（meta lipsync-stub），真引擎 THEATER_LIPSYNC_URL（runtime/lipsync/，EchoMimicV3-Flash Apache 首选；LatentSync 一期调测档·商用禁入） |
+| | POST /shots/:id/superres {takeId?} | **超分**（梯队⑥）：720→1080×1920 新 take「自部署·精修档」（10 分）；默认 stub，真引擎 THEATER_SUPERRES_URL（runtime/seedvr2/，SeedVR2-3B FP8·Apache） |
+| | POST /episodes/:id/sfx {desc,sec?,sceneId?} · GET /episodes/:id/sfx | **音效拟音**（梯队⑦）：文本→音效入 asset_lib.audio.sfx（5 分）；默认 stub 静音 wav（meta sfx-stub），真引擎 THEATER_SFX_URL（runtime/sfx/，Stable Audio Open·<$1M 营收可商用） |
 | 任务 | GET /jobs?episodeId=&status= · POST /jobs/:id/retry · POST /jobs/:id/stop | |
 | 成本 | GET /episodes/:id/costs | 镜级穿透＋Σ；GET /billing?episodeId= 原始影子账（ops） |
 | 交付 | POST /episodes/:id/precheck | 清单数组 [{item,pass,note}]：分辨率/显式标识/隐式标识/字幕安全区/**配乐双许可**（引用曲 license.usage!=="ok" 即 fail） |
@@ -109,8 +116,11 @@ engine.retry(jobId) engine.stop(jobId) engine.queueState()
 |---|---|---|
 | img5060 | qwen-image-2.1-turbo-Q5_K_M · W-B ComfyUI :8188 | job c1plan/storyboard/casting 出图占位＋cost 3–8 分；storyboard_char 编辑输入优先剧本 refImage（用户原图＝定妆终稿，2026-11-21）。**画幅×清晰度＋上传编辑（2026-11-22，车道现名 t2i.local）**：img_free payload 增 `ratio`(9:16/16:9/1:1/3:4/4:3/21:9)＋`tier`(standard≈1MP/hd≈2MP/uhd 2048²)＋`usage`(ref=i2i 参考生图/edit=编辑改图)＋`editInstruction`——util.imgSpecFor 按引擎能力自适应（本机 align8/≤2.1MP/单边≤1920，超档等比回落＋meta.size_downgraded）；edit 走 qwen-image-edit-cast 25 步（15–25 分），参考图不可达诚实失败（EDIT_REF_MISSING） |
 | imgspark | MiniMax-H3-Image / H3 · int8_convrot（Spark ComfyUI :8188，published:["int8","MXFP8+FP8"]，unavail:["nvfp4"]） | 高价值出图 20 分（stub 15–25 分）；THEATER_COMFY_SPARK=1 真引擎。**2026-11-21 试妆试镜修订：tier=high 时生图全族路由至此**（c1plan 海报 t2i / casting / storyboard_char / storyboard / cast_init / screen_test）——cast_init＝初始图 t2i 864×1536；screen_test＝初始图作 FL2VA 首帧 5.17s/124 帧多角度视频→抽帧 ~13 张→逐帧 ArcFace 打分→C2S 卡；storyboard_char＝shotAngleNeed→pickView(viewRefs) 选角度帧→h3-image-edit **只换背景壳**（人物完全不变）＋facegate 门控（<0.6 → /swap 换回源脸，2 次尝试）；storyboard 在 H3 线为 no-op 壳任务（分镜首帧全由 storyboard_char 产出）。**上传编辑（2026-11-22，车道现名 t2i.remote）**：img_free 接 `usage`——ref→**h3-image-free-ref**（新模板：conditioning images 槽 subject-reference 保主体，manifest 已登记）／edit→h3-image-edit（引用 \<Picture 1\> 编辑指令，latent←输入图像素级保真）；参考图经 uploadAsset 上 Spark；尺寸 align16/≤2048² |
-| vid5060 | LTX-2.5 UD-Q4_K_XL | video job：cost 80 分/5s，art=占位 mp4（写 var/out/<takeId>.mp4 二进制 stub＋.meta.json） |
-| vidspark | MiniMax-H3 int8_convrot（Spark ComfyUI :8188，nvfp4 可切） | 高价值档 150 分；真模式 fl2va（分镜首帧）/ref2va（定妆 refs）声画直出，turbo 4step，timeout 1800s；夜间闲时标记 peak_valley 时排队慢档 |
+| vid5060 | LTX-2.5 UD-Q4_K_XL | video job：cost 80 分/5s，art=占位 mp4（写 var/out/<takeId>.mp4 二进制 stub＋.meta.json）。**video_ms 多镜串拍（2026-11-22 梯队①）**：ltx25-multishot 模板（同场相邻镜一次前向，时间码多镜描述，IMAGE=组首镜分镜图跨镜身份锚；LENGTH=Σsec×24 取 8n+1，组 ≤10s；成本 80×LENGTH/121）；真模式产出整段后 ffmpeg 按比例分段落 take（multishot_group 元数据）。**transition 转场衔接镜（FR-506 落地）**：ltx25-flf 模板（IMAGE=A 镜 ffmpeg -sseof 尾帧、REF=B 镜分镜首帧＝AddGuide frame_idx=-1，同 i2v-ref 机制；sec 默认 2s→49 帧；成本 max(20, 80×LENGTH/121)） |
+| vidspark | MiniMax-H3 int8_convrot（Spark ComfyUI :8188，nvfp4 可切） | 高价值档 150 分；真模式 fl2va（分镜首帧）/ref2va（定妆 refs）声画直出，turbo 4step，timeout 1800s；夜间闲时标记 peak_valley 时排队慢档。**video_ms/transition 同族（2026-11-22）**：ltx25-multishot-spark / ltx25-flf-spark（UNETLoader int8_convrot DiT，Spark 已有全套 LTX-2.5 权重——SSD 冷集软链：DiT/TE/VAE×2/spatial-upscaler），service 端 ffmpeg 分段 |
+| lipsync | 口型重绘服务（THEATER_LIPSYNC_URL :8196） | lipsync job：take＋台词音轨→口型对齐新 take，10 分；stub＝mp4 头占位（meta lipsync-stub）；无 take/无配音 → 真错误不造假 |
+| superres | 视频超分服务（THEATER_SUPERRES_URL） | superres job：take→1080×1920 新 take，10 分；stub＝占位（meta superres-stub）；SeedVR2 节点缺失报 NO_SEEDVR2_NODE |
+| sfx | 音效生成服务（THEATER_SFX_URL :8197） | sfx job：desc→wav 入 asset_lib.audio.sfx，5 分；stub＝静音 wav（meta sfx-stub）；许可 Stability Community（<$1M 营收可商用） |
 | music | ACE-Step 1.5 · W-M :8190 | music job：30–60s 占位 mp3 stub＋license{model:"MIT",usage 由曲库策略确定性给：标题含"未许可"→missing}，5–15 分。**声纹克隆（2026-11-22）**：payload 增 `voiceId`（asset_lib.audio.voices kind=clone 条目）＋`cloneMode`（full=两段 text2music→cover 变声 24 分／fast=单段风格迁移 12 分）；真模式经 /music 的 ref_audio/src_audio/cover_strength 通道；段2 失败诚实降级保留段1＋meta.clone_stage2_failed；声纹登记默认「页面录音」（MediaRecorder→16k 单声道 WAV→既有上传链路，服务端零改动），文件上传为辅助入口 |
 | tts | CosyVoice2 | voice job stub |
 | compose | FFmpeg stub | 成片 stub＋显式/隐式标识写入 meta（explicit_mark:true） |

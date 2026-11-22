@@ -885,6 +885,86 @@ function onVideoDone(ctx, job, episodeId) {
   return true;
 }
 
+function onMultishotDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  const takes = Array.isArray(art.takes) ? art.takes : [];
+  if (!takes.length) return false;
+  const st = ctx.store.get();
+  takes.forEach((take) => {
+    const shot = (st.shots || {})[take.shotId];
+    if (!shot) return;
+    shot.takes = (shot.takes || []).concat([take]);
+    shot.status = "moderating";
+    try {
+      ctx.engine.enqueue(
+        "moderate",
+        { episodeId, shotId: shot.id },
+        { episodeId, initiated_by: "system" }
+      );
+    } catch (e) { /* 复审派单失败不阻断落 take */ }
+  });
+  return true;
+}
+
+function onTransitionDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  const take = art.take;
+  if (!take || !take.art) return false;
+  const st = ctx.store.get();
+  st.transitions = st.transitions || {};
+  const p = job.payload || {};
+  const id = p.transitionId || ctx.util.uid("tr");
+  st.transitions[id] = {
+    id,
+    episodeId,
+    fromShotId: p.fromShotId,
+    toShotId: p.toShotId,
+    take: { id: take.id, art: take.art, cost_cents: take.cost_cents, engine: take.engine, sec: art.sec || null, license: take.license },
+    created: ctx.util.now()
+  };
+  return true;
+}
+
+function onLipsyncDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  const take = art.take;
+  const p = job.payload || {};
+  const shot = (ctx.store.get().shots || {})[p.shotId];
+  if (!shot || !take || !take.art) return false;
+  shot.takes = (shot.takes || []).concat([take]);
+  return true;
+}
+
+function onSuperresDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  const take = art.take;
+  const p = job.payload || {};
+  const shot = (ctx.store.get().shots || {})[p.shotId];
+  if (!shot || !take || !take.art) return false;
+  shot.takes = (shot.takes || []).concat([take]);
+  return true;
+}
+
+function onSfxDone(ctx, job, episodeId) {
+  const art = job.art || job.result || {};
+  const p = job.payload || {};
+  if (!art.art) return false;
+  const st = ctx.store.get();
+  st.asset_lib = st.asset_lib || { audio: {} };
+  st.asset_lib.audio = st.asset_lib.audio || {};
+  st.asset_lib.audio.sfx = st.asset_lib.audio.sfx || [];
+  st.asset_lib.audio.sfx.push({
+    id: art.sfx_id || ctx.util.uid("sfx"),
+    title: String(p.desc || "音效").slice(0, 40),
+    sec: art.sec || null,
+    art: art.art,
+    engine: "音效生成服务",
+    license: { model: "Stability Community", usage: "ok" },
+    used_by: Array.isArray(p.sceneId) ? [] : (p.sceneId ? [{ kind: "scene", id: p.sceneId }] : [])
+  });
+  return true;
+}
+
 function verdictOf(art) {
   if (art.verdict) return art.verdict;
   if (art.pass === false) return "fail_review";
@@ -1075,6 +1155,21 @@ function handleJobDone(ctx, evt) {
       break;
     case "video":
       touched = onVideoDone(ctx, job, episodeId);
+      break;
+    case "video_ms":
+      touched = onMultishotDone(ctx, job, episodeId);
+      break;
+    case "transition":
+      touched = onTransitionDone(ctx, job, episodeId);
+      break;
+    case "lipsync":
+      touched = onLipsyncDone(ctx, job, episodeId);
+      break;
+    case "superres":
+      touched = onSuperresDone(ctx, job, episodeId);
+      break;
+    case "sfx":
+      touched = onSfxDone(ctx, job, episodeId);
       break;
     case "moderate":
       touched = onModerateDone(ctx, job, episodeId);

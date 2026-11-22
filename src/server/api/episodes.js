@@ -290,7 +290,63 @@ function register(router, ctx) {
       const jobs = [];
       let dedupedN = 0;
       const only = Array.isArray(body && body.shotIds) ? body.shotIds.map(String) : null; // 局部重拍（复审 stale 镜）
-      shots.forEach((sh) => {
+      const groupMode = !!(body && body.mode === "group") && !only; // 多镜串拍（梯队①）：同场相邻镜一次前向生成
+      if (groupMode) {
+        // 按场聚合（seq 升序）→ 连续累积分组（组内 Σsec ≤10s，LTX 帧长 8n+1）；≥2 镜成组串拍，单镜照旧单镜派单
+        const byScene = {};
+        shots.forEach((sh) => {
+          const k = String(sh.sceneId || "");
+          (byScene[k] = byScene[k] || []).push(sh);
+        });
+        Object.keys(byScene).forEach((k) => {
+          const list = byScene[k].slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+          let run = [];
+          let runSec = 0;
+          const flush = () => {
+            if (!run.length) return;
+            if (run.length >= 2) {
+              const groupId = "msg_" + util.hash12({ episodeId: ep.id, shotIds: run.map((x) => x.id) }).slice(0, 10);
+              const r = engine.enqueueOnce
+                ? engine.enqueueOnce(
+                    "video_ms",
+                    { episodeId: ep.id, shotIds: run.map((x) => x.id), groupId, takeId: groupId },
+                    { episodeId: ep.id, initiated_by: "user" }
+                  )
+                : { deduped: false, job: engine.enqueue(
+                    "video_ms",
+                    { episodeId: ep.id, shotIds: run.map((x) => x.id), groupId, takeId: groupId },
+                    { episodeId: ep.id, initiated_by: "user" }
+                  ) };
+              if (r.job) jobs.push(r.job);
+              if (r.deduped) dedupedN++;
+            } else {
+              const sh = run[0];
+              const r = engine.enqueueOnce
+                ? engine.enqueueOnce(
+                    "video",
+                    { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
+                    { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+                  )
+                : { deduped: false, job: engine.enqueue(
+                    "video",
+                    { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
+                    { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+                  ) };
+              if (r.job) jobs.push(r.job);
+              if (r.deduped) dedupedN++;
+            }
+            run = [];
+            runSec = 0;
+          };
+          list.forEach((sh) => {
+            const s = Number(sh.sec) || 5;
+            if (runSec + s > 10) flush();
+            run.push(sh);
+            runSec += s;
+          });
+          flush();
+        });
+      } else shots.forEach((sh) => {
         if (only && only.indexOf(sh.id) < 0) return;
         // 幂等派单（2026-11-21）：同镜 video 活任务（内存+账本，账本行带 shotId）在跑 → 不重派。
         // 连点「开机」/重复提交不再为每镜堆多条渲染任务（每条 ≈7 分钟 GPU）；已完成镜重拍不受影响。
@@ -314,6 +370,60 @@ function register(router, ctx) {
       audit(auth, "shoot", ep.id, { shots: shots.length, estimate_ver: ep.estimate_ver, deduped_n: dedupedN });
       try { bus.publish("cards", { event: "shot_start", episodeId: ep.id, jobs: jobs.length }); } catch (e) {}
       return router.json(res, 202, { episodeId: ep.id, jobs, started: Math.max(0, jobs.length - dedupedN), deduped_n: dedupedN });
+    },
+    { auth: true }
+  );
+
+  // POST /api/episodes/:id/transitions {pairs:[{fromShotId,toShotId}], sec?} — 转场衔接镜派单（FR-506 落地）
+  // 幂等：transitionId = tr_hash(episodeId+from+to)，重复提交不重派；take 完成后记入 state.transitions，
+  // compose 导出时按「from 镜之后插入」织入成片。sec 默认 2s（帧长 8n+1）。
+  router.add(
+    "POST",
+    "/api/episodes/:id/transitions",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st));
+      const pairs = Array.isArray(body && body.pairs) ? body.pairs : [];
+      if (!pairs.length) throw { code: "BAD_REQUEST", message: "缺少 pairs（[{fromShotId,toShotId}]）" };
+      const sec = Number(body && body.sec) > 0 ? Number(body.sec) : 2;
+      const tier = body && body.tier === "high" ? "high" : undefined;
+      const jobs = [];
+      let dedupedN = 0;
+      pairs.forEach((pr) => {
+        const fromShotId = String((pr || {}).fromShotId || "");
+        const toShotId = String((pr || {}).toShotId || "");
+        if (!fromShotId || !toShotId || fromShotId === toShotId) return;
+        const transitionId = "tr_" + util.hash12({ episodeId: ep.id, fromShotId, toShotId }).slice(0, 10);
+        const payload = { episodeId: ep.id, fromShotId, toShotId, sec, transitionId, takeId: transitionId };
+        const r = engine.enqueueOnce
+          ? engine.enqueueOnce("transition", payload, { episodeId: ep.id, initiated_by: "user", tier })
+          : { deduped: false, job: engine.enqueue("transition", payload, { episodeId: ep.id, initiated_by: "user", tier }) };
+        if (r.job) jobs.push(r.job);
+        if (r.deduped) dedupedN++;
+      });
+      if (!jobs.length && !dedupedN) throw { code: "BAD_REQUEST", message: "没有有效的转场对（起止镜必须不同）" };
+      store.commit();
+      audit(auth, "transitions", ep.id, { pairs: pairs.length, jobs: jobs.length, deduped_n: dedupedN });
+      return router.json(res, 202, { episodeId: ep.id, jobs, started: jobs.length, deduped_n: dedupedN });
+    },
+    { auth: true }
+  );
+
+  // GET /api/episodes/:id/transitions — 本集衔接镜清单（含 take 状态）
+  router.add(
+    "GET",
+    "/api/episodes/:id/transitions",
+    (req, res, body, params, auth) => {
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      Tenants.guardRead(st, auth, ep.tenantId || Tenants.defaultTid(st));
+      const list = Object.keys(st.transitions || {})
+        .map((k) => st.transitions[k])
+        .filter((t) => t && t.episodeId === ep.id)
+        .sort((a, b) => String(a.created || "").localeCompare(String(b.created || "")));
+      return router.json(res, 200, { episodeId: ep.id, transitions: list });
     },
     { auth: true }
   );

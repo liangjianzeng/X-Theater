@@ -19,6 +19,7 @@ const PER_CASE_TIMEOUT_MS = 120000;
 // 显式顺序：V6（会往共享 var 灌模拟告警）排最后，避免影响 V8 禁词扫描等
 const ORDER = [
   'V1_full_chain',
+  'V15_postprod_pipeline',
   'V10_music_precheck_export',
   'V5_billing_invariant',
   'V8_phase2_endpoints_404',

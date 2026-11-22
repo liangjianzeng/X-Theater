@@ -78,6 +78,7 @@
   const TABS = [
     { key: "music", label: "🎵 音频" },
     { key: "images", label: "🖼 图像" },
+    { key: "voices", label: "🎤 声纹" },
     { key: "characters", label: "👤 角色" },
     { key: "scenes", label: "🏞 场景" },
     { key: "canon", label: "🎭 设定" },
@@ -316,9 +317,18 @@
       const cloneVoices = Vue.computed(() => (lib.value.voices || []).filter(v => v && v.kind === "clone"));
       const selVoice = Vue.computed(() => cloneVoices.value.find(v => v.id === gMusic.voiceId) || null);
       Vue.watch(() => gMusic.voiceId, (id) => { if (id && gMusic.instrumental) gMusic.instrumental = false; });
-      const vpShow = Vue.ref(false);
+      /* 登记按钮为何灰（2026-11-22 用户反馈：录完按钮还是灰的不知道差什么）——实时列出缺项 */
+      const vpMissing = Vue.computed(() => {
+        const miss = [];
+        const hasSample = vpForm.src === "rec" ? !!vpForm.recBlob : !!vpForm.file;
+        if (!hasSample) miss.push(vpForm.src === "rec" ? "录一段声纹样本（🎤 开始录音）" : "选择样本文件");
+        if (!String(vpForm.name || "").trim()) miss.push("填写名称");
+        if (!vpForm.consent) miss.push("勾选「已获得声音所有者授权」");
+        return miss;
+      });
       /* 声纹登记双入口（2026-11-22 用户裁决）：🎤 页面录音为主（MediaRecorder→16k 单声道 WAV），
-       * 📁 上传文件降为辅助。录音产物走既有上传链路（服务端 WAV 魔数校验零改动）。 */
+       * 📁 上传文件降为辅助。录音产物走既有上传链路（服务端 WAV 魔数校验零改动）。
+       * 独立能力化（用户裁决）：登记/管理在「🎤 声纹」tab，音乐表单只做选用。 */
       const vpForm = Vue.reactive({ name: "", gender: "女", desc: "", prompt_text: "", consent: false, file: null, busy: false, src: "rec", recOn: false, recSec: 0, recBlob: null, recUrl: "", recErr: "" });
       const vpRecSupported = window.__REC && window.__REC.supported();
       let vpMedia = null, vpRecorder = null, vpChunks = [], vpTimer = null;
@@ -369,7 +379,7 @@
         if (vpForm.recUrl) { URL.revokeObjectURL(vpForm.recUrl); vpForm.recUrl = ""; }
       }
       async function vpRegister() {
-        if (vpForm.busy || !String(vpForm.name || "").trim() || !vpForm.consent) return;
+        if (vpForm.busy || vpMissing.value.length) return;
         const file = vpForm.src === "rec" ? vpForm.recBlob : vpForm.file;
         if (!file) return;
         if (vpForm.src === "rec" && vpForm.recSec < 10) {
@@ -378,15 +388,14 @@
         vpForm.busy = true;
         try {
           const v = await store.studioCreateVoice(file, { name: vpForm.name.trim(), gender: vpForm.gender, desc: vpForm.desc, prompt_text: vpForm.prompt_text });
-          gMusic.voiceId = v.id;
-          vpShow.value = false;
+          gMusic.voiceId = v.id;   // 登记完即预选：下次生成音乐直接用该音色演唱
           vpForm.name = ""; vpForm.desc = ""; vpForm.prompt_text = ""; vpForm.consent = false; vpForm.file = null;
           vpRecReset();
         } catch (e) { /* toast 已发 */ }
         finally { vpForm.busy = false; }
       }
-      async function vpDelete() {
-        const v = selVoice.value; if (!v) return;
+      async function vpDeleteEntry(v) {
+        if (!v) return;
         const ok = await store.confirm({ title: "删除声纹「" + v.name + "」？（已生成的歌曲不受影响）", okLabel: "确认删除" });
         if (!ok) return;
         try { await store.studioDeleteVoice(v.id); if (gMusic.voiceId === v.id) gMusic.voiceId = ""; } catch (e) {}
@@ -690,7 +699,7 @@
         tab, goTab, summary, drafts, lib, projects, episodes, srcOf, fmtSec,
         preview, openPreview, closePreview,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
-        cloneVoices, selVoice, vpShow, vpForm, vpPick, vpRegister, vpDelete, vpRecSupported, vpRecStart, vpRecStop, vpRecReset,
+        cloneVoices, selVoice, vpForm, vpPick, vpRegister, vpDeleteEntry, vpMissing, vpRecSupported, vpRecStart, vpRecStop, vpRecReset, fmtTime: (ts) => T.fmtTime(ts),
         assistPaste, assistShow, aiMusicBusy, aiLyrics, aiImgBusy, aiImage,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
         musicFilter, musicList,
@@ -708,7 +717,7 @@
       <div class="v-studio">
         <div class="panel">
           <div class="panel-title">素材中心 <span class="weak">先攒库、再开拍——生成 → 候选池筛选 → 入库 → 绑定消费</span>
-            <span class="weak" v-if="summary">曲 {{summary.counts.music}} · 图 {{summary.counts.images}} · 角色 {{summary.counts.characters}} · 场景 {{summary.counts.scenes}} · 候选 {{summary.counts.drafts}}</span>
+            <span class="weak" v-if="summary">曲 {{summary.counts.music}} · 图 {{summary.counts.images}} · 声纹 {{summary.counts.voices || 0}} · 角色 {{summary.counts.characters}} · 场景 {{summary.counts.scenes}} · 候选 {{summary.counts.drafts}}</span>
           </div>
           <nav class="ep-tabs studio-tabs">
             <a v-for="t in TABS" :key="t.key" :class="{active: tab===t.key}" href="javascript:void(0)" @click="goTab(t.key)">{{ t.label }}</a>
@@ -754,7 +763,7 @@
                 <button v-for="v in MUSIC_VOCALS" :key="v.v" type="button" class="chip" :class="{on: gMusic.instrumental ? v.v==='' : gMusic.vocal===v.v}" @click="if (v.v==='') { gMusic.instrumental = true; } else { gMusic.instrumental = false; gMusic.vocal = v.v; }">{{ v.label }}</button>
               </div>
             </div>
-            <!-- 声纹克隆（2026-11-22）：克隆音色演唱自定义歌词；登记样本须勾授权 -->
+            <!-- 声纹克隆（2026-11-22 独立能力化）：登记在「🎤 声纹」tab，这里只做选用 -->
             <div class="v-studio-fieldrow">
               <span class="field-label">声纹克隆</span>
               <div class="v-studio-chips">
@@ -762,53 +771,16 @@
                   <option value="">不使用（按人声词典）</option>
                   <option v-for="v in cloneVoices" :key="v.id" :value="v.id">{{ v.name }}（{{ v.gender }}）</option>
                 </select>
-                <button type="button" class="chip" @click="vpShow = !vpShow">＋ 上传声纹</button>
+                <button type="button" class="chip" @click="goTab('voices')">🎤 声纹库登记 →</button>
                 <template v-if="selVoice">
                   <studio-audio :src="srcOf(selVoice.ref)" compact style="width:170px" label="声纹样本"></studio-audio>
-                  <button type="button" class="chip" @click="vpDelete()">✕ 删除</button>
                   <template v-if="gMusic.mode==='expert'">
                     <button type="button" class="chip" :class="{on: gMusic.cloneMode==='full'}" @click="gMusic.cloneMode='full'" title="两段式：先出完整歌再变声；≈2×耗时，音色贴样本">完整档</button>
                     <button type="button" class="chip" :class="{on: gMusic.cloneMode==='fast'}" @click="gMusic.cloneMode='fast'" title="单段风格迁移：快，但音色较松">快速档</button>
                   </template>
                   <span class="weak" v-else>完整档（两段 · ≈2×耗时）</span>
                 </template>
-                <span class="weak" v-if="!cloneVoices.length && !vpShow">还没有声纹——上传一段清唱样本（20–40s、无伴奏最佳）</span>
-              </div>
-            </div>
-            <div v-if="vpShow" class="v-music-lyrics v-vp-form">
-              <div class="v-music-lyrics-head"><span class="field-label">登记声纹（克隆音色来源）</span>
-                <div class="v-studio-chips">
-                  <button type="button" class="chip" :class="{on: vpForm.src==='rec'}" @click="vpForm.src='rec'" v-if="vpRecSupported">🎤 页面录音</button>
-                  <button type="button" class="chip" :class="{on: vpForm.src==='file'}" @click="vpForm.src='file'">📁 上传文件</button>
-                  <span class="weak">{{ vpForm.src==='rec' ? '推荐：按需录一段清唱' : '已有音频文件时使用' }}</span>
-                </div>
-              </div>
-              <div v-if="vpForm.src==='rec'" style="margin:4px 0">
-                <div class="v-music-acts" style="margin-top:2px">
-                  <button v-if="!vpForm.recOn" type="button" class="btn btn-sm" @click="vpRecStart()">● 开始录音</button>
-                  <button v-else type="button" class="btn btn-sm btn-danger" @click="vpRecStop()">■ 停止（{{ vpForm.recSec }}s）</button>
-                  <audio v-if="vpForm.recUrl" controls :src="vpForm.recUrl" style="max-width:200px;height:28px" title="录音试听"></audio>
-                  <button v-if="vpForm.recUrl" type="button" class="chip" @click="vpRecReset()">↺ 重录</button>
-                  <span class="weak">{{ vpForm.recOn ? '录音中…（60 秒自动停）' : '建议清唱 20–40 秒、无伴奏' }}</span>
-                </div>
-                <div class="weak" v-if="vpForm.recErr" style="color:var(--err,#c0392b)">{{ vpForm.recErr }}</div>
-              </div>
-              <div class="v-studio-gen">
-                <label class="field" v-if="vpForm.src==='file'"><span class="field-label">样本文件（WAV/MP3）</span>
-                  <input type="file" accept="audio/*,.wav,.mp3" @change="vpPick" /></label>
-                <label class="field"><span class="field-label">名称</span>
-                  <input class="input" v-model.trim="vpForm.name" maxlength="30" placeholder="例：阿岚" /></label>
-                <label class="field"><span class="field-label">性别</span>
-                  <select class="select" v-model="vpForm.gender"><option>女</option><option>男</option></select></label>
-                <label class="field" style="grid-column: 1 / -1;"><span class="field-label">音色描述（英文，供变声通道）</span>
-                  <input class="input" v-model.trim="vpForm.desc" maxlength="200" placeholder="例：young female vocals, breathy and intimate" /></label>
-                <label class="field" style="grid-column: 1 / -1;"><span class="field-label">样本文字稿（可空；预留配音线克隆用）</span>
-                  <input class="input" v-model.trim="vpForm.prompt_text" maxlength="200" placeholder="样本里说的那句话（逐字）" /></label>
-              </div>
-              <div class="v-music-acts" style="margin-top:6px">
-                <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" v-model="vpForm.consent" /> 我已获得该声音所有者的授权</label>
-                <button type="button" class="btn btn-sm btn-primary" style="white-space:nowrap" :disabled="vpForm.busy || !vpForm.name || !vpForm.consent || (vpForm.src==='rec' ? !vpForm.recBlob : !vpForm.file)" @click="vpRegister()">{{ vpForm.busy ? '登记中…' : '登记声纹' }}</button>
-                <span class="weak">样本建议清唱 20–40 秒、无伴奏；登记后即可在本表单选用克隆出歌</span>
+                <span class="weak" v-if="!cloneVoices.length">还没有声纹——去「🎤 声纹」tab 录一段清唱（20–40s）登记，之后所有音乐都能用它演唱</span>
               </div>
             </div>
             <div class="v-studio-fieldrow">
@@ -1019,6 +991,69 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ================= 声纹（2026-11-22 独立能力：登记→管理→供音乐/配音选用） ================= -->
+        <div class="panel" v-if="tab==='voices'">
+          <div class="panel-title">声纹库 <span class="weak">独立能力：登记一次，之后所有音乐生成都可用该音色演唱自定义歌曲（在「🎵 音频」表单的「声纹克隆」下拉选用）</span></div>
+
+          <div class="panel-title" style="margin-top:2px;">登记声纹 <span class="weak">页面录音为主，上传文件为辅</span></div>
+          <div class="v-music-lyrics v-vp-form" style="margin-top:2px">
+            <div class="v-music-lyrics-head">
+              <div class="v-studio-chips">
+                <button type="button" class="chip" :class="{on: vpForm.src==='rec'}" @click="vpForm.src='rec'" v-if="vpRecSupported">🎤 页面录音</button>
+                <button type="button" class="chip" :class="{on: vpForm.src==='file'}" @click="vpForm.src='file'">📁 上传文件</button>
+                <span class="weak">{{ vpForm.src==='rec' ? '推荐：按需录一段清唱' : '已有音频文件时使用' }}</span>
+              </div>
+            </div>
+            <div v-if="vpForm.src==='rec'" style="margin:4px 0">
+              <div class="v-music-acts" style="margin-top:2px">
+                <button v-if="!vpForm.recOn" type="button" class="btn btn-sm" @click="vpRecStart()">● 开始录音</button>
+                <button v-else type="button" class="btn btn-sm btn-danger" @click="vpRecStop()">■ 停止（{{ vpForm.recSec }}s）</button>
+                <audio v-if="vpForm.recUrl" controls :src="vpForm.recUrl" style="max-width:200px;height:28px" title="录音试听"></audio>
+                <button v-if="vpForm.recUrl" type="button" class="chip" @click="vpRecReset()">↺ 重录</button>
+                <span class="weak">{{ vpForm.recOn ? '录音中…（60 秒自动停）' : '建议清唱 20–40 秒、无伴奏' }}</span>
+              </div>
+              <div class="weak" v-if="vpForm.recErr" style="color:var(--err,#c0392b)">{{ vpForm.recErr }}</div>
+            </div>
+            <div class="v-studio-gen">
+              <label class="field" v-if="vpForm.src==='file'"><span class="field-label">样本文件（WAV/MP3）</span>
+                <input type="file" accept="audio/*,.wav,.mp3" @change="vpPick" /></label>
+              <label class="field"><span class="field-label">名称</span>
+                <input class="input" v-model.trim="vpForm.name" maxlength="30" placeholder="例：阿岚" /></label>
+              <label class="field"><span class="field-label">性别</span>
+                <select class="select" v-model="vpForm.gender"><option>女</option><option>男</option></select></label>
+              <label class="field" style="grid-column: 1 / -1;"><span class="field-label">音色描述（英文，供变声通道）</span>
+                <input class="input" v-model.trim="vpForm.desc" maxlength="200" placeholder="例：young female vocals, breathy and intimate" /></label>
+              <label class="field" style="grid-column: 1 / -1;"><span class="field-label">样本文字稿（可空；预留配音线克隆用）</span>
+                <input class="input" v-model.trim="vpForm.prompt_text" maxlength="200" placeholder="样本里说的那句话（逐字）" /></label>
+            </div>
+            <div class="v-music-acts" style="margin-top:6px">
+              <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" v-model="vpForm.consent" /> 我已获得该声音所有者的授权</label>
+              <button type="button" class="btn btn-sm btn-primary" style="white-space:nowrap" :disabled="vpForm.busy || vpMissing.length" :title="vpMissing.length ? '还差：' + vpMissing.join('、') : ''" @click="vpRegister()">{{ vpForm.busy ? '登记中…' : '登记声纹' }}</button>
+              <span class="weak" v-if="vpMissing.length" style="color:var(--err,#c0392b)">还差：{{ vpMissing.join('、') }}</span>
+              <span class="weak" v-else>齐了——登记后到「🎵 音频」表单的「声纹克隆」下拉选用即可演唱</span>
+            </div>
+          </div>
+
+          <div class="panel-title" style="margin-top:14px;">已登记声纹 <span class="weak">{{ cloneVoices.length }} 条 · 供音乐克隆演唱选用</span></div>
+          <empty-state v-if="!cloneVoices.length" icon="🎤" text="声纹库还是空的" sub="上面录一段清唱登记；之后生成音乐时在「声纹克隆」下拉选择即可"></empty-state>
+          <div class="table-scroll" v-else>
+            <table class="table">
+              <thead><tr><th>名称</th><th>性别</th><th>音色描述</th><th>样本试听</th><th>文字稿</th><th>登记时间</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="v in cloneVoices" :key="v.id">
+                  <td><b>{{ v.name }}</b><div class="weak">{{ v.id }}</div></td>
+                  <td><span class="badge">{{ v.gender }}</span></td>
+                  <td><span class="weak">{{ v.desc || '—' }}</span></td>
+                  <td><audio v-if="v.ref" controls preload="none" :src="srcOf(v.ref)" style="max-width:170px;height:28px"></audio><span v-else class="weak">无样本</span></td>
+                  <td class="weak">{{ v.prompt_text || '—' }}</td>
+                  <td class="weak">{{ fmtTime(v.created_at) }}</td>
+                  <td><button class="btn btn-sm btn-ghost" @click="vpDeleteEntry(v)">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 

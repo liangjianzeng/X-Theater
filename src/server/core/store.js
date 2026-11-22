@@ -35,6 +35,16 @@ function ensureRegistryNodes(state) {
   return n;
 }
 
+/** 幂等迁移（2026-11-22 对标调研梯队落实）：转场衔接镜台账＋后期设置默认值 */
+function ensurePostprodFields(state) {
+  const st = state || {};
+  if (!st.transitions) st.transitions = {}; // {trId:{id,episodeId,fromShotId,toShotId,take,created}}
+  st.settings = st.settings || {};
+  if (st.settings.subtitles == null) st.settings.subtitles = "on"; // compose 真模式字幕烧录默认开
+  if (st.settings.interp_fps == null) st.settings.interp_fps = 0; // 升帧默认关（minterpolate 慢）
+  return true;
+}
+
 /* ---------------- Agent 助手 LLM 档案注册表（2026-11-22 大脑层解耦） ----------------
  * LLM API 档案与算力节点解耦：state.llm_profiles 可增删改（api/llmprofiles.js），
  * state.llm_active 指定当前用哪套；profile.node＝这台 LLM 物理跑在哪台渲染机上
@@ -245,6 +255,18 @@ function seedState() {
         "moderate-rules": {
           lane: "moderate", node: null, engine: "规则码＋抽帧 stub", quant: "n/a",
           endpoint: "in-proc", published: ["n/a"], unavail: []
+        },
+        "lipsync-svc": {
+          lane: "lipsync", node: null, engine: "口型重绘服务", quant: "fp16",
+          endpoint: "W-B :8196（THEATER_LIPSYNC_URL）", published: ["fp16"], unavail: []
+        },
+        "superres-svc": {
+          lane: "superres", node: null, engine: "视频超分服务", quant: "fp8",
+          endpoint: "W-B（THEATER_SUPERRES_URL）", published: ["fp8"], unavail: []
+        },
+        "sfx-svc": {
+          lane: "sfx", node: null, engine: "音效生成服务", quant: "fp16",
+          endpoint: "W-B :8197（THEATER_SFX_URL）", published: ["fp16"], unavail: []
         }
       },
       runtime_mode: "A",
@@ -355,6 +377,7 @@ function openStore(varDir, opts) {
   if (!state || typeof state !== "object" || !state.projects || !state.episodes) {
     state = (opts && opts.minimal) ? seedStateMinimal() : seedState();
     ensureAssetLib(state); // 种子即带素材库骨架（种子曲随迁移进库）
+    ensurePostprodFields(state); // 转场台账＋后期设置默认（种子同样带骨架）
     seeded = true;
     // e1 演示集已开拍：镜像种子影子账本，Σbilling(episode)==cost_cents 不变量出生即成立（V5）
     let sum = 0;
@@ -390,6 +413,8 @@ function openStore(varDir, opts) {
     if (ensureRegistryNodes(state)) {
       fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     }
+    // 转场衔接镜台账＋后期设置默认值（2026-11-22 对标调研梯队）：幂等补齐
+    ensurePostprodFields(state);
   }
 
   /* ---------- 域（tenant）迁移＋自愈 stamp（2026-11-22 S3） ---------- */

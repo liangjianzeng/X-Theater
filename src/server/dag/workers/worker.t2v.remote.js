@@ -23,6 +23,9 @@ const TIER = "h3-int8";
 const COST_CENTS = 150;
 const TMPL_FL2VA = "h3-fl2va-video";
 const TMPL_REF2VA = "h3-ref2va-video";
+// LTX-2.5 Spark 档（2026-11-22 对标调研梯队①＋转场）：多镜串拍/转场衔接镜走远端 int8_convrot
+const TMPL_MS = "ltx25-multishot-spark";
+const TMPL_FLF = "ltx25-flf-spark";
 // 歌曲锚点（2026-11-22 提示词体系升级）：不再写死「温柔女声慢谣」常量——按首场 mood+主唱性别
 // 由 prompts.defaultSongFor 生成；ep.script.song（POST /api/episodes/:id/song）仍最高优先。
 // 整首歌统一旋律动机/伴奏/唱法的纪律不变——8 镜独立生成拼起来像同一首歌。
@@ -378,6 +381,224 @@ async function runRemoteComfy(ctx, job, p, seed, cents, settings) {
   return { ok: true, cents, art, meta };
 }
 
+/** LTX 帧长约束：8n+1（≥9） */
+function frames8n1(sec) {
+  const n = Math.max(1, Math.ceil((Number(sec) || 5) * 24));
+  let f = 9;
+  while (f < n) f += 8;
+  return f;
+}
+
+/** 多镜串拍（远端）：同场相邻镜一次前向 → 按时间码分段落 take */
+async function runMultishotRemote(ctx, j, p, seed) {
+  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, "");
+  const episodeId = p.episodeId || j.episodeId || null;
+  const st = ctx.store.get();
+  const ids = (p.shotIds || []).map(String);
+  const shots = Object.keys(st.shots || {}).map((k) => st.shots[k])
+    .filter((x) => x && x.episodeId === episodeId && ids.indexOf(x.id) >= 0)
+    .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  if (shots.length < 2) throw (() => { const e = new Error("多镜串拍至少需要 2 个有效镜头"); e.code = "MS_GROUP_TOO_SMALL"; return e; })();
+  const secs = shots.map((s) => (Number(s.sec) > 0 ? Number(s.sec) : 5));
+  const totalSec = secs.reduce((a, b) => a + b, 0);
+  if (totalSec > 10) throw (() => { const e = new Error("多镜串拍总时长超上限（≤10s/组）"); e.code = "MS_GROUP_TOO_LONG"; return e; })();
+  const sb0 = sbArtForShot(ctx, episodeId, shots[0].id);
+  if (!sb0) throw (() => { const e = new Error("组首镜没有可用的分镜首帧: " + shots[0].id); e.code = "NO_REMOTE_INPUT_ART"; return e; })();
+  const scr0 = shotScript(ctx, episodeId, shots[0]);
+  const width = Number(p.width) > 0 ? Number(p.width) : 768;
+  const height = Number(p.height) > 0 ? Number(p.height) : 1344;
+  const pkg = prompts.style.resolve(ctx, episodeId);
+  // 时间码多镜描述（组内各镜 desc＋台词，身份锚点由首帧＋描述共同承载）
+  let acc = 0;
+  const promptParts = shots.map((sh, i) => {
+    const sc = shotScript(ctx, episodeId, sh);
+    const from = acc.toFixed(1);
+    acc += secs[i];
+    const to = acc.toFixed(1);
+    const dlg = sc.dialogue ? "，台词：「" + sc.dialogue + "」" : "";
+    return from + "s-" + to + "s：第" + (i + 1) + "镜：" + (sc.desc || sh.name || "") + dlg;
+  });
+  const PROMPT = promptParts.join("\n") + "\n" + prompts.style.irStyleEn(pkg);
+  await comfy.ensureFree(base, 8);
+  const ffName = await comfy.uploadAsset(base, sb0.bytes, "t2vr_ms_" + safeSeg(shots[0].id) + "_" + seed.slice(0, 6) + ".png");
+  const LENGTH = frames8n1(totalSec);
+  const cost = Math.max(COST_CENTS, Math.round(COST_CENTS * (LENGTH / 121)));
+  const r = await comfy.runTemplate(ctx, j, {
+    base,
+    tmplId: TMPL_MS,
+    params: {
+      SEED: parseInt(String(seed).slice(0, 8), 16) % 18446744073709551615,
+      PROMPT, WIDTH: width, HEIGHT: height, LENGTH,
+      FPS: 24,
+      STAGE1_W: Math.round(width / 2), STAGE1_H: Math.round(height / 2),
+      CFG: 1,
+      SIGMAS1: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+      SIGMAS2: "0.85, 0.7250, 0.4219, 0.0",
+      IMAGE: ffName
+    },
+    pollMs: 3000,
+    timeoutMs: 1800000
+  });
+  // 分段落 take（整段 mp4 按 planned 秒比例切）
+  const takeId = safeSeg(p.takeId || p.groupId || "ms_" + seed.slice(0, 8));
+  const masterName = takeId + "_full.mp4";
+  const masterAbs = writeOut(ctx, masterName, r.bytes);
+  const segs = [];
+  let accT = 0;
+  const actualSec = LENGTH / 24;
+  const k = actualSec / totalSec;
+  for (let i = 0; i < shots.length; i++) {
+    const from = accT * k;
+    accT += secs[i];
+    const to = i === shots.length - 1 ? actualSec + 0.001 : accT * k;
+    const seg = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), safeSeg(takeId + "_s" + i) + ".mp4");
+    await runFfmpeg(["-y", "-ss", from.toFixed(3), "-to", to.toFixed(3), "-i", masterAbs,
+      "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-ar", "48000", "-ac", "2", seg], 300000);
+    segs.push(seg);
+  }
+  const groupId = safeSeg(p.groupId || "ms_" + seed.slice(0, 8));
+  const takes = shots.map((sh, i) => ({
+    id: takeId + "_s" + i, shotId: sh.id, sec: secs[i],
+    art: "var/out/" + path.basename(segs[i]),
+    cost_cents: Math.round(cost * secs[i] / totalSec),
+    engine: "自部署·高价值档", license: { model: "MiniMax-H3 Community", usage: "attribution" },
+    best: true,
+    native_speech: !!((shotScript(ctx, episodeId, sh) || {}).dialogue),
+    multishot_group: { groupId, master: "var/out/" + masterName, seg_index: i, frames: LENGTH }
+  }));
+  const meta = {
+    kind: "video-comfy-multishot", lane: NAME, engine: ENGINE + " LTX multishot", engine_user: "自部署·高价值档", tier: TIER,
+    tmpl_id: TMPL_MS, group: { groupId, shotIds: shots.map((s) => s.id), secs, frames: LENGTH, master: "var/out/" + masterName },
+    prompt_id: r.meta.promptId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
+    sec: Number(actualSec.toFixed(2)), episodeId, prompt: PROMPT.slice(0, 400),
+    seed: String(parseInt(String(seed).slice(0, 8), 16)), cents: cost,
+    ai_label: "AI 生成内容（MiniMax H3 节点）"
+  };
+  const bag = { ok: true, cents: cost, art: takes[0].art, path: takes[0].art, meta, takes, engine: "自部署·高价值档", cost_cents: cost, license: takes[0].license, sec: meta.sec, tier: TIER, group: meta.group };
+  j.result = bag; j.art = bag;
+  return { ok: true, cents: cost, art: takes[0].art, meta };
+}
+
+/** 转场衔接镜（远端）：A 尾帧（服务端抽取后上传）＋B 首帧 → 桥接段 */
+async function runTransitionRemote(ctx, j, p, seed) {
+  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, "");
+  const episodeId = p.episodeId || j.episodeId || null;
+  const st = ctx.store.get();
+  const shotA = (st.shots || {})[p.fromShotId] || null;
+  const shotB = (st.shots || {})[p.toShotId] || null;
+  if (!shotA || !shotB) throw (() => { const e = new Error("转场衔接镜缺少起止镜头"); e.code = "BAD_TRANSITION_PAIR"; return e; })();
+  const takesA = (shotA.takes || []).filter((t) => t && t.art);
+  const bestA = takesA.filter((t) => t.best).pop() || takesA[takesA.length - 1];
+  if (!bestA) throw (() => { const e = new Error("起点镜尚无成片 take: " + shotA.id); e.code = "NO_SOURCE_TAKE"; return e; })();
+  const srcA = resolveArtLocal(bestA.art);
+  if (!fs.existsSync(srcA)) throw (() => { const e = new Error("起点镜 take 文件缺失: " + srcA); e.code = "TAKE_MISSING"; return e; })();
+  const sbB = sbArtForShot(ctx, episodeId, shotB.id);
+  if (!sbB) throw (() => { const e = new Error("终点镜没有可用的分镜首帧: " + shotB.id); e.code = "NO_REMOTE_INPUT_ART"; return e; })();
+  // A 尾帧抽取（本机 ffmpeg）→ cover 适配镜幅 → 上传
+  const tmpDir = path.join(process.cwd(), "var", "tmp");
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const frameTmp = path.join(tmpDir, "trA_" + safeSeg(shotA.id) + "_src.png");
+  await runFfmpeg(["-y", "-sseof", "-0.05", "-i", srcA, "-frames:v", "1", "-q:v", "2", frameTmp], 60000);
+  const width = Number(p.width) > 0 ? Number(p.width) : 768;
+  const height = Number(p.height) > 0 ? Number(p.height) : 1344;
+  const frameBytes = fs.readFileSync(frameTmp);
+  const fitBytes = await fitFrame(frameBytes, width, height, safeSeg(shotA.id).slice(0, 24));
+  const imgA = await comfy.uploadAsset(base, fitBytes, "t2vr_trA_" + safeSeg(shotA.id) + "_" + seed.slice(0, 6) + ".png");
+  const imgB = await comfy.uploadAsset(base, sbB.bytes, "t2vr_trB_" + safeSeg(shotB.id) + "_" + seed.slice(0, 6) + ".png");
+  const scrA = shotScript(ctx, episodeId, shotA);
+  const scrB = shotScript(ctx, episodeId, shotB);
+  const pkg = prompts.style.resolve(ctx, episodeId);
+  const PROMPT = [
+    "Continuous shot: the scene flows naturally from the previous shot into the next, same space, identical lighting and color.",
+    "Previous shot ended with: " + (scrA.desc || "").slice(0, 80) + ".",
+    "Next shot begins with: " + (scrB.desc || "").slice(0, 80) + ".",
+    "Smooth motion transition, no hard cut, no fade."
+  ].join(" ") + " " + prompts.style.irStyleEn(pkg);
+  const LENGTH = frames8n1(Number(p.sec) > 0 ? Number(p.sec) : 2);
+  const cost = Math.max(20, Math.round(COST_CENTS * (LENGTH / 121)));
+  await comfy.ensureFree(base, 8);
+  const r = await comfy.runTemplate(ctx, j, {
+    base,
+    tmplId: TMPL_FLF,
+    params: {
+      SEED: parseInt(String(seed).slice(0, 8), 16) % 18446744073709551615,
+      PROMPT, WIDTH: width, HEIGHT: height, LENGTH,
+      FPS: 24,
+      STAGE1_W: Math.round(width / 2), STAGE1_H: Math.round(height / 2),
+      CFG: 1,
+      SIGMAS1: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+      SIGMAS2: "0.85, 0.7250, 0.4219, 0.0",
+      IMAGE: imgA,
+      REF: imgB
+    },
+    pollMs: 3000,
+    timeoutMs: 1800000
+  });
+  const takeId = safeSeg(p.takeId || "tr_" + seed.slice(0, 8));
+  const fileName = takeId + ".mp4";
+  const art = "var/out/" + fileName;
+  const meta = {
+    kind: "video-comfy-transition", lane: NAME, engine: ENGINE + " LTX FLF", engine_user: "自部署·高价值档", tier: TIER,
+    tmpl_id: TMPL_FLF, transitionId: p.transitionId || null, fromShotId: shotA.id, toShotId: shotB.id, from_take: bestA.id,
+    prompt_id: r.meta.promptId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
+    sec: Number((LENGTH / 24).toFixed(2)), episodeId, prompt: PROMPT.slice(0, 400),
+    seed: String(parseInt(String(seed).slice(0, 8), 16)), cents: cost,
+    ai_label: "AI 生成内容（MiniMax H3 节点）"
+  };
+  const abs = writeOut(ctx, fileName, r.bytes);
+  writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  meta.art_abs = abs;
+  const take = { id: takeId, engine: "自部署·高价值档", cost_cents: cost, art, license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true, transition: true };
+  const bag = { ok: true, cents: cost, art, path: art, meta, take, engine: "自部署·高价值档", cost_cents: cost, license: take.license, sec: meta.sec, tier: TIER };
+  j.result = bag; j.art = bag;
+  return { ok: true, cents: cost, art, meta };
+}
+
+/** art 虚拟路径 → 物理文件（远端车道用） */
+function resolveArtLocal(art) {
+  const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = path.join(process.cwd(), "var", "out");
+  const byBase = path.join(base, path.basename(a));
+  if (fs.existsSync(byBase)) return byBase;
+  return path.join(process.cwd(), a);
+}
+
+/** 远端车道 stub：多镜串拍（分段占位）与转场衔接镜共用 */
+function stubMsTrRemote(ctx, j, p, seed, settings, reg) {
+  const takeId = safeSeg(p.takeId || p.groupId || (j.type === "transition" ? "tr_" : "ms_") + seed.slice(0, 8));
+  const meta = {
+    kind: "video-stub", lane: NAME, engine: reg.model || ENGINE, tier: reg.tier || TIER,
+    type: j.type, peak_valley: false, takeId,
+    shotId: p.shotId || (j.type === "transition" ? p.fromShotId : null) || null,
+    episodeId: p.episodeId || j.episodeId || null,
+    transitionId: j.type === "transition" ? (p.transitionId || null) : undefined,
+    fromShotId: j.type === "transition" ? (p.fromShotId || null) : undefined,
+    toShotId: j.type === "transition" ? (p.toShotId || null) : undefined,
+    multishot: j.type === "video_ms" || undefined,
+    sec: Number(p.sec) > 0 ? Number(p.sec) : (j.type === "transition" ? 2 : 5),
+    slow_lane_ms: 0, seed
+  };
+  const out = [];
+  const ids = j.type === "video_ms" ? (p.shotIds || []) : [null];
+  const secs = j.type === "video_ms" ? ids.map((_, i) => Number((p.secs || [])[i]) || 5) : [meta.sec];
+  ids.forEach((sid, i) => {
+    const fn = ids.length > 1 ? takeId + "_s" + i + ".mp4" : takeId + ".mp4";
+    const art = "var/out/" + fn;
+    writeOut(ctx, fn, MP4_STUB);
+    out.push({
+      id: takeId + (ids.length > 1 ? "_s" + i : ""), shotId: sid, sec: secs[i], art,
+      cost_cents: Math.round(COST_CENTS * secs[i] / secs.reduce((a, b) => a + b, 0)),
+      engine: "自部署·高价值档", license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true,
+      transition: j.type === "transition" || undefined
+    });
+  });
+  const cost = Math.max(20, Math.round(COST_CENTS * (secs.reduce((a, b) => a + b, 0) / 5)));
+  const bag = { ok: true, cents: cost, art: out[0].art, path: out[0].art, meta, takes: ids.length > 1 ? out : undefined, take: ids.length > 1 ? undefined : out[0], engine: "自部署·高价值档", cost_cents: cost, license: out[0].license, sec: meta.sec, tier: meta.tier, peak_valley: false };
+  j.result = bag; j.art = bag;
+  return { ok: true, cents: cost, art: bag.art, meta };
+}
+
 async function run(job, ctx) {
   const j = job || {};
   const p = j.payload || {};
@@ -389,7 +610,12 @@ async function run(job, ctx) {
 
   if (comfyOn) {
     if (peakValley) await sleep(150); // 夜间闲时排队慢档（确定性固定延迟）
+    if (j.type === "video_ms") return runMultishotRemote(ctx, j, p, seed);
+    if (j.type === "transition") return runTransitionRemote(ctx, j, p, seed);
     return runRemoteComfy(ctx, j, p, seed, COST_CENTS, settings);
+  }
+  if (j.type === "video_ms" || j.type === "transition") {
+    return stubMsTrRemote(ctx, j, p, seed, settings, reg);
   }
 
   // —— stub 模式（验收套件）——

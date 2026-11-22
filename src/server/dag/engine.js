@@ -16,13 +16,13 @@ const util = require("../core/util");
 const { DEFAULT_LANE_NODE, llmHostNode } = require("../core/store");
 const llmMod = require("../llm/llm");
 // 本机 Comfy 车道（t2i.local 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
-const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free"];
+const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "video_ms", "transition", "superres"];
 function llmBlocked(cfg) {
   if (cfg && cfg.llmBlockedOverride != null) return !!cfg.llmBlockedOverride; // 自检确定性钩子
   try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
 }
 
-const ALL_LANES = ["t2i.local", "t2i.remote", "t2v.local", "t2v.remote", "music", "tts", "compose", "moderate", "aireview", "scriptgen"];
+const ALL_LANES = ["t2i.local", "t2i.remote", "t2v.local", "t2v.remote", "music", "tts", "compose", "moderate", "aireview", "scriptgen", "lipsync", "superres", "sfx"];
 const TYPE_LANE = {
   // 一句话/小说→结构化剧本（2026-11-21 补全）：纯 LLM 车道，不占显存、不受 GPU/LLM 互斥闸
   scriptgen: "scriptgen",
@@ -43,16 +43,24 @@ const TYPE_LANE = {
   music: "music",
   voice: "tts",
   compose: "compose",
-  moderate: "moderate"
+  moderate: "moderate",
+  // 后期三车道（2026-11-22 对标调研第一/二梯队）：口型重绘（台词镜后处理）、成片超分（720→1080p）、
+  // 音效拟音（场景级 cue）。默认 stub；真引擎通道见各 worker 头注（THEATER_LIPSYNC_URL 等）。
+  lipsync: "lipsync",
+  superres: "superres",
+  sfx: "sfx"
 };
 
 // 剧集驱动（episode.driver）可改道的任务类型白名单：这些是"通用工作流"，落到哪个节点由
 // driver 指向的算力节点决定（按注册表 lane→node 绑定找同族车道）。引擎专用工作流
 //（img_remote/cast_init/screen_test）不在内。白名单制：新增类型默认不改道，要跨节点需显式加入。
-const DRIVER_ROUTABLE = ["c1plan", "casting", "storyboard", "storyboard_char", "img_free", "video"];
+const DRIVER_ROUTABLE = ["c1plan", "casting", "storyboard", "storyboard_char", "img_free", "video", "video_ms", "transition"];
 
 function laneFor(type, opts) {
   if (type === "video") return opts && opts.tier === "high" ? "t2v.remote" : "t2v.local";
+  // 多镜串拍（同场相邻镜一次前向生成后按时间码分段落 take）与转场衔接镜（A 尾帧+B 首帧桥接）：
+  // 同 video 的档位路由——高价值档走远端（Spark int8），标准档走本机（LTX GGUF）
+  if (type === "video_ms" || type === "transition") return opts && opts.tier === "high" ? "t2v.remote" : "t2v.local";
   // H3 线（2026-11-21）：tier:"high" → 生图全族走远端 t2i 车道，本机不再接 H3 任务
   if (opts && opts.tier === "high" && ["casting", "storyboard_char", "c1plan", "storyboard"].indexOf(type) >= 0) return "t2i.remote";
   const l = TYPE_LANE[type];
@@ -190,7 +198,7 @@ function createEngine({ store, bus, cfg }) {
      精确到「该类型真分支是否存在」由 worker 内部决定，此处按通道+类型宽判（产物 meta 有细粒度 kind）。 */
   function workerTypeOf(job) {
     const gpuReal = (cfg.comfy && cfg.comfy.enabled) || (cfg.comfyRemote && cfg.comfyRemote.enabled);
-    const GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "cast_init", "screen_test"];
+    const GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "cast_init", "screen_test", "video_ms", "transition", "superres"];
     if (GPU_TYPES.indexOf(job.type) >= 0) return gpuReal ? "self-host-comfy" : "self-host-stub";
     // 云 API 车道真跑＝外部付费生成，账本必须如实标注 cloud-api（验收桩模式仍是 stub）
     if (job.lane === "t2i.cloud") {

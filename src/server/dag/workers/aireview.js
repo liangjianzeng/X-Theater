@@ -112,6 +112,33 @@ function reviewC1(ctx, card, episodeId) {
     out.push(mk("观众视角", verdictOf(f), f));
   }
 
+  // 网感编辑视角（2026-11-22 对标调研梯队③）：短剧钩子/爽点密度——行业标配审计维度
+  //（分集钩子表/集尾钩子/爽点密度是短剧编剧工具的通用口径；规则词表可随运营复盘迭代）
+  {
+    const f = [];
+    // ① 集尾钩子：末镜有台词或悬念词 → 留得住；否则 warn
+    const last = shots[shots.length - 1];
+    const hookWords = /(悬念|突然|竟然|到底|身份|真面|转身|出现|跪|求|夺|威胁|真相|没想到|下一秒|回头|亮出|报上|震惊)/;
+    const lastText = last ? String(last.sh.dialogue || "") + String(last.sh.desc || "") : "";
+    if (lastText.trim().length === 0) f.push("warn：结尾镜是空的——集尾必须留钩子（台词/事件/悬念画面）");
+    else if (hookWords.test(lastText) || String(last.sh.dialogue || "").trim()) f.push("pass：集尾有钩子（台词/悬念词命中）");
+    else f.push("warn：结尾镜无台词且无悬念词——划走风险高，建议补一句吊钩台词或反转画面");
+    // ② 爽点密度：全片钩子词按分钟计（行业经验 ≥3 个/分钟为产能型短剧常见密度）
+    const allText = shots.map((x) => String(x.sh.dialogue || "") + " " + String(x.sh.desc || "")).join(" ");
+    const hits = (allText.match(new RegExp(hookWords.source, "g")) || []).length;
+    const totalSec = shots.reduce((a, b) => a + (Number(b.sh.sec) || 5), 0);
+    const perMin = totalSec > 0 ? (hits / (totalSec / 60)) : 0;
+    if (perMin >= 3) f.push("pass：爽点密度 " + perMin.toFixed(1) + " 个/分钟（" + hits + " 处钩子词）");
+    else if (perMin >= 1) f.push("info：爽点密度 " + perMin.toFixed(1) + " 个/分钟——产能型短剧常见 3+/分钟，可再加密");
+    else f.push("warn：爽点密度 " + perMin.toFixed(1) + " 个/分钟——偏文艺向，投流素材跑量建议加冲突/反转");
+    // ③ 前 3 镜进戏：至少 2 镜有台词或人物
+    const first3 = shots.slice(0, 3);
+    const inDrama = first3.filter((x) => String(x.sh.dialogue || "").trim() || (x.sh.cast || []).length).length;
+    if (first3.length >= 3 && inDrama < 2) f.push("warn：前 3 镜仅 " + inDrama + " 镜进戏（台词/人物）——短剧前 10 秒定生死");
+    else if (first3.length) f.push("pass：前 3 镜 " + inDrama + "/3 镜进戏");
+    out.push(mk("网感编辑视角", verdictOf(f), f));
+  }
+
   // 制片视角：成本与保脸前置条件
   {
     const f = [];
@@ -254,7 +281,7 @@ function reviewC6(ctx, card, episodeId) {
 /* ---------------- LLM 人格叠加（fail-open：LLM 离线/超时 → 只出规则结果） ---------------- */
 
 const LLM_PERSONA_NAMES = {
-  C1: ["编剧视角", "观众视角", "制片视角"],
+  C1: ["编剧视角", "观众视角", "网感编辑视角", "制片视角"],
   C2: ["选角导演视角", "造型师视角", "统筹视角"],
   C4: ["摄影师视角", "配音导演视角"],
   C6: ["制片视角", "统筹视角"]

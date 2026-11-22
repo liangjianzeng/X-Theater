@@ -97,13 +97,24 @@ function stripLead(s) {
   return x;
 }
 
+/** 可用中文字体（字幕烧录）：msyh → simhei → null（无字体时诚实跳过烧录，cue 仍记 meta） */
+function pickZhFont() {
+  const cands = ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyhbd.ttc", "C:/Windows/Fonts/simhei.ttf"];
+  for (const f of cands) {
+    if (fs.existsSync(f)) return f;
+  }
+  return null;
+}
+
 async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
-  // 真合成：片头字幕卡 2s + 逐镜 take（best）拼接 + BGM 全程垫底 + 台词对位由各镜自带音轨（LTX mp4 含音）
+  // 真合成：片头字幕卡 2s + 逐镜 take（best）拼接 + 转场衔接镜织入 + BGM 全程垫底 + 台词对位 + 字幕烧录
   const outDir = path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")));
   const tmp = path.join(outDir, "_compose_" + safeSeg(episodeId));
   fs.mkdirSync(tmp, { recursive: true });
   const parts = [];
   const episode = (ctx.store.get().episodes || {})[episodeId] || {};
+  const stReal = (ctx && ctx.store && typeof ctx.store.get === "function" && ctx.store.get()) || {};
+  const settingsReal = stReal.settings || {};
   // 1) 片头字幕卡（黑底白字 2s；垫无声轨保证 concat 流统一）
   const title = (episode.title || "短剧") + "｜" + String(episode.brief || "").slice(0, 20);
   const cardMp4 = path.join(tmp, "card.mp4");
@@ -113,10 +124,16 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
     "-vf", "drawtext=text=" + JSON.stringify(title.replace(/['":\\]/g, "").slice(0, 30)) + ":fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", cardMp4], 120000);
   parts.push(cardMp4);
-  const partShots = [null]; // parts[i] ↔ 镜对象（0=片头卡）
+  const partShots = [null]; // parts[i] ↔ 镜对象（0=片头卡；转场镜段=null）
   const speechBySeq = {}; // 镜 seq → take 自带原生说话声（compose 不再叠 TTS）
+  // 转场衔接镜（FR-506 落地 2026-11-22）：from=镜A 且 to=紧随镜B → B 前织入衔接段
+  const transitionsAll = Object.keys(stReal.transitions || {})
+    .map((k) => stReal.transitions[k])
+    .filter((t) => t && t.episodeId === episodeId && t.take && t.take.art);
+  const transUsed = [];
   // 2) 逐镜 take（best 条）——音轨统一重编码（aac 48k stereo；video copy）
-  for (const s of shotsSorted) {
+  for (let si = 0; si < shotsSorted.length; si++) {
+    const s = shotsSorted[si];
     const takes = (s.takes || []).filter((t) => t && t.art);
     if (!takes.length) continue;
     // 选条：优先显式 best 标志（取最后一条——新拍覆盖旧拍）；否则最新一条
@@ -137,30 +154,53 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
     }
     parts.push(norm);
     partShots.push(s);
+    // 2.5) 转场衔接镜织入：from=当前镜 且 to=下一镜（shotsSorted 邻接）→ 取 best 衔接 take
+    const next = shotsSorted[si + 1];
+    if (next) {
+      const tr = transitionsAll.find((t) => String(t.fromShotId) === String(s.id) && String(t.toShotId) === String(next.id));
+      if (tr) {
+        const trSrc = resolveArt(ctx, tr.take.art);
+        if (fs.existsSync(trSrc)) {
+          const trInfo = await probeMedia(trSrc);
+          const trNorm = path.join(tmp, "norm_tr_" + path.basename(trSrc));
+          if (trInfo.hasAudio) {
+            await runFfmpeg(ctx, ["-y", "-i", trSrc, "-map", "0:v", "-map", "0:a",
+              "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", trNorm], 120000);
+          } else {
+            await runFfmpeg(ctx, ["-y", "-i", trSrc, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+              "-map", "0:v", "-map", "1:a", "-shortest",
+              "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", trNorm], 120000);
+          }
+          parts.push(trNorm);
+          partShots.push(null);
+          transUsed.push(tr.id);
+        }
+      }
+    }
   }
   if (parts.length < 2) throw Object.assign(new Error("无可拼接镜头（takes 不足）"), { code: "NO_TAKES" });
   // 3) concat 列表
   const listFile = path.join(tmp, "list.txt");
   fs.writeFileSync(listFile, parts.map((f) => "file '" + String(f).replace(/\\/g, "/") + "'").join("\n"));
+  // 3.2) 段时间轴起点（parts 顺序＝片头卡＋shotsSorted（含织入的转场段））
+  const starts = [];
+  let cum = 0;
+  for (let i = 0; i < parts.length; i++) {
+    starts[i] = cum;
+    const d = await probeMedia(parts[i]);
+    cum += (d && d.sec) || 0;
+  }
+  const ends = parts.map((_, i) => (i + 1 < parts.length ? starts[i + 1] : cum));
   // 3.5) 台词对位：voice 真实产物按台词文本对齐全局镜序（LTX 音轨是环境声，台词必须叠加）
   const dlgInputs = [];
   const dlgFilters = [];
+  const epScript = ((stReal.episodes || {})[episodeId] || {}).script || null;
   try {
-    const st1 = ctx.store.get();
-    const epScript = ((st1.episodes || {})[episodeId] || {}).script || null;
     const jobs = (ctx.engine && typeof ctx.engine.listJobs === "function")
       ? ctx.engine.listJobs({ episodeId: episodeId, status: "done" }).filter((jb) => jb && jb.type === "voice" && jb.result && Array.isArray(jb.result.lines))
       : [];
-    const pool = ((st1.voice_lines || {})[episodeId] || []).filter((l) => l && l.text && l.art).slice();
+    const pool = ((stReal.voice_lines || {})[episodeId] || []).filter((l) => l && l.text && l.art).slice();
     jobs.forEach((jb) => (jb.result.lines || []).forEach((l) => { if (l && l.text && l.art) pool.push(l); }));
-    // 镜时间轴起点（parts 顺序＝片头卡＋shotsSorted）
-    const starts = [];
-    let cum = 0;
-    for (let i = 0; i < parts.length; i++) {
-      starts[i] = cum;
-      const d = await probeMedia(parts[i]);
-      cum += (d && d.sec) || 0;
-    }
     // 剧本扁平镜序（与 t2i.local 分镜绑定同一口径）：场序 si、场内镜序 i → shot.seq=(si+1)*100+i+1
     const flat = [];
     (epScript && epScript.scenes || []).forEach((sc, si) => (sc.shots || []).forEach((sh, i) => flat.push({ si, i, dialogue: sh.dialogue || null })));
@@ -182,9 +222,29 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
       dlgFilters.push("[" + (2 + di) + ":a]aresample=48000,aformat=channel_layouts=stereo" + (ms > 0 ? ",adelay=" + ms + ":all=1" : "") + "[d" + di + "]");
     }
   } catch (e) { /* 台词对位失败不阻断成片（BGM/画面兜底） */ }
+  // 3.7) 字幕 cue（梯队②，确定性）：台词镜从段起点起，按 5 字/秒估时（与 aireview 语速校验同口径），
+  // 上限＝段长；native_speech 镜同样出 cue（LTX 台词听感起始不确定，取段起点＋0.3s 缓冲）。
+  const subtitleCues = [];
+  const subsOn = settingsReal.subtitles !== "off";
+  if (subsOn && epScript) {
+    const flat = [];
+    (epScript.scenes || []).forEach((sc, si) => (sc.shots || []).forEach((sh, i) => flat.push({ si, i, dialogue: sh.dialogue || null })));
+    for (const f of flat) {
+      if (!f.dialogue) continue;
+      const expectedSeq = (f.si + 1) * 100 + f.i + 1;
+      const partIdx = partShots.findIndex((ps) => ps && Number(ps.seq) === expectedSeq);
+      if (partIdx < 0) continue;
+      const segSec = Math.max(0.5, (ends[partIdx] || cum) - (starts[partIdx] || 0));
+      const dur = Math.min(Math.max(String(f.dialogue).length / 5, 1.2), segSec);
+      subtitleCues.push({
+        t0: Number((starts[partIdx] + 0.15).toFixed(2)),
+        t1: Number((starts[partIdx] + 0.15 + dur).toFixed(2)),
+        text: String(f.dialogue)
+      });
+    }
+  }
   // 4) 终混：concat（含环境声）＋BGM 垫底＋台词对位叠加（normalize=0 保留各轨电平）
   // 素材中心（2026-11-22）：取曲读 asset_lib——本集场景的 primary 绑定优先，其次任意绑定，最后旧 sceneId 字段
-  const stReal = (ctx && ctx.store && typeof ctx.store.get === "function" && ctx.store.get()) || {};
   const scenesReal = stReal.scenes || {};
   const epSceneIds = new Set(
     Object.keys(scenesReal)
@@ -244,7 +304,38 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
   } else {
     await runFfmpeg(ctx, ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", finalPath], 600000);
   }
-  return { finalPath, finalName, parts: parts.length, bgm: bgm || null, dialogue: dlgInputs.length };
+  // 5) 字幕烧录（梯队②）：drawtext 按 cue enable 窗口叠加，底部安全区（距底 8% 高度＋边框）。
+  // 无中文字体 → 诚实跳过烧录（cue 仍记 meta，交付预检可核对）。
+  let burned = false;
+  if (subtitleCues.length) {
+    const font = pickZhFont();
+    if (font) {
+      const fontArg = "fontfile=" + font.replace(/\\/g, "/").replace(":", "\\:");
+      const chain = subtitleCues.map((c) => {
+        const txt = String(c.text).replace(/['"\\:;,%]/g, "");
+        return "drawtext=" + fontArg + ":text=" + JSON.stringify(txt) +
+          ":fontcolor=white:fontsize=44:borderw=2:bordercolor=black@0.8" +
+          ":x=(w-text_w)/2:y=h-text_h-h*0.08" +
+          ":enable='between(t," + c.t0 + "," + c.t1 + ")'";
+      }).join(",");
+      const subPath = finalPath.replace(/\.mp4$/, "_sub.mp4");
+      await runFfmpeg(ctx, ["-y", "-i", finalPath, "-vf", chain,
+        "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-c:a", "copy", subPath], 900000);
+      try { fs.unlinkSync(finalPath); fs.renameSync(subPath, finalPath); } catch (e) { /* 重命名失败保留两版 */ }
+      burned = true;
+    }
+  }
+  // 6) 升帧（梯队④，默认关）：settings.interp_fps > 输出帧率 → minterpolate 补帧（观感顺滑；慢，慎开）
+  let outFps = 24;
+  const interpFps = Number(settingsReal.interp_fps) || 0;
+  if (interpFps > 24) {
+    const ipPath = finalPath.replace(/\.mp4$/, "_ip.mp4");
+    await runFfmpeg(ctx, ["-y", "-i", finalPath, "-vf", "minterpolate=fps=" + Math.round(interpFps) + ":mi_mode=mci:mc_mode=aobmc:vsbmc=1",
+      "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-c:a", "copy", ipPath], 1800000);
+    try { fs.unlinkSync(finalPath); fs.renameSync(ipPath, finalPath); } catch (e) { /* 重命名失败保留两版 */ }
+    outFps = Math.round(interpFps);
+  }
+  return { finalPath, finalName, parts: parts.length, bgm: bgm || null, dialogue: dlgInputs.length, transUsed, subtitleCues, subtitlesBurned: burned, fps: outFps };
 }
 
 async function run(job, ctx) {
@@ -325,8 +416,11 @@ async function run(job, ctx) {
       kind: "final-comfy", lane: NAME, engine: "FFmpeg 6.0（真合成）",
       episodeId, episodeTitle: episode.title || null, purpose: "export",
       explicit_mark: true, implicit_mark: true, watermark: "内测水印",
-      resolution: "720x1280", fps: 24, music, shots: shotList, parts: real.parts,
-      bgm: real.bgm, dialogue_lines: real.dialogue != null ? real.dialogue : null, gen_seconds: Math.round((Date.now() - t0) / 1000), seed: seedR
+      resolution: "720x1280", fps: real.fps || 24, music, shots: shotList, parts: real.parts,
+      bgm: real.bgm, dialogue_lines: real.dialogue != null ? real.dialogue : null,
+      transitions_used: real.transUsed || [],
+      subtitles: { enabled: (real.subtitleCues || []).length > 0, burned: !!real.subtitlesBurned, cues: real.subtitleCues || [] },
+      gen_seconds: Math.round((Date.now() - t0) / 1000), seed: seedR
     };
     writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
     const bag = { ok: true, cents: COST_CENTS, art, path: art, meta, engine: "FFmpeg 6.0（真合成）", resolution: meta.resolution, fps: meta.fps, watermark: meta.watermark };
