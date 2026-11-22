@@ -181,7 +181,7 @@ ask 卡是长任务链的钩子。已通链路：
 | **P0 已落地** | llm-gw 真脑接入；21 工具面；aireview LLM 人格叠加；watchdog 看护；节点驱动＋每集 driver；芯片状态推导；切集换会话 | selfcheck l2 129/129＋llm 9/9；真机：LLM 在线全链/关 LLM 回退规则双态验证 |
 | **P1 进行中** | 顾问卡 v1（choices/ask＋send/href/tab）；replyFor/llmReply 顾问化（现状/评估/推荐，不露 ID）；query_cards 富化（中文名/摘要/依赖链推荐）；能力菜单卡；审批引导卡 | 真机：点芯片→回执可读→点选项卡执行/跳转闭环；LLM 断→规则脸同样出卡 |
 | **P1 剩余** | ask 多轮链补全（每条链都有入口+状态）；消息卡回归用例进 selfcheck | 每条任务链真机走通一遍；selfcheck 覆盖卡清洗（javascript: 拒绝/键位白名单） |
-| **P2** | 主动性 hint（卡流/任务/GPU 事件→有动作的提醒）；C2-C8 各节点助手感知深化（把 §2 矩阵「AI 建议/交互」列落全）；会话记忆（项目事实摘要，跨会话）✅ v1 已落地（§7）；批量建议（多镜重拍/多卡连拍） | 矩阵每格有实现或明确标「不适用」；hint 有开关不打扰 |
+| **P2** | 主动性 hint（卡流/任务/GPU 事件→有动作的提醒）；C2-C8 各节点助手感知深化（把 §2 矩阵「AI 建议/交互」列落全）✅ v1 已落地（§7）；会话记忆（项目事实摘要，跨会话）✅ v1 已落地（§7）；批量建议（多镜重拍）✅ v1 已落地（§7） | 矩阵每格有实现或明确标「不适用」；hint 有开关不打扰 |
 | **P3** | 评测基准：意图解析回归集（≥100 条真实话术）；回执质量抽样（顾问三段齐/无 ID 露出）；红队注入回归；规则 vs LLM 双跑对比账（影子评测） | 回归集进 selfcheck；对比账支撑「哪些环节值得继续加 LLM」的决策 |
 
 ---
@@ -211,8 +211,21 @@ ask 卡是长任务链的钩子。已通链路：
 | 主动性 hint（任务完成/失败） | ✅ | copilot.js（loadJobs 一次＋SSE 保鲜，签名去重＋首评基线静默） | 失败→[去拍摄页/查进度]；全部拍完→[导出成片(send 出确认票)/去复审台]；单槽位随状态替换；真机验证两变体 |
 | C2-C8 节点感知深化 | ⬜ 未开工 | 规划 §2 矩阵「建议/交互」列 | P2 |
 | **会话记忆 v1（项目事实台账，跨会话）** | ✅ | l2/memory.js·adapter runTurn＋facade decideApproval 记账·llmintent systemPrompt 注入 | 只记真实执行结果（查询/建议/镜头级不记）；环缓冲 30/项目、注入最新 8 条；无 ID 纪律；fail-open（LLM 离线不注入）。真机：A 会话建项目+建集 → 全新会话仅绑集正确复述「立项影调写实电影感」；selfcheck llm 12/12 |
+| **车道名能力化迁移（§8.3 验收④）** | ✅ | engine·store·index·workers 5 文件改名·registry 数据迁移 | 代码零硬件名（仅 env 外部契约一行豁免）；`cfg.comfyRemote`；真机 img_free→t2i.remote→done 零提示；test/selfcheck 全量对齐新车道名 |
+| **批量建议 v1（batch_reroll 多镜重拍）** | ✅ | governance·tools·llmintent·adapter·modeB | 「重拍第3、5、7镜」→ 一张确认票覆盖全部（est=逐镜 sec 加权和）；语料 108 条含 batch_reroll/remember；真机：2 镜确认票 160 分/6 分钟＋互斥提示（不批准零花费） |
+| **remember 用户备忘（幽灵工具补全）** | ✅ | tools·memory.noteUser·modeB「记住：X」正则·llmintent 机械兜底 | 治理面预埋 `fact` 契约对齐；LLM 漏拷时从原话直抠（非幻觉）；备忘入项目台账跨会话注入；真机：备忘落台账＋人话确认 |
+| **C2-C8 深化 v1（助手面）** | ✅ | advisor buildCard decide_card 依赖链卡·llmintent TOOL_ADVICE 全工具 | 拍板后按 CARD_NEXT 指下游；llmReply 顾问三段的推荐视角 21+ 工具全覆盖（矩阵「建议/交互」列助手侧无空白格） |
 | 意图回归集（LLM 脸·在线双跑验收） | ✅ | test/acceptance/llm-intent.js（非门禁，手动跑） | 复用同语料只读面子集；LLM 离线自动跳过；输出分类正确率/严格一致率/越权执行数；自清账（跑完 DELETE 自建会话）＋--wants/--max 定向跑；复验 query_cards 12/13、query_gpu 7/10、none 12/12 |
 | 意图回归集（规则脸·selfcheck 门禁） | ✅ | test/selfcheck/intent-corpus.js＋l2.js | 106 条话术路由断言＋12 条注入红线全过；语料驱动规则表补词（拍到哪/拍完/没拍/到哪儿/待批/新卡/节点/立项等）与排序修正（progress 先于 newshow，裸「怎么样」双轨） |
+
+---
+
+## 7.5 遗留清单（2026-11-22 车道迁移时基线对照确认——HEAD 即有，非本批回归）
+
+- **test/selfcheck/api.js**：T3 起租户域 404 已修（夹具补 tenants/missing tid），现推进到 T11（89 过）；余 13 处失败＋1 处断点（music regenerate 后 `adoptedBad` 已修，next 为 T11 内 `indexOf` 断点）＝video 线行为漂移（music job 完成替换同场候选/预检口径等），待视频线认领对齐
+- **test/selfcheck/core.js**：62 过/5 失败（registry 段位表断言「nvfp4,int8」vs 种子 ["nvfp4"]、成本累加 120、billing 影子账、worker_type 断言、护栏累计 160）——多为套件预期落后于 worker 真引擎化
+- **test/selfcheck/rules.js**：11 过/1 失败（quant 段位）——同上
+- **workers 卫生白名单**已放行 adapters/prompts/core/llm/child_process/http（真引擎化后的既有依赖面）
 
 ---
 
@@ -225,6 +238,7 @@ ask 卡是长任务链的钩子。已通链路：
 5. **验收脚本不污染用户可见面（2026-11-22 用户批语「LLM 助手怎么老在自动消息」）**：在线双跑/压测/回归脚本谁建的会话谁删——跑完 `DELETE /api/l2/sessions/:id` 自清账（llm-intent.js 已内置）；客户端 l2Resume 会自动恢复最近会话，脚本留下的垃圾会话用户全部看得见。任何新增验收脚本必须带自清账，review 时查这一条。
 6. **LLM 工具广告面＝执行面（幻觉工具闸）**：`llmintent.LLM_TOOLS` 是单一来源——systemPrompt 只广告表内工具，`toIntent` 只认表内工具名。往表里加工具时两处自动同步（同一数组）；治理白名单（governance.WHITELIST）是更外层的兜底，两层互不替代。在线双跑实锤：「写一首诗」曾被幻觉成白名单内但未广告的 `runtime_spawn`。
 7. **批删/清账脚本必须先验范围再动手（2026-11-22 误删事故教训）**：本次清账脚本用错过滤参数（`episode_id`，接口实为驼峰 `episodeId`），拿到全集卡后批量删除，误删 4 张真实卡（已从备份精确恢复）。制度：任何批删脚本删除前必须断言列表全部命中目标域（逐条核 episodeId/域归属），命中不全宁可人工逐条；destructive 面（DELETE）优先走单条接口逐条删。备份链（state.json.bak-*）是最后防线，动 state 前必备份。
+8. **测试套件基线对照纪律（2026-11-22 车道迁移沉淀）**：改共享面（engine/store/workers/注册表）后跑全量 selfcheck 时，先用 `git worktree add` 起一个 HEAD 基线工作树跑同套件对照——分清「我的回归」与「基线遗留」（本次 core 5 失败/rules 1 失败/api 套件 T3 崩溃均为 HEAD 即有，未虚修）。基线遗留逐条记 §9 遗留清单，修比不修好但绝不糊弄绿。
 
 ### 8.1 双线文件分界协议（2026-11-22 用户裁决）
 
@@ -256,4 +270,5 @@ ask 卡是长任务链的钩子。已通链路：
 5. **验收**：①新增一张虚拟节点（纯数据）跑通生图；②停本机 LLM 不再影响任何走 DGX/默认节点的任务；③素材中心无集生图零提示自动出图；④代码全局 grep `5060|spark` 零命中（worker 文件名与历史账本除外）。
 - **归属**：engine/workers 视频线 in-flight（节点注册表已建一半）；本规格＝其完成线。助手线只消费路由结果（GPU_BUSY 面文案与 hint 已按此同步语义）。
 - **实现状态 v1 ✅（2026-11-22，经用户直接裁决在已提交的注册表之上实现）**：engine.enqueue 内聚 poolPick——候选序（集指定→发起人默认算力→云 API 已配→远端 comfy→本机）、gpu_gate 节点自动跳过找下家、tier:high 固定不漂移、全空才一句 POOL_EMPTY 收口（替代 14.4GB 长文案）；selfcheck pool 7/7＋llm 9/9（更新到池契约）；真机实证：LLM 占卡时素材中心无集生图 → job.lane=imgspark（DGX）→ done，零提示。车道名退役（img5060 等改能力名＋worker 改名）为遗留迁移项，不影响池语义。
+- **车道名能力化迁移 ✅（2026-11-22 当日完成，验收④达标）**：全量车道改名 img5060→`t2i.local`、imgspark→`t2i.remote`、vid5060→`t2v.local`、vidspark→`t2v.remote`、img_cloud→`t2i.cloud`；worker 文件改名 `worker.t2i.local.js` 等 5 个（引擎按 exports.lane 装载，文件名豁免 grep）；`cfg.comfySpark→comfyRemote`（env 外部契约 `THEATER_COMFY_SPARK*` 保留一行兼容读＝grep 唯一豁免）；state 注册表一次性数据迁移（lane 值＋endpoint 显示串＋spark_reuse_pool→remote_reuse_pool，落库即删）；type `img_spark→img_remote`；错误码 `NO_SPARK_INPUT_ART→NO_REMOTE_INPUT_ART`。真机：img_free → lane=t2i.remote → 远端 Comfy done（零提示自动出图）。grep `5060|spark` 全 src/server＋src/client 零命中。
 - **「假图冒充候选」根治 ✅（用户批语「DGX 几小时没人调用，生成出来都是假的」）**：根因＝imgspark 真跑分发不含 img_free → stub 占位图冒充候选（各记 20 分，DGX 零调用）。修复：①H3 条件化节点参考图输入为可选（官方语义零参考纯 t2i）→ 新模板 `h3-image-free.json`＋manifest 登记（sha16 过闸，裸测证据 prompt_id 399be88c）；②imgspark 增 img_free 真跑分支 runSparkImgFree（四层拼装提示词＋零参考 t2i）；③账本 worker_type 静态假标签「self-host-stub」改实际模式判定（账本不许撒谎）。真机实证：img_free → imgspark → H3 真出图 1.97MB（黄昏码头验图通过，meta kind=image-comfy-spark-free）。已知模型行为：中文提示词可能被 H3 画进图（验收文案带「验收」字样会渲染成标题字），素材线后续可加 negative 抑制。

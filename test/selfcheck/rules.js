@@ -96,13 +96,13 @@ t("langlint：sanitize 全映射为人话且净化后 lint 必 clean", () => {
 });
 
 /* ---------------- quant ---------------- */
-const sparkEntry = { id: "imgspark", model: "MiniMax-H3-Image", tiers: ["nvfp4", "int8", "MXFP8+FP8"], unavail: ["nvfp4", "int8"] };
-const stdEntry = { id: "vid5060", model: "LTX-2.5", tiers: ["nvfp4", "int8", "MXFP8+FP8"] };
-const ggufEntry = { id: "vid5060g", model: "LTX-2.5 GGUF", tiers: ["UD-Q4_K_XL"] };
+const remoteEntry = { id: "MiniMax-H3-Image", model: "MiniMax-H3-Image", tiers: ["nvfp4", "int8", "MXFP8+FP8"], unavail: ["nvfp4", "int8"] };
+const stdEntry = { id: "LTX-2.5", model: "LTX-2.5", tiers: ["nvfp4", "int8", "MXFP8+FP8"] };
+const ggufEntry = { id: "LTX-2.5-GGUF", model: "LTX-2.5 GGUF", tiers: ["UD-Q4_K_XL"] };
 
 t("quant：未发布档拦回＋复述硬规则", () => {
-  throwsQUANT(() => quant.decide(sparkEntry, "nvfp4"), ["权重未发布：核实通过后才能切", "nvfp4→int8→MXFP8+FP8"]);
-  throwsQUANT(() => quant.decide(sparkEntry, "int8"), ["权重未发布"]);
+  throwsQUANT(() => quant.decide(remoteEntry, "nvfp4"), ["权重未发布：核实通过后才能切", "nvfp4→int8→MXFP8+FP8"]);
+  throwsQUANT(() => quant.decide(remoteEntry, "int8"), ["权重未发布"]);
 });
 
 t("quant：兜底档需理由；带理由成功→audit_needed", () => {

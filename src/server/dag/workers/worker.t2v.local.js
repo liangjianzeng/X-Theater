@@ -1,6 +1,6 @@
 "use strict";
 /**
- * workers/video5060.js — 视频·5060 Ti（LTX-2.5 distilled GGUF UD-Q4_K_XL · W-B 无头 ComfyUI :8188）
+ * workers/worker.t2v.local.js — 视频·本机车道（LTX-2.5 distilled GGUF UD-Q4_K_XL · W-B 无头 ComfyUI :8188）
  * 双模式（ADR-001）：
  *  - comfy 模式（cfg.comfy.enabled）：LTX-2.5 两段蒸馏 I2V——首帧＝该镜分镜图（C2 payload.images 按 shotId 绑定的真图）；
  *    720×1280 5s@24fps，显存峰值 ~15.8G（96.8%），生成前强制 POST /free 卸载其它家族（显存互斥铁律）。
@@ -12,7 +12,7 @@ const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const prompts = require("../../prompts/index.js");
 
-const NAME = "vid5060";
+const NAME = "t2v.local";
 const ENGINE = "LTX-2.5 distilled GGUF UD-Q4_K_XL";
 const ENGINE_USER = "自部署·标准档";
 const TIER = "UD-Q4_K_XL";
@@ -204,7 +204,7 @@ async function freeComfy(ctx) {
   } catch (e) { /* 无 /free 或不可达：下游真错误会暴露 */ }
 }
 
-/** vid5060 车道拨号端点：注册表 lane→node 绑定 → 节点档案（旧部署回退 cfg.comfy 通道） */
+/** 本车道拨号端点：注册表 lane→node 绑定 → 节点档案（旧部署回退 cfg.comfy 通道） */
 function dialBase(ctx) {
   const c = (ctx && ctx.cfg) || {};
   if (typeof c.laneBase === "function") return String(c.laneBase(NAME) || "").replace(/\/+$/, "");
@@ -224,7 +224,7 @@ async function runComfy(ctx, job, p, seed, cents) {
   const hasNS = hasNativeSpeech(ctx, episodeId, shot);
   const r = await comfy.runTemplate(ctx, j, {
     tmplId: ref ? TMPL_I2V_REF : TMPL_I2V,
-    base: dialBase(ctx), // 本 lane 绑定节点的 Comfy 端点（显式传入，不随 img5060 绑定漂移）
+    base: dialBase(ctx), // 本 lane 绑定节点的 Comfy 端点（显式传入，不随 t2i 绑定漂移）
     params: Object.assign({
       SEED: numFrom(seed) % 4294967295,
       PROMPT: shotDesc(ctx, episodeId, shot),

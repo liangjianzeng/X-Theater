@@ -365,11 +365,11 @@ function advanceOnAccept(ctx, card, episode, operator) {
       derived.push({ kind: "card", card: r.card });
     }
   } else if (t === "C4") {
-    // H3 全家桶线（2026-11-21 用户裁决）：台词/歌声由 H3 视频音画直出（vidspark FL2VA/R2VA），
+    // H3 全家桶线（2026-11-21 用户裁决）：台词/歌声由 H3 视频音画直出（t2v.remote FL2VA/R2VA），
     // 不派独立 TTS/配乐/预览混流——样片即开机后的真视频。直接进 C5 预算确认。
-    // 旧链（stub 时代：voice/music/compose preview）仅在 Spark 通道关闭时保留。
-    const sparkOn = !!(ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled);
-    if (sparkOn) {
+    // 旧链（stub 时代：voice/music/compose preview）仅在远端通道关闭时保留。
+    const remoteOn = !!(ctx.cfg && ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.enabled);
+    if (remoteOn) {
       const r = upsertCard(ctx, {
         episodeId: epId,
         type: "C5",

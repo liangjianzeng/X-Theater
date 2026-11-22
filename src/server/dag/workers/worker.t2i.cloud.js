@@ -1,10 +1,10 @@
 "use strict";
 /**
- * dag/workers/img_cloud.js — 付费云 API 图像车道（2026-11-22 用户要求：引擎目标全可配）
+ * dag/workers/worker.t2i.cloud.js — 付费云 API 图像车道（2026-11-22 用户要求：引擎目标全可配）
  *
  * 目标类型 kind:"cloud" 的算力节点（运维台「算力节点」登记）＝非 ComfyUI 的付费 API：
  *   node.api = { endpoint, key, model, price_cents }  —— OpenAI 兼容 /v1/images/generations 适配。
- * 路由全走既有机制：引擎注册表把 img_cloud 车道改绑到云节点（POST /api/admin/registry/node），
+ * 路由全走既有机制：引擎注册表把 t2i.cloud 车道改绑到云节点（POST /api/admin/registry/node），
  * 剧集驱动/用户默认算力指到云节点 → 引擎 laneBoundTo(family img) 自动落到本车道。
  * 计费诚实：cents＝node.api.price_cents（每张价，运维自填）；0＝不计费（影子账本跳过）。
  * 密钥只在服务端 state（与 llm bat 路径同信任级），不回显、不进审计/账本。
@@ -13,7 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const NAME = "img_cloud";
+const NAME = "t2i.cloud";
 const ENGINE_USER = "付费云 API"; // 语言表纪律：用户面不带型号
 const TIMEOUT_MS = 120 * 1000;
 

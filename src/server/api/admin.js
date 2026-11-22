@@ -424,7 +424,7 @@ function register(router, ctx) {
       requireOps(auth);
       const st = store.get();
       const seeds = [
-        { kind: "queue_stall", msg: "演练：img5060 lane 队列疑似卡死" },
+        { kind: "queue_stall", msg: "演练：t2i.local lane 队列疑似卡死" },
         { kind: "budget_warn", msg: "演练：预算护栏触发（>budget×1.2）" },
         { kind: "engine_unavail", msg: "演练：music 引擎 W-M :8190 不可达" }
       ];

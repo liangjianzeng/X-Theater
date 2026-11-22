@@ -1,6 +1,6 @@
 "use strict";
 /**
- * workers/music.js — 配乐·5060 Ti（ACE-Step 1.5 · W-M :8190）stub
+ * workers/music.js — 配乐·本机 ACE-Step 1.5（W-M :8190）stub
  * 契约 §4：music job 产 3 候选（30–60s 占位 mp3 stub）写回 job.result.candidates；
  * 标题从 mood 词库确定性取名：离别→码头暮色系／释然→晚风系／压抑→汽笛系；
  * 三轮标题＝[主名, 主名+" · 变奏", 主名+"（未许可 · 备选）"]——第 3 条固定含「未许可」→
@@ -71,27 +71,10 @@ async function freeComfy(ctx) {
   } catch (e) { /* 卸载失败不阻断主流程 */ }
 }
 
-async function runReal(ctx, job, p, mood) {
-  await freeComfy(ctx);
-  // 真模式：W-M ACE-Step :8190（MIT；惰性加载，响应即释放显存）。产物 wav → var/out + 曲库候选结构。
+/** POST <url>/music（300s 超时；非 200 抛 MUSIC_* 错误码，段2 失败由调用方诚实降级） */
+async function postMusic(url, payload) {
   const http = require("http");
-  const url = String((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL || "");
-  if (!url) return null;
-  // 曲风 tags（2026-11-22 提示词体系升级，方案 §5.7）：mood→tags 词典＋风格包 music_tags 覆盖，
-  // 作为可选字段透传（ACE-Step 支持 tags+lyrics 双通道；旧服务端忽略该字段无害）。
-  // 素材中心专业配置（2026-11-22 下午）：API 层已组装 final tags；lyrics（结构标记/歌词）、
-  // caption（自然语言）、instrumental 全通道透传——旧服务端忽略未知字段无害。
-  const pkg = prompts.style.resolve(ctx, p.episodeId || job.episodeId || "");
-  const sec = Math.max(15, Math.min(180, Number(p.sec) || 45)) | 0;
-  const body = JSON.stringify({
-    mood, seconds: sec,
-    seed: numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295,
-    tags: String(p.tags || "").trim() || prompts.musicTags(mood, pkg),
-    bpm: Number(p.bpm) || undefined,
-    lyrics: String(p.lyrics || "") || undefined,
-    prompt: String(p.caption || "") || undefined,
-    instrumental: !!p.instrumental || undefined
-  });
+  const body = JSON.stringify(payload);
   const r = await new Promise((resolve, reject) => {
     const rq = http.request(url + "/music", { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) }, timeout: 300000 }, (rs) => {
       let s = ""; rs.on("data", (c) => s += c); rs.on("end", () => { try { resolve({ st: rs.statusCode, b: JSON.parse(s || "{}") }); } catch (e) { reject(Object.assign(new Error("W-M 响应异常"), { code: "MUSIC_BAD" })); } });
@@ -101,24 +84,100 @@ async function runReal(ctx, job, p, mood) {
     rq.write(body); rq.end();
   });
   if (r.st !== 200) throw Object.assign(new Error("W-M 生成失败 HTTP " + r.st + ": " + JSON.stringify(r.b).slice(0, 200)), { code: "MUSIC_HTTP" });
-  const info = r.b;
+  return r.b;
+}
+
+/** 声纹解析（2026-11-22）：voiceId → asset_lib.audio.voices 克隆条目（kind=clone 且 ref 在登记）。
+ * ref 为 "var/assets/..." 相对路径——THEATER_VAR 部署可变，varRoot 必须从 cfg.outDir 反推
+ * （同 library.js varRoot 口径，不能 path.resolve 到进程 cwd）；样本缺失/非克隆返回 null
+ * （回退标准档，engine_user 如实标「标准档」，不冒充克隆）。 */
+function resolveVoice(ctx, voiceId) {
+  if (!voiceId) return null;
+  const st = (ctx && ctx.store && typeof ctx.store.get === "function" && ctx.store.get()) || {};
+  const voices = (((st.asset_lib || {}).audio || {}).voices) || [];
+  const vo = voices.find((x) => x && x.id === voiceId);
+  if (!vo || vo.kind !== "clone" || !vo.ref) return null;
+  const ref = String(vo.ref).replace(/\\/g, "/").replace(/^\/+/, "");
+  const outDir = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(process.cwd(), "var", "out"));
+  const varRoot = path.dirname(outDir);
+  const ref_abs = path.isAbsolute(ref) ? ref
+    : (ref.indexOf("var/") === 0 ? path.join(varRoot, ref.slice("var/".length)) : path.resolve(ref));
+  try { if (!fs.existsSync(ref_abs)) return null; } catch (e) { return null; }
+  return { id: vo.id, name: vo.name || "", ref_abs };
+}
+
+async function runReal(ctx, job, p, mood) {
+  await freeComfy(ctx);
+  // 真模式：W-M ACE-Step :8190（MIT；惰性加载，响应即释放显存）。产物 wav → var/out + 曲库候选结构。
+  const url = String((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL || "");
+  if (!url) return null;
+  // 曲风 tags（2026-11-22 提示词体系升级，方案 §5.7）：mood→tags 词典＋风格包 music_tags 覆盖，
+  // 作为可选字段透传（ACE-Step 支持 tags+lyrics 双通道；旧服务端忽略该字段无害）。
+  // 素材中心专业配置（2026-11-22 下午）：API 层已组装 final tags；lyrics（结构标记/歌词）、
+  // caption（自然语言）、instrumental 全通道透传——旧服务端忽略未知字段无害。
+  const pkg = prompts.style.resolve(ctx, p.episodeId || job.episodeId || "");
+  const sec = Math.max(15, Math.min(180, Number(p.sec) || 45)) | 0;
+  const tags = String(p.tags || "").trim() || prompts.musicTags(mood, pkg);
+  const lyrics = String(p.lyrics || "") || undefined;
+  const caption = String(p.caption || "") || undefined;
+  const bpm = Number(p.bpm) || undefined;
+  const seed = numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295;
+
+  // 声纹克隆（2026-11-22）：完整档两段——① text2music 完整歌曲（用户歌词/tags/bpm/时长）→
+  // ② cover 变声（src_audio=①产物 + ref_audio=声纹样本 + cover_strength，模型锁①时长）；
+  // 快档单段——text2music+ref_audio（风格迁移 0.2，音色较松）。声纹模式强制人声。
+  const voice = resolveVoice(ctx, p.voiceId);
+  const cloneMode = voice ? (p.cloneMode === "fast" ? "fast" : "full") : null;
+  let info, engineUser = "自部署·标准档", cents = 12;
+  const cloneMeta = {};
+  if (voice && cloneMode === "fast") {
+    engineUser = "自部署·声纹克隆档（快档·风格迁移）";
+    Object.assign(cloneMeta, { voiceId: voice.id, voice_name: voice.name, clone: { mode: "fast", strength: 0.2 } });
+    info = await postMusic(url, {
+      mood, seconds: sec, seed, tags, bpm, lyrics, prompt: caption, instrumental: false,
+      ref_audio: voice.ref_abs, cover_strength: 0.2
+    });
+  } else if (voice) {
+    engineUser = "自部署·声纹克隆档（两段）";
+    cents = 24; // 两段 GPU 生成
+    const strength = Math.max(0, Math.min(1, Number(p.coverStrength) || 0.7));
+    Object.assign(cloneMeta, { voiceId: voice.id, voice_name: voice.name, clone: { mode: "full", strength } });
+    const guide = await postMusic(url, { mood, seconds: sec, seed, tags, bpm, lyrics, prompt: caption, instrumental: false });
+    try {
+      info = await postMusic(url, {
+        mood, seconds: sec, seed: (seed + 1) % 4294967295, tags, bpm, lyrics, prompt: caption, instrumental: false,
+        src_audio: guide.file, ref_audio: voice.ref_abs, cover_strength: strength
+      });
+      cloneMeta.clone.guide_seconds = guide.seconds;
+    } catch (e) {
+      // 诚实降级：cover 段失败 → 交段1 完整歌曲并如实标注，不冒充克隆成功、不丢候选
+      info = guide;
+      cloneMeta.clone.stage2_failed = true;
+      cloneMeta.clone.stage2_error = String((e && e.message) || e).slice(0, 200);
+    }
+  } else {
+    info = await postMusic(url, { mood, seconds: sec, seed, tags, bpm, lyrics, prompt: caption, instrumental: !!p.instrumental || undefined });
+  }
+
   // wav 拷进 var/out（/var/out 静态面可播放）
   const wav = fs.readFileSync(info.file);
-  const seed = hash12(ctx, { lane: NAME, jobId: job.id, mood, k: "real" });
-  const id = "mus_" + sub(seed, 0, 8);
+  const seed2 = hash12(ctx, { lane: NAME, jobId: job.id, mood, k: "real" });
+  const id = "mus_" + sub(seed2, 0, 8);
   const fileName = "music_" + id + ".wav";
   const abs = writeOut(ctx, fileName, wav);
   const meta = {
-    kind: "music-real", lane: NAME, engine: ENGINE + "（int8 权重档）", engine_user: "自部署·标准档",
+    kind: "music-real", lane: NAME, engine: ENGINE + "（int8 权重档）", engine_user: engineUser,
     id, title: mood + " · " + Math.round(info.seconds) + "s", mood, sec: info.seconds,
     license: { model: "MIT", usage: "ok" }, sceneId: p.sceneId || null, asset_type: p.type || "bgm", tags: p.tags || "",
-    episodeId: p.episodeId || job.episodeId || null, cents: 12, seed: String(info.seed || ""),
-    gen_seconds: info.gen_seconds, vram_peak_mb: info.vram_peak_mb, source: info.file
+    episodeId: p.episodeId || job.episodeId || null, cents, seed: String(info.seed || ""),
+    gen_seconds: info.gen_seconds, vram_peak_mb: info.vram_peak_mb, source: info.file,
+    task_type: info.task_type || null, ...cloneMeta
   };
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   return {
     id, title: meta.title, mood, sec: info.seconds, license: { model: "MIT", usage: "ok" },
-    engine: "自部署·标准档", shadow_cents: 12, sceneId: p.sceneId || null, asset_type: p.type || "bgm", tags: p.tags || "",
+    engine: engineUser, engine_user: engineUser, shadow_cents: cents, sceneId: p.sceneId || null,
+    asset_type: p.type || "bgm", tags: p.tags || "", voiceId: p.voiceId || null,
     art: "var/out/" + fileName, art_abs: abs
   };
 }
@@ -134,9 +193,9 @@ async function run(job, ctx) {
   if ((ctx.cfg && ctx.cfg.music && ctx.cfg.music.url) || process.env.THEATER_MUSIC_URL) {
     const cand = await runReal(ctx, j, p, mood);
     if (cand) {
-      const bag2 = { ok: true, cents: 12, count: 1, mood, candidates: [cand], engine: "自部署·标准档", cost_cents: 12, meta: { kind: "music-real" } };
+      const bag2 = { ok: true, cents: cand.shadow_cents, count: 1, mood, candidates: [cand], engine: cand.engine, cost_cents: cand.shadow_cents, meta: { kind: "music-real" } };
       j.result = bag2; j.art = bag2;
-      return { ok: true, cents: 12, art: cand.art, meta: bag2.meta };
+      return { ok: true, cents: cand.shadow_cents, art: cand.art, meta: bag2.meta };
     }
   }
   const candidates = [];
@@ -168,6 +227,8 @@ async function run(job, ctx) {
       asset_type: p.type || "bgm",
       tags: p.tags || "",
       episodeId: p.episodeId || j.episodeId || null,
+      voiceId: p.voiceId || null,
+      cloneMode: p.voiceId ? (p.cloneMode === "fast" ? "fast" : "full") : null,
       cents,
       seed
     };
@@ -185,6 +246,7 @@ async function run(job, ctx) {
       sceneId: p.sceneId || null,
       asset_type: p.type || "bgm",
       tags: p.tags || "",
+      voiceId: p.voiceId || null,
       art,
       art_abs: abs
     });

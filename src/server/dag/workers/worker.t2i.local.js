@@ -1,6 +1,6 @@
 "use strict";
 /**
- * workers/img5060.js — 生图·5060 Ti（qwen-image-2.1-turbo-Q5_K_M · W-B 无头 ComfyUI :8188）
+ * workers/worker.t2i.local.js — 生图·本机车道（qwen-image-2.1-turbo-Q5_K_M · W-B 无头 ComfyUI :8188）
  * 双模式（ADR-001）：
  *  - comfy 模式（cfg.comfy.enabled）：固化模板真出图；三类任务——
  *      c1plan     → 剧本封面图＋plan.scenes（剧本结构化分镜表，一期不做 LLM 解析）
@@ -14,7 +14,7 @@ const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const prompts = require("../../prompts/index.js");
 
-const NAME = "img5060";
+const NAME = "t2i.local";
 const ENGINE = "qwen-image-2.1-turbo-Q5_K_M";
 const ENGINE_USER = "自部署·标准档";
 const WEIGHTS = "Q5_K_M";

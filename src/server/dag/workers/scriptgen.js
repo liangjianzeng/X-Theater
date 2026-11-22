@@ -124,7 +124,7 @@ function buildUsr(p, brief, kind, tpl, ctx) {
   return usr;
 }
 
-/* 结果必须挂到 job 上（与 img5060 bag() 同纪律）：bus 广播与 cards.js 只读 job.result/job.art */
+/* 结果必须挂到 job 上（与 t2i.local bag() 同纪律）：bus 广播与 cards.js 只读 job.result/job.art */
 function attach(job, bag) {
   job.result = bag;
   job.art = bag;

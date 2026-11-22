@@ -3,7 +3,7 @@
  * adapters/h3ir.js — MiniMax H3-Context-IR 本地复刻（ADR-001 §75-76 锁定项）
  *
  * 官方 Context-IR 是托管系统未开源；本模块按官方 prompting guide（仓库
- * skills/h3-prompt-writing/references/{base-en,ref-en}.txt，留档 runtime/spark-evidence/refs/h3-skill/）
+ * skills/h3-prompt-writing/references/{base-en,ref-en}.txt，留档 runtime/remote-evidence/refs/h3-skill/）
  * 做**规则化拼装**，输出六段式/三字段 IR。多行 prompt 安全（调用方为对象级参数替换）。
  *
  * 双语言策略：IR 骨架与固定段为英文（官方要求），镜头/人设描述保留中文原文——H3 为双语模型，
@@ -177,7 +177,7 @@ function buildRef2VA(opts) {
 }
 
 /**
- * 可选 LLM 全英文重写（OpenAI 兼容 /v1/chat/completions，复用 Spark 侧 llama-server）。
+ * 可选 LLM 全英文重写（OpenAI 兼容 /v1/chat/completions，复用远端侧 llama-server）。
  * cfg.h3ir.llmUrl 为空（默认）→ 原样返回（规则拼装已可用）；
  * 任何错误（不可达/超时/格式）→ 原样返回，绝不静默吞错误：返回值带 {ir, llm_used}。
  */

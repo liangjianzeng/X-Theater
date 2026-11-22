@@ -161,7 +161,7 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
       const d = await probeMedia(parts[i]);
       cum += (d && d.sec) || 0;
     }
-    // 剧本扁平镜序（与 img5060 分镜绑定同一口径）：场序 si、场内镜序 i → shot.seq=(si+1)*100+i+1
+    // 剧本扁平镜序（与 t2i.local 分镜绑定同一口径）：场序 si、场内镜序 i → shot.seq=(si+1)*100+i+1
     const flat = [];
     (epScript && epScript.scenes || []).forEach((sc, si) => (sc.shots || []).forEach((sh, i) => flat.push({ si, i, dialogue: sh.dialogue || null })));
     const usedArts = {};

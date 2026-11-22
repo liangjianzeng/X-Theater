@@ -138,7 +138,7 @@ function buildCastInitPrompt(opts) {
   ].filter(Boolean).join(" ");
 }
 
-/** casting 定妆照（双档通用）：构图指令＋（Spark 档）身份参考句 */
+/** casting 定妆照（双档通用）：构图指令＋（远端档）身份参考句 */
 function buildCastingPrompt(opts) {
   const o = opts || {};
   return [

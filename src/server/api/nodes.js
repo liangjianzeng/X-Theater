@@ -18,7 +18,7 @@ const http = require("http");
    kind: "comfy"＝ComfyUI 渲染机（本机/远程）；"cloud"＝付费云 API（非 ComfyUI，api.* 档案） */
 const SEED_NODES = {
   local: {
-    id: "local", label: "本机 5060 Ti", kind: "comfy", gpu_gate: true,
+    id: "local", label: "本机渲染节点", kind: "comfy", gpu_gate: true,
     comfy: { base: "http://127.0.0.1:8188" },
     llm: { base: "http://127.0.0.1:8090", model: "Huihui35B:vision", bat: "E:/MyLLM/8090_huihui35b_q4k_cpu19.bat" }
   },
@@ -187,7 +187,7 @@ function register(router, ctx) {
       audit(auth, "node_add", id, { label, kind, comfy_base: base || null, gpu_gate: !!b.gpu_gate, cloud_endpoint: kind === "cloud" ? api.endpoint : null });
       try { ctx.bus.publish("nodes", { event: "node_add", node: id }); } catch (e) { /* SSE 未就绪 */ }
       const note = kind === "cloud"
-        ? "云 API 目标「" + label + "」已登记——下一步去「引擎段位」登记一个 img_cloud 引擎并改绑到本节点，再把剧集驱动/用户默认算力指过来"
+        ? "云 API 目标「" + label + "」已登记——下一步去「引擎段位」登记一个 t2i.cloud 引擎并改绑到本节点，再把剧集驱动/用户默认算力指过来"
         : "节点「" + label + "」已登记——渲染端点留空时先探测再补；引擎绑定去「引擎段位」改";
       return router.json(res, 201, { node: Object.assign({}, nodes[id], { api: Object.assign({}, api, { key: undefined, has_key: !!api.key }) }), note });
     },

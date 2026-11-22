@@ -17,7 +17,7 @@ function section(name) { console.log("\n== " + name + " =="); }
 /* ---------- 引擎夹具：stub workers＋注册表状态 ---------- */
 function makeEngine(opts) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-workers-"));
-  ["img5060", "imgspark", "vid5060", "vidspark"].forEach((lane) => {
+  ["t2i.local", "t2i.remote", "t2v.local", "t2v.remote"].forEach((lane) => {
     fs.writeFileSync(path.join(tmp, lane + ".js"),
       "exports.lane=" + JSON.stringify(lane) + ";exports.name='stub';exports.run=function(ctx,job,done){done();};");
   });
@@ -49,30 +49,30 @@ function makeEngine(opts) {
 }
 
 function run() {
-  const BIND_BOTH = { r1: { lane: "img5060", node: "local", quant: "std" }, r2: { lane: "imgspark", node: "dgx", quant: "std" } };
+  const BIND_BOTH = { r1: { lane: "t2i.local", node: "local", quant: "std" }, r2: { lane: "t2i.remote", node: "dgx", quant: "std" } };
 
   section("池改道：LLM 占卡（本机被闸）→ img_free 自动落 DGX 车道");
   {
     const { engine, tmp } = makeEngine({ registry: BIND_BOTH, blocked: true, userDriver: "dgx" });
     const job = engine.enqueue("img_free", { desc: "测试图", projectId: "p1" }, { initiated_by: "u1", free: true });
-    ok(job.lane === "imgspark", "img_free 无集任务 → 用户默认算力 DGX（imgspark），不再撞本机闸");
+    ok(job.lane === "t2i.remote", "img_free 无集任务 → 用户默认算力 DGX（t2i.remote），不再撞本机闸");
     const job2 = engine.enqueue("img_free", { desc: "甲乙丙", projectId: "p1" }, { initiated_by: "u2", free: true }); // 无默认算力 → 远端优先于本机
-    ok(job2.lane === "imgspark", "无默认算力 → 远端 comfy 优先于本机");
+    ok(job2.lane === "t2i.remote", "无默认算力 → 远端 comfy 优先于本机");
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
   section("无闸回落：LLM 不占卡 → 本机可用（排在远端之后，但远端被删时回落）");
   {
-    const regLocalOnly = { r1: { lane: "img5060", node: "local", quant: "std" } }; // dgx 未绑 img 族
+    const regLocalOnly = { r1: { lane: "t2i.local", node: "local", quant: "std" } }; // dgx 未绑 img 族
     const { engine, tmp } = makeEngine({ registry: regLocalOnly, blocked: false });
     const job = engine.enqueue("img_free", { desc: "x", projectId: "p1" }, { initiated_by: "u2", free: true });
-    ok(job.lane === "img5060", "唯一绑定＝本机 → 回落本机车道");
+    ok(job.lane === "t2i.local", "唯一绑定＝本机 → 回落本机车道");
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
   section("全部不可用 → POOL_EMPTY 一句收口（不点名硬件）");
   {
-    const regLocalOnly = { r1: { lane: "img5060", node: "local", quant: "std" } };
+    const regLocalOnly = { r1: { lane: "t2i.local", node: "local", quant: "std" } };
     const { engine, tmp } = makeEngine({ registry: regLocalOnly, blocked: true });
     let threw = null;
     try { engine.enqueue("img_free", { desc: "x", projectId: "p1" }, { initiated_by: "u2", free: true }); }
@@ -83,7 +83,7 @@ function run() {
 
   section("显式集节点未绑引擎 → NODE_NO_LANE 引导改绑");
   {
-    const regLocalOnly = { r1: { lane: "img5060", node: "local", quant: "std" } };
+    const regLocalOnly = { r1: { lane: "t2i.local", node: "local", quant: "std" } };
     const { engine, tmp } = makeEngine({ registry: regLocalOnly, blocked: true, epDriver: "dgx" });
     let threw = null;
     try { engine.enqueue("img_free", { desc: "x", projectId: "p1" }, { episodeId: "e1", initiated_by: "u1", free: true }); }
@@ -96,16 +96,16 @@ function run() {
   {
     const { engine, tmp } = makeEngine({ registry: BIND_BOTH, blocked: true, epDriver: "local" });
     const job = engine.enqueue("casting", { projectId: "p1" }, { episodeId: "e1", initiated_by: "u1", tier: "high", free: true });
-    ok(job.lane === "imgspark", "tier:high → imgspark 固定（不走池）");
+    ok(job.lane === "t2i.remote", "tier:high → t2i.remote 固定（不走池）");
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
   section("video 族同池语义");
   {
-    const regV = { r1: { lane: "vid5060", node: "local", quant: "std" }, r2: { lane: "vidspark", node: "dgx", quant: "std" } };
+    const regV = { r1: { lane: "t2v.local", node: "local", quant: "std" }, r2: { lane: "t2v.remote", node: "dgx", quant: "std" } };
     const { engine, tmp } = makeEngine({ registry: regV, blocked: true, userDriver: "dgx" });
     const job = engine.enqueue("video", { shotId: "sh1", sec: 5, projectId: "p1" }, { episodeId: "e1", initiated_by: "u1", free: true });
-    ok(job.lane === "vidspark", "video LLM 占卡 → vidspark（DGX）");
+    ok(job.lane === "t2v.remote", "video LLM 占卡 → t2v.remote（DGX）");
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 

@@ -131,7 +131,7 @@ async function unloadIfSwitched(base, tmplId, entry) {
 }
 
 /**
- * 内存守卫（Spark 统一内存纪律）：ram_free 低于阈值（GB）才 /free，平时常驻。
+ * 内存守卫（远端统一内存纪律）：ram_free 低于阈值（GB）才 /free，平时常驻。
  * 返回 {freed:bool, ram_free_gb}
  */
 async function ensureFree(base, minFreeGB) {
@@ -172,7 +172,7 @@ async function uploadAsset(base, bytes, filename) {
 
 /**
  * 主入口。cfg.comfy = { enabled:true, base:"http://127.0.0.1:8188" }
- * spec.base 可显式指定端点（Spark 通道），缺省回退 cfg.comfy.base。
+ * spec.base 可显式指定端点（远端通道），缺省回退 cfg.comfy.base。
  */
 async function runTemplate(ctx, job, spec) {
   const cfg = (ctx && ctx.cfg && ctx.cfg.comfy) || {};

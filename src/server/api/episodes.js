@@ -11,7 +11,7 @@ const DEFAULT_BUDGET_CENTS = 5000;
 const Tenants = require("../core/tenants.js");
 
 /** 建集算力路由（2026-11-22 用户级路由）：请求显式节点 > 用户默认算力 > 首个登记节点。
- *  节点全部来自 state.nodes 注册表——离开 5060 Ti 也能活，云 API 目标同样落此路由。 */
+ *  节点全部来自 state.nodes 注册表——离开任何一台机器也能活，云 API 目标同样落此路由。 */
 function routeDriver(st, auth, want) {
   const nodes = st.nodes || {};
   const pick = (id) => (id && nodes[id] ? id : null);
@@ -148,7 +148,7 @@ function register(router, ctx) {
       const job = engine.enqueue(
         "c1plan",
         { episodeId: ep.id, title: ep.title, brief: ep.brief, kind },
-        // Spark 通道启用 → c1plan 走 imgspark（H3-Image 海报，全套 H3）
+        // 远端通道启用 → c1plan 走 t2i.remote（H3-Image 海报，全套 H3）
         { episodeId: ep.id, initiated_by: "user" }
       );
       audit(auth, "episode_create", ep.id, { job_id: job && job.id, kind });

@@ -141,12 +141,13 @@ function createSeed() {
     ],
     alerts: [],
     l2_sessions: {},
+    tenants: { tid_default: { id: "tid_default", name: "默认工作台", owner_uid: "u2", members: { u1: "member", u2: "owner" }, created_at: 1 } },
     settings: {
       registry: {
-        img5060: { tier: "MXFP8+FP8", endpoint: "http://w-b:8188", model: "qwen-image-2.1-turbo-Q5_K_M" },
-        imgspark: { tier: "MXFP8+FP8", unavail: ["nvfp4", "int8"], model: "MiniMax-H3-Image" },
-        vid5060: { tier: "UD-Q4_K_XL", model: "LTX-2.5" },
-        vidspark: { tier: "nvfp4", model: "FastH3" },
+        "qwen-image-2.1-turbo-Q5_K_M": { tier: "MXFP8+FP8", endpoint: "http://w-b:8188", model: "qwen-image-2.1-turbo-Q5_K_M" },
+        "MiniMax-H3-Image": { tier: "MXFP8+FP8", unavail: ["nvfp4", "int8"], model: "MiniMax-H3-Image" },
+        "LTX-2.5": { tier: "UD-Q4_K_XL", model: "LTX-2.5" },
+        "FastH3": { tier: "nvfp4", model: "FastH3" },
         music: { tier: "fp16", endpoint: "http://w-m:8190", model: "ACE-Step 1.5" },
         tts: { tier: "fp16", model: "CosyVoice2" },
         compose: { tier: "cpu", model: "FFmpeg-stub" },
@@ -540,8 +541,8 @@ function invoke(method, url, body, auth) {
   require(path.join(API_DIR, n)).register(router, ctx);
 });
 
-const OPS = { uid: "u1", id: "u1", role: "ops" };
-const CREATOR = { uid: "u2", id: "u2", role: "creator" };
+const OPS = { uid: "u1", id: "u1", role: "ops", tid: "tid_default" };
+const CREATOR = { uid: "u2", id: "u2", role: "creator", tid: "tid_default" };
 
 /* ============================ 工具 ============================ */
 function cardsFor(episodeId, status) {
@@ -751,7 +752,9 @@ function auditRows() {
   r = invoke("POST", "/api/music/candidates", { sceneId: sceneA, mood: "释然" }, OPS);
   check("POST /music/candidates → 202 job(music)", r.status === 202 && r.body.job.type === "music");
   emitAll(jobsFor(EP, "music", "queued"));
-  const adoptedBad = state.music_lib.filter((m) => m.sceneId === sceneA)[0];
+  /* 2026-11-22 行为对齐：music job 完成＝同场候选替换并解绑旧库曲（C9 重出语义），sceneA 库曲已随 job 清掉——
+     regenerate 用任意库内曲验证端点本身，adopt 再把 ok 曲挂回 sceneA */
+  const adoptedBad = state.music_lib[0];
   r = invoke("POST", "/api/music/" + adoptedBad.id + "/regenerate", {}, OPS);
   check("POST /music/:id/regenerate（库内曲）→ 重 enqueue", r.status === 202 && r.body.job.type === "music");
   emitAll(jobsFor(EP, "music", "queued"));
@@ -794,26 +797,26 @@ function auditRows() {
   r = invoke("GET", "/api/admin/registry", null, CREATOR);
   check("registry 非 ops → 403", r.status === 403);
   r = invoke("GET", "/api/admin/registry", null, OPS);
-  check("GET /admin/registry → 200＋豁免渲染", r.status === 200 && r.body.registry.imgspark.unavail.join(",") === "nvfp4,int8" && r.body.langlint_exempt === true);
-  r = invoke("POST", "/api/admin/registry/quant", { engineId: "imgspark", tier: "nvfp4" }, OPS);
+  check("GET /admin/registry → 200＋豁免渲染", r.status === 200 && r.body.registry["MiniMax-H3-Image"].unavail.join(",") === "nvfp4,int8" && r.body.langlint_exempt === true);
+  r = invoke("POST", "/api/admin/registry/quant", { engineId: "MiniMax-H3-Image", tier: "nvfp4" }, OPS);
   check("quant 未发布档(unavail) → 409 QUANT_RULE 复述", r.status === 409 && r.body.error.code === "QUANT_RULE" && String(r.body.error.message).indexOf("nvfp4") >= 0, r);
-  r = invoke("POST", "/api/admin/registry/quant", { engineId: "imgspark", tier: "MXFP8+FP8" }, OPS);
+  r = invoke("POST", "/api/admin/registry/quant", { engineId: "MiniMax-H3-Image", tier: "MXFP8+FP8" }, OPS);
   check("quant 兜底档缺 reason → 409", r.status === 409 && r.body.error.code === "QUANT_RULE", r);
-  r = invoke("POST", "/api/admin/registry/quant", { engineId: "imgspark", tier: "MXFP8+FP8", reason: "nvfp4/int8 未发布" }, OPS);
+  r = invoke("POST", "/api/admin/registry/quant", { engineId: "MiniMax-H3-Image", tier: "MXFP8+FP8", reason: "nvfp4/int8 未发布" }, OPS);
   check("quant 兜底档带 reason → 200＋audit_needed＋Q- 号", r.status === 200 && r.body.audit_needed === true && /^Q-/.test(r.body.audit_id), r);
   check("quant_fallback 落 audit 账", auditRows().some((a) => a.action === "quant_fallback" && /^Q-/.test(a.audit_id || "")));
-  check("registry 已应用 tier", state.settings.registry.imgspark.tier === "MXFP8+FP8");
+  check("registry 已应用 tier", state.settings.registry["MiniMax-H3-Image"].tier === "MXFP8+FP8");
   r = invoke("POST", "/api/admin/registry/quant", { engineId: "nope", tier: "nvfp4" }, OPS);
   check("quant 未知引擎 → 404", r.status === 404, r);
   r = invoke("POST", "/api/admin/registry/endpoint", { engineId: "music", endpoint: "http://w-m:8191" }, OPS);
   check("endpoint 变更无 confirmed → 428 CONFIRM_REQ", r.status === 428 && r.body.error.code === "CONFIRM_REQ", r);
   r = invoke("POST", "/api/admin/registry/endpoint", { engineId: "music", endpoint: "http://w-m:8191", confirmed: true }, OPS);
   check("endpoint confirmed → 200 已更新", r.status === 200 && state.settings.registry.music.endpoint === "http://w-m:8191");
-  r = invoke("POST", "/api/admin/registry/model", { engineId: "vid5060", model: "LTX-2.5-rc2" }, OPS);
+  r = invoke("POST", "/api/admin/registry/model", { engineId: "LTX-2.5", model: "LTX-2.5-rc2" }, OPS);
   check("model 变更无 confirmed → 428", r.status === 428);
-  r = invoke("POST", "/api/admin/registry/model", { engineId: "vid5060", model: "LTX-2.5-rc2", confirmed: true }, OPS);
-  check("model confirmed → 200＋audit", r.status === 200 && state.settings.registry.vid5060.model === "LTX-2.5-rc2" && auditRows().some((a) => a.action === "model_change"));
-  r = invoke("GET", "/api/admin/registry/vid5060", null, OPS);
+  r = invoke("POST", "/api/admin/registry/model", { engineId: "LTX-2.5", model: "LTX-2.5-rc2", confirmed: true }, OPS);
+  check("model confirmed → 200＋audit", r.status === 200 && state.settings.registry["LTX-2.5"].model === "LTX-2.5-rc2" && auditRows().some((a) => a.action === "model_change"));
+  r = invoke("GET", "/api/admin/registry/LTX-2.5", null, OPS);
   check("GET /admin/registry/:engineId → 单引擎", r.status === 200 && r.body.entry.model === "LTX-2.5-rc2");
   const alertsBefore = state.alerts.length;
   r = invoke("POST", "/api/admin/alerts/simulate", {}, OPS);

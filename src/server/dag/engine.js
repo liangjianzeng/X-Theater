@@ -15,29 +15,29 @@ const path = require("path");
 const util = require("../core/util");
 const { DEFAULT_LANE_NODE, llmHostNode } = require("../core/store");
 const llmMod = require("../llm/llm");
-// 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
+// 本机 Comfy 车道（t2i.local 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
 const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free"];
 function llmBlocked(cfg) {
   if (cfg && cfg.llmBlockedOverride != null) return !!cfg.llmBlockedOverride; // 自检确定性钩子
   try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
 }
 
-const ALL_LANES = ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate", "aireview", "scriptgen"];
+const ALL_LANES = ["t2i.local", "t2i.remote", "t2v.local", "t2v.remote", "music", "tts", "compose", "moderate", "aireview", "scriptgen"];
 const TYPE_LANE = {
   // 一句话/小说→结构化剧本（2026-11-21 补全）：纯 LLM 车道，不占显存、不受 GPU/LLM 互斥闸
   scriptgen: "scriptgen",
-  c1plan: "img5060",
-  casting: "img5060",
-  storyboard_char: "img5060",
-  storyboard: "img5060",
-  // 素材中心自由生图（2026-11-22 施工 B1）：默认落本机 t2i/i2i 车道；episode.driver 指到别的节点时
+  c1plan: "t2i.local",
+  casting: "t2i.local",
+  storyboard_char: "t2i.local",
+  storyboard: "t2i.local",
+  // 素材中心自由生图（2026-11-22 施工 B1）：默认落本机 t2i 车道；episode.driver 指到别的节点时
   // 仍按节点路由改道（在 DRIVER_ROUTABLE 白名单内），"固定"只对"无跨节点意图"成立
-  img_free: "img5060",
-  img_spark: "imgspark",
-  // H3 线（试妆试镜流程 2026-11-21）：初始定妆图生成与试妆试镜视频固定走 imgspark
+  img_free: "t2i.local",
+  img_remote: "t2i.remote",
+  // H3 线（试妆试镜流程 2026-11-21）：初始定妆图生成与试妆试镜视频固定走远端 t2i 车道
   //（引擎专用工作流，不在 driver 改道白名单——它们点名要 H3 引擎，不随剧集节点漂移）
-  cast_init: "imgspark",
-  screen_test: "imgspark",
+  cast_init: "t2i.remote",
+  screen_test: "t2i.remote",
   // 卡流节点审查（2026-11-21）：拍板点自动多人格机检；真 LLM 到位后换 lane 承载，人格骨架不变
   aireview: "aireview",
   music: "music",
@@ -48,13 +48,13 @@ const TYPE_LANE = {
 
 // 剧集驱动（episode.driver）可改道的任务类型白名单：这些是"通用工作流"，落到哪个节点由
 // driver 指向的算力节点决定（按注册表 lane→node 绑定找同族车道）。引擎专用工作流
-//（img_spark/cast_init/screen_test）不在内。白名单制：新增类型默认不改道，要跨节点需显式加入。
+//（img_remote/cast_init/screen_test）不在内。白名单制：新增类型默认不改道，要跨节点需显式加入。
 const DRIVER_ROUTABLE = ["c1plan", "casting", "storyboard", "storyboard_char", "img_free", "video"];
 
 function laneFor(type, opts) {
-  if (type === "video") return opts && opts.tier === "high" ? "vidspark" : "vid5060";
-  // H3 线（2026-11-21）：Spark 通道启用（tier:"high"）→ 生图全族走 imgspark，5060 不再接 H3 任务
-  if (opts && opts.tier === "high" && ["casting", "storyboard_char", "c1plan", "storyboard"].indexOf(type) >= 0) return "imgspark";
+  if (type === "video") return opts && opts.tier === "high" ? "t2v.remote" : "t2v.local";
+  // H3 线（2026-11-21）：tier:"high" → 生图全族走远端 t2i 车道，本机不再接 H3 任务
+  if (opts && opts.tier === "high" && ["casting", "storyboard_char", "c1plan", "storyboard"].indexOf(type) >= 0) return "t2i.remote";
   const l = TYPE_LANE[type];
   if (!l) {
     const err = { code: "BAD_TYPE", message: "未知任务类型: " + type };
@@ -64,11 +64,11 @@ function laneFor(type, opts) {
 }
 
 /* ---------- 车道→节点解析（注册表 lane→node 是唯一事实源，存内建回退表兜底） ---------- */
-// 车道族：img*/vid* 前缀（img5060/imgspark 同族可互换节点；命名约定，新车道遵守即入族）
+// 车道族：t2i*/t2v* 前缀（t2i.local/t2i.remote 同族可互换节点；命名约定，新车道遵守即入族）
 function familyOf(lane) {
   const l = String(lane || "");
-  if (l.indexOf("img") === 0) return "img";
-  if (l.indexOf("vid") === 0) return "video";
+  if (l.indexOf("t2i") === 0) return "img";
+  if (l.indexOf("t2v") === 0) return "video";
   return null;
 }
 
@@ -189,12 +189,12 @@ function createEngine({ store, bus, cfg }) {
   /* 实际执行模式判定（账本诚实）：该类型所在车道真引擎通道已启用 → self-host-comfy；否则 stub。
      精确到「该类型真分支是否存在」由 worker 内部决定，此处按通道+类型宽判（产物 meta 有细粒度 kind）。 */
   function workerTypeOf(job) {
-    const gpuReal = (cfg.comfy && cfg.comfy.enabled) || (cfg.comfySpark && cfg.comfySpark.enabled);
+    const gpuReal = (cfg.comfy && cfg.comfy.enabled) || (cfg.comfyRemote && cfg.comfyRemote.enabled);
     const GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "cast_init", "screen_test"];
     if (GPU_TYPES.indexOf(job.type) >= 0) return gpuReal ? "self-host-comfy" : "self-host-stub";
     // 云 API 车道真跑＝外部付费生成，账本必须如实标注 cloud-api（验收桩模式仍是 stub）
-    if (job.lane === "img_cloud") {
-      const nid = laneBoundNode("img_cloud");
+    if (job.lane === "t2i.cloud") {
+      const nid = laneBoundNode("t2i.cloud");
       const cloudReal = !!(nid && ((store.get().nodes || {})[nid] || {}).api && ((store.get().nodes || {})[nid].api || {}).endpoint);
       return cloudReal ? "cloud-api" : "self-host-stub";
     }

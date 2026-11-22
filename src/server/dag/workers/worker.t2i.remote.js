@@ -1,10 +1,10 @@
 "use strict";
 /**
- * workers/imgspark.js — 生图·DGX Spark（MiniMax-H3-Image int8_convrot · ComfyUI :8188）
+ * workers/worker.t2i.remote.js — 生图·远端车道（MiniMax-H3-Image int8_convrot · ComfyUI :8188）
  * 双模式（ADR-001 + 2026-11-21 裁决）：
- *  - spark-comfy 模式（cfg.comfySpark.enabled）：h3-image-cast 固化模板（6 步 euler，16 参考图模型）
+ *  - remote-comfy 模式（cfg.comfyRemote.enabled）：h3-image-cast 固化模板（6 步 euler，16 参考图模型）
  *      casting  → 角色定妆（剧本 cast[castIdx] 人设 + refImage 参考）
- *      注意：lane 默认映射不动（c1plan/storyboard/storyboard_char 仍 img5060），
+ *      注意：lane 默认映射不动（c1plan/storyboard/storyboard_char 仍 t2i.local），
  *      本 worker 仅承接 casting 类任务，走 admin registry engineId 可选切换。
  *  - stub 模式（默认，验收套件）：确定性占位 PNG（meta kind:image-stub，绝不冒充真图）。
  * 用户面引擎标签一律「自部署·高价值档」；型号细节只进 meta/sidecar（豁免面）。
@@ -14,7 +14,7 @@ const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const prompts = require("../../prompts/index.js");
 
-const NAME = "imgspark";
+const NAME = "t2i.remote";
 const ENGINE = "MiniMax-H3-Image int8_convrot 6step";
 const ENGINE_USER = "自部署·高价值档";
 const COST_CENTS = 20;
@@ -122,7 +122,7 @@ function settingsOf(ctx) {
     return {};
   }
 }
-/** 定妆角色定义（同 img5060.castOf 语义：剧本 cast[] 按 castIdx） */
+/** 定妆角色定义（同 t2i.local castOf 语义：剧本 cast[] 按 castIdx） */
 function castOf(ctx, episodeId) {
   try {
     const st = ctx.store.get();
@@ -137,7 +137,7 @@ function readRefBytes(ctx, refImage) {
   if (!refImage) return null;
   try {
     const name = safeSeg(String(refImage).replace(/^.*[\\/]/, ""));
-    // 剧本 refImage 位于 var/assets/cast（img5060.ensureInComfyInput 同源）；候选产物在 var/out
+    // 剧本 refImage 位于 var/assets/cast（t2i.local ensureInComfyInput 同源）；候选产物在 var/out
     const candidates = [
       path.join(process.cwd(), "var", "assets", "cast", name),
       path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), name)
@@ -268,9 +268,9 @@ function pickView(views, need, shotIdx) {
 }
 
 /** cast_init：初始定妆图生成（用户提示词＋角色人设 → H3-Image t2i，864×1536 精确 9:16） */
-async function runSparkCastInit(ctx, job, p, seed, cents) {
+async function runRemoteCastInit(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { cast: [] };
@@ -303,7 +303,7 @@ async function runSparkCastInit(ctx, job, p, seed, cents) {
   const art = "var/out/" + fn;
   const abs = writeOut(ctx, fn, r.bytes);
   const meta = {
-    kind: "image-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    kind: "image-comfy-remote", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
     tmpl_id: TMPL_CAST, tmpl_sha16: r.meta.tmpl_sha16, prompt_id: r.promptId, bytes: r.bytes.length,
     jobType: "cast_init", episodeId: p.episodeId, role: p.role, seed: String(sd), cents,
     ai_label: "AI 生成内容（MiniMax H3-Image）"
@@ -316,9 +316,9 @@ async function runSparkCastInit(ctx, job, p, seed, cents) {
 }
 
 /** screen_test：试妆试镜——初始图为首帧 → FL2VA 10.1 秒等比例视频 → ffmpeg 抽帧 → ArcFace 打分＋角度标签 */
-async function runSparkScreenTest(ctx, job, p, seed, cents) {
+async function runRemoteScreenTest(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { cast: [] };
@@ -327,14 +327,14 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
   const refPath = castAssetPath(castDef.refImage);
   if (!refPath) throw Object.assign(new Error("初始定妆文件缺失: " + castDef.refImage), { code: "CAST_FILE_MISSING" });
 
-  // 1) 孤儿产物接续（断点续跑，2026-11-21）：服务重启/重派时，Spark 上已渲染成功的同规格
+  // 1) 孤儿产物接续（断点续跑，2026-11-21）：服务重启/重派时，远端已渲染成功的同规格
   //    试妆产物直接领回续跑（抽帧/打分/出卡），不再重渲浪费 GPU。已消费的 prompt_id 落账防重复。
   //    计划代际校验（2026-11-21 v3）：领回前比对产物 prompt 与当前段落计划——计划换代（如床头→
   //    阳台巡游）后的同规格旧产物不领，防「旧动作视频按新段落表错位标注」。
   const plan = screenTestPlan(script, castDef);
   const st0c = ctx.store.get();
   st0c.settings = st0c.settings || {};
-  const usedPool = st0c.settings.spark_reuse_pool || (st0c.settings.spark_reuse_pool = []);
+  const usedPool = st0c.settings.remote_reuse_pool || (st0c.settings.remote_reuse_pool = []);
   let mp4Bytes = null, reusedPid = null, reusedSha = null;
   try {
     const hist = await fetch(base + "/history", { signal: AbortSignal.timeout(15000) }).then((r) => r.json());
@@ -436,7 +436,7 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
   await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\," + ST_STEP + ")),scale=184:328,tile=5x5", "-vsync", "vfr", "-frames:v", "1", path.join(outDir, gridName)]);
 
   const meta = {
-    kind: "video-comfy-spark-screentest", lane: NAME, engine: ENGINE + " fl2va first-frame", engine_user: ENGINE_USER,
+    kind: "video-comfy-remote-screentest", lane: NAME, engine: ENGINE + " fl2va first-frame", engine_user: ENGINE_USER,
     tmpl_id: TMPL_FL2VA, tmpl_sha16: renderMeta ? renderMeta.tmpl_sha16 : null, prompt_id: renderMeta ? renderMeta.promptId : (reusedPid || null), bytes: mp4Bytes.length,
     jobType: "screen_test", episodeId: p.episodeId, role: castDef.role, seed: renderMeta ? String(numFrom(hash12(ctx, { jobId: j.id, note: p.note || "", role: p.role })) % 18446744073709551615) : ("reuse:" + (reusedPid || "")),
     width: ST_W, height: ST_H, frames: ST_LEN, sec: ST_SEC, cents,
@@ -457,9 +457,9 @@ async function runSparkScreenTest(ctx, job, p, seed, cents) {
  *  新 v2＝参考条件生成：h3-image-cast 保留 REF 节点——试妆拍板帧只作**身份参考**，
  *  场景按镜头描述全新生成（舞池/霓虹/露台…），服装走人设锁。单镜生成失败回退 v1 直选帧
  *  （批次不破）；真空镜（desc 不含任何角色名）走纯 T2I。 */
-async function runSparkCharShots(ctx, job, p, seed, cents) {
+async function runRemoteCharShots(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, "");
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
@@ -589,9 +589,9 @@ async function runSparkCharShots(ctx, job, p, seed, cents) {
 }
 
 /** C1 策划：封面海报（H3-Image t2i）＋剧本 plan（场景=剧本源头） */
-async function runSparkC1Plan(ctx, job, p, seed, cents) {
+async function runRemoteC1Plan(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const st0 = ctx.store.get();
   const ep = st0.episodes && st0.episodes[p.episodeId];
   const script = (ep && ep.script) || { scenes: [], cast: [] };
@@ -620,7 +620,7 @@ async function runSparkC1Plan(ctx, job, p, seed, cents) {
   const art = "var/out/" + fn;
   const abs = writeOut(ctx, fn, r.bytes);
   const meta = {
-    kind: "image-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    kind: "image-comfy-remote", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
     tmpl_id: TMPL_CAST, tmpl_sha16: r.meta.tmpl_sha16, prompt_id: r.promptId,
     bytes: r.bytes.length, seed: String(numFrom(seed) % 18446744073709551615), cents,
     ai_label: "AI 生成内容（MiniMax H3-Image）"
@@ -635,21 +635,21 @@ async function runSparkC1Plan(ctx, job, p, seed, cents) {
   }
   return res;
 }
-function log2(job, msg) { try { console.log("[imgspark " + String(job.id || "").slice(4, 10) + "] " + msg); } catch (e) {} }
+function log2(job, msg) { try { console.log("[t2i.remote " + String(job.id || "").slice(4, 10) + "] " + msg); } catch (e) {} }
 
-async function runSparkComfy(ctx, job, p, seed, cents) {
+async function runRemoteComfy(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, ""); // 端点挂节点档案（index.js cfg getter），env 兜底在 getter 内
   const cast = castOf(ctx, p.episodeId);
   const actor = cast[p.castIdx] || { desc: p.prompt || "", refImage: null, role: "", name: "" };
-  // 定妆照（2026-11-22 方案 §5.2/A3）：构图指令＋身份参考句（Spark 档）＋风格包后缀
+  // 定妆照（2026-11-22 方案 §5.2/A3）：构图指令＋身份参考句（远端档）＋风格包后缀
   const pkg = prompts.style.resolve(ctx, p.episodeId);
   const prompt = prompts.buildCastingPrompt({ name: actor.name, role: actor.role, desc: actor.desc, styleSuffix: pkg.t2i_suffix, withIdentityRef: true });
 
   const names = [];
   const refBytes = readRefBytes(ctx, actor.refImage);
   if (refBytes) {
-    names.push(await comfy.uploadAsset(base, refBytes, "sparkimg_ref_" + safeSeg(actor.role) + "_" + seed.slice(0, 6) + ".png"));
+    names.push(await comfy.uploadAsset(base, refBytes, "t2ir_ref_" + safeSeg(actor.role) + "_" + seed.slice(0, 6) + ".png"));
   }
   while (names.length < 3) names.push(names[0] || "female_ref.png");
 
@@ -671,7 +671,7 @@ async function runSparkComfy(ctx, job, p, seed, cents) {
   const idSeg = safeSeg(j.id || "imgspk_" + seed.slice(0, 8));
   const fileName = idSeg + "_cast.png";
   const meta = {
-    kind: "image-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    kind: "image-comfy-remote", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
     tmpl_id: TMPL_CAST, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits,
     weights: r.meta.weights, prompt_id: r.promptId, bytes: r.bytes.length,
     castIdx: p.castIdx, actorRole: actor.role, seed: String(numFrom(seed) % 18446744073709551615), cents,
@@ -689,13 +689,13 @@ async function runSparkComfy(ctx, job, p, seed, cents) {
   return res;
 }
 
-async function runSparkImgFree(ctx, job, p, seed, cents) {
+async function runRemoteImgFree(ctx, job, p, seed, cents) {
   const j = job || {};
-  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, "");
+  const base = String(ctx.cfg.comfyRemote.base || "").replace(/\/+$/, "");
   const pkg = prompts.style.resolve(ctx, p.episodeId || "");
   const lookPkg = (p.styleLook && prompts.style.BUILTIN_LOOKS[p.styleLook]) || null;
   const suffix = (lookPkg && lookPkg.t2i_suffix) || pkg.t2i_suffix;
-  // 四层拼装（与 img5060 img_free 同构）：风格锚→景别机位→描述→光线；DGX 侧零参考纯 t2i
+  // 四层拼装（与 t2i.local img_free 同构）：风格锚→景别机位→描述→光线；远端侧零参考纯 t2i
   const prompt = prompts.buildFreeImagePrompt({
     desc: p.desc,
     styleSuffix: suffix,
@@ -724,7 +724,7 @@ async function runSparkImgFree(ctx, job, p, seed, cents) {
   const idSeg = safeSeg(j.id || "imgspk_" + seed.slice(0, 8));
   const fileName = idSeg + "_free.png";
   const meta = {
-    kind: "image-comfy-spark-free", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    kind: "image-comfy-remote-free", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
     tmpl_id: TMPL_FREE, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits,
     weights: r.meta.weights, prompt_id: r.promptId, bytes: r.bytes.length,
     desc: String(p.desc || "").slice(0, 200), ratio: p.ratio || "9:16", seed: String(numFrom(seed) % 18446744073709551615), cents,
@@ -746,17 +746,17 @@ async function run(job, ctx) {
   const settings = settingsOf(ctx);
   const reg = (settings.registry || {})[NAME] || {};
   const seed = hash12(ctx, { lane: NAME, jobId: j.id, type: j.type, payload: p });
-  const comfyOn = !!(ctx && ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled);
+  const comfyOn = !!(ctx && ctx.cfg && ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.enabled);
   const cents = comfyOn ? COST_CENTS : 15 + (numFrom(seed) % 11); // stub 15–25 分，真跑 20 分
 
-  if (comfyOn && j.type === "casting") return runSparkComfy(ctx, j, p, seed, cents);
-  if (comfyOn && j.type === "storyboard_char") return runSparkCharShots(ctx, j, p, seed, cents);
-  if (comfyOn && j.type === "c1plan") return runSparkC1Plan(ctx, j, p, seed, cents);
-  if (comfyOn && j.type === "cast_init") return runSparkCastInit(ctx, j, p, seed, cents);
-  if (comfyOn && j.type === "screen_test") return runSparkScreenTest(ctx, j, p, seed, cents);
-  if (comfyOn && j.type === "img_free") return runSparkImgFree(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "casting") return runRemoteComfy(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "storyboard_char") return runRemoteCharShots(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "c1plan") return runRemoteC1Plan(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "cast_init") return runRemoteCastInit(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "screen_test") return runRemoteScreenTest(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "img_free") return runRemoteImgFree(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "storyboard") {
-    // H3 线：场景级 5060 t2i 分镜退役——C2 由剧本＋初始定妆直采构成，分镜首帧由
+    // H3 线：场景级本机 t2i 分镜退役——C2 由剧本＋初始定妆直采构成，分镜首帧由
     // storyboard_char 在试妆（C2S）拍板后按 viewRefs 产出（背景只换壳）。本任务只承载卡流推进。
     const bag = {
       ok: true, cents: 0, art: null, engine: ENGINE_USER, images: [],

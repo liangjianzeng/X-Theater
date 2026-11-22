@@ -231,7 +231,7 @@ async function main() {
   // 6) queueState 形状 + 对账不变量
   const qs = engine.queueState();
   ok(
-    ["img5060", "imgspark", "vid5060", "vidspark", "music", "tts", "compose", "moderate"].every(
+    ["t2i.local", "t2i.remote", "t2v.local", "t2v.remote", "music", "tts", "compose", "moderate"].every(
       (l) => qs[l] && typeof qs[l].queued === "number" && typeof qs[l].running === "number"
     ),
     "queueState 各 lane {queued,running}"

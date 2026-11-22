@@ -19,9 +19,12 @@ const rules = {
   moderation: require(path.join(RDIR, "moderation.js")),
   budget: require(path.join(RDIR, "budget.js"))
 };
-const WORKER_FILES = ["img5060.js", "imgspark.js", "video5060.js", "vidspark.js", "music.js", "tts.js", "compose.js", "moderate.js"];
+const WORKER_FILES = ["worker.t2i.local.js", "worker.t2i.remote.js", "worker.t2v.local.js", "worker.t2v.remote.js", "worker.t2i.cloud.js", "music.js", "tts.js", "compose.js", "moderate.js"];
 const workers = {};
-for (const f of WORKER_FILES) workers[f.replace(/\.js$/, "")] = require(path.join(WDIR, f));
+for (const f of WORKER_FILES) {
+  const alias = f.replace(/\.js$/, "").replace(/^worker\./, "").replace(/\./g, "_");
+  workers[alias] = require(path.join(WDIR, f));
+}
 
 /* ---------- 假 ctx ---------- */
 function fnv1a(str) {
@@ -49,10 +52,10 @@ function baseState() {
       sc2: { id: "sc2", episodeId: "e1", name: "场2 离别", mood: "离别", seq: 2 }
     },
     shots: {
-      s1: { id: "s1", sceneId: "sc1", episodeId: "e1", seq: 2, name: "重逢路口", sec: 5, status: "done", takes: [{ id: "tk1", engine: "vid5060", cost_cents: 80, art: "var/out/tk1.mp4", license: { model: "MIT", usage: "ok" } }] },
-      s2: { id: "s2", sceneId: "sc1", episodeId: "e1", seq: 1, name: "开场空镜", sec: 5, status: "done", takes: [{ id: "tk2", engine: "vid5060", cost_cents: 80, art: "var/out/tk2.mp4" }, { id: "tk2b", engine: "vidspark", cost_cents: 150, art: "var/out/tk2b.mp4" }] },
+      s1: { id: "s1", sceneId: "sc1", episodeId: "e1", seq: 2, name: "重逢路口", sec: 5, status: "done", takes: [{ id: "tk1", engine: "t2v.local", cost_cents: 80, art: "var/out/tk1.mp4", license: { model: "MIT", usage: "ok" } }] },
+      s2: { id: "s2", sceneId: "sc1", episodeId: "e1", seq: 1, name: "开场空镜", sec: 5, status: "done", takes: [{ id: "tk2", engine: "t2v.local", cost_cents: 80, art: "var/out/tk2.mp4" }, { id: "tk2b", engine: "t2v.remote", cost_cents: 150, art: "var/out/tk2b.mp4" }] },
       s7: { id: "s7", sceneId: "sc2", episodeId: "e1", seq: 1, name: "月台雾", sec: 5, status: "pending_review", takes: [] },
-      s3: { id: "s3", sceneId: "sc2", episodeId: "e1", seq: 2, name: "汽笛长鸣", sec: 5, status: "done", takes: [{ id: "tk3", engine: "vid5060", cost_cents: 80, art: "var/out/tk3.mp4" }] }
+      s3: { id: "s3", sceneId: "sc2", episodeId: "e1", seq: 2, name: "汽笛长鸣", sec: 5, status: "done", takes: [{ id: "tk3", engine: "t2v.local", cost_cents: 80, art: "var/out/tk3.mp4" }] }
     },
     music_lib: [
       { id: "m1", title: "码头暮色", mood: "离别", sec: 42, engine: "music", license: { model: "MIT", usage: "ok" }, shadow_cents: 10, sceneId: "sc2" },
@@ -60,10 +63,10 @@ function baseState() {
     ],
     settings: {
       registry: {
-        img5060: { id: "img5060", model: "qwen-image-2.1-turbo-Q5_K_M", tiers: ["nvfp4", "int8", "MXFP8+FP8"] },
-        imgspark: { id: "imgspark", model: "MiniMax-H3-Image", tiers: ["nvfp4", "int8", "MXFP8+FP8"], unavail: ["nvfp4", "int8"], tier: "MXFP8+FP8" },
-        vid5060: { id: "vid5060", model: "LTX-2.5 distilled GGUF UD-Q4_K_XL", tier: "UD-Q4_K_XL", tiers: ["nvfp4", "int8", "MXFP8+FP8"] },
-        vidspark: { id: "vidspark", model: "FastH3 nvfp4", tier: "nvfp4", tiers: ["nvfp4", "int8", "MXFP8+FP8"] }
+        "t2i.local": { id: "t2i.local", model: "qwen-image-2.1-turbo-Q5_K_M", tiers: ["nvfp4", "int8", "MXFP8+FP8"] },
+        "t2i.remote": { id: "t2i.remote", model: "MiniMax-H3-Image", tiers: ["nvfp4", "int8", "MXFP8+FP8"], unavail: ["nvfp4", "int8"], tier: "MXFP8+FP8" },
+        "t2v.local": { id: "t2v.local", model: "LTX-2.5 distilled GGUF UD-Q4_K_XL", tier: "UD-Q4_K_XL", tiers: ["nvfp4", "int8", "MXFP8+FP8"] },
+        "t2v.remote": { id: "t2v.remote", model: "FastH3 nvfp4", tier: "nvfp4", tiers: ["nvfp4", "int8", "MXFP8+FP8"] }
       },
       runtime_mode: "A",
       peak_valley: true,
@@ -97,13 +100,13 @@ const checks = [];
 function t(name, fn) { checks.push({ name, fn }); }
 
 t("shape: {name,lane,run} 且 lane 对齐 engine ALL_LANES", () => {
-  // engine TYPE_LANE/ALL_LANES 口径：文件名 video5060.js → lane "vid5060"，其余同名
+  // engine TYPE_LANE/ALL_LANES 口径：worker.* 文件名 → 能力车道名（worker.t2i.local.js → lane "t2i.local"）
   const EXPECTED = {
-    img5060: "img5060", imgspark: "imgspark", video5060: "vid5060", vidspark: "vidspark",
+    t2i_local: "t2i.local", t2i_remote: "t2i.remote", t2v_local: "t2v.local", t2v_remote: "t2v.remote", t2i_cloud: "t2i.cloud",
     music: "music", tts: "tts", compose: "compose", moderate: "moderate"
   };
   for (const f of WORKER_FILES) {
-    const base = f.replace(/\.js$/, "");
+    const base = f.replace(/\.js$/, "").replace(/^worker\./, "").replace(/\./g, "_");
     const w = workers[base];
     assert.strictEqual(w.lane, EXPECTED[base], base + " lane");
     assert.strictEqual(w.name, EXPECTED[base], base + " name");
@@ -111,10 +114,10 @@ t("shape: {name,lane,run} 且 lane 对齐 engine ALL_LANES", () => {
   }
 });
 
-t("img5060：c1plan 出图占位＋3–8 分＋四元组 meta", async () => {
+t("t2i.local：c1plan 出图占位＋3–8 分＋四元组 meta", async () => {
   const ctx = makeCtx(baseState());
-  const job = { id: "job_img1", type: "c1plan", lane: "img5060", payload: { episodeId: "e1" } };
-  const r = await workers.img5060.run(job, ctx);
+  const job = { id: "job_img1", type: "c1plan", lane: "t2i.local", payload: { episodeId: "e1" } };
+  const r = await workers.t2i_local.run(job, ctx);
   assert.strictEqual(r.ok, true);
   assert.ok(r.cents >= 3 && r.cents <= 8, "cents 3–8，实得 " + r.cents);
   assert.strictEqual(r.art, "var/out/job_img1.png");
@@ -126,21 +129,21 @@ t("img5060：c1plan 出图占位＋3–8 分＋四元组 meta", async () => {
   assert.ok(job.art && job.result, "job.art/result 回写");
 });
 
-t("imgspark：15–25 分＋MXFP8+FP8 权重", async () => {
+t("t2i.remote：15–25 分＋MXFP8+FP8 权重", async () => {
   const ctx = makeCtx(baseState());
-  const job = { id: "job_img2", type: "img_spark", lane: "imgspark", payload: { episodeId: "e1" } };
-  const r = await workers.imgspark.run(job, ctx);
+  const job = { id: "job_img2", type: "img_remote", lane: "t2i.remote", payload: { episodeId: "e1" } };
+  const r = await workers.t2i_remote.run(job, ctx);
   assert.ok(r.cents >= 15 && r.cents <= 25, "cents 15–25，实得 " + r.cents);
   assert.strictEqual(r.art, "var/out/job_img2.png");
   assert.strictEqual(readSidecar(ctx, r.art).weights, "MXFP8+FP8");
 });
 
-t("img5060 确定性：同输入两跑＝同分同种子同字节", async () => {
+t("t2i.local 确定性：同输入两跑＝同分同种子同字节", async () => {
   const a = makeCtx(baseState());
   const b = makeCtx(baseState());
-  const mk = () => ({ id: "job_imgD", type: "storyboard", lane: "img5060", payload: { episodeId: "e1" } });
-  const r1 = await workers.img5060.run(mk(), a);
-  const r2 = await workers.img5060.run(mk(), b);
+  const mk = () => ({ id: "job_imgD", type: "storyboard", lane: "t2i.local", payload: { episodeId: "e1" } });
+  const r1 = await workers.t2i_local.run(mk(), a);
+  const r2 = await workers.t2i_local.run(mk(), b);
   assert.strictEqual(r1.cents, r2.cents);
   assert.strictEqual(r1.meta.seed, r2.meta.seed);
   assert.deepStrictEqual(fs.readFileSync(physical(a, r1.art)), fs.readFileSync(physical(b, r2.art)));
@@ -148,8 +151,8 @@ t("img5060 确定性：同输入两跑＝同分同种子同字节", async () => 
 
 t("video5060：80 分/镜＋take 回写＋meta{sec,tier,engine,peak_valley}", async () => {
   const ctx = makeCtx(baseState());
-  const job = { id: "job_v1", type: "video", lane: "vid5060", payload: { shotId: "s1", takeId: "tk_demo1", episodeId: "e1" } };
-  const r = await workers.video5060.run(job, ctx);
+  const job = { id: "job_v1", type: "video", lane: "t2v.local", payload: { shotId: "s1", takeId: "tk_demo1", episodeId: "e1" } };
+  const r = await workers.t2v_local.run(job, ctx);
   assert.strictEqual(r.cents, 80);
   assert.strictEqual(r.art, "var/out/tk_demo1.mp4");
   assert.ok(fs.existsSync(physical(ctx, r.art)));
@@ -164,12 +167,12 @@ t("video5060：80 分/镜＋take 回写＋meta{sec,tier,engine,peak_valley}", as
   assert.strictEqual(job.art.take.license.usage, "ok");
 });
 
-t("vidspark：150 分＋peak_valley 慢档（固定延迟≥120ms）", async () => {
+t("t2v.remote：150 分＋peak_valley 慢档（固定延迟≥120ms）", async () => {
   const st = baseState(); // settings.peak_valley=true
   const ctx = makeCtx(st);
-  const job = { id: "job_v2", type: "video", lane: "vidspark", payload: { shotId: "s2", takeId: "tk_pv1", episodeId: "e1", tier: "high" } };
+  const job = { id: "job_v2", type: "video", lane: "t2v.remote", payload: { shotId: "s2", takeId: "tk_pv1", episodeId: "e1", tier: "high" } };
   const t0 = Date.now();
-  const r = await workers.vidspark.run(job, ctx);
+  const r = await workers.t2v_remote.run(job, ctx);
   const el = Date.now() - t0;
   assert.strictEqual(r.cents, 150);
   assert.ok(el >= 120, "慢档延迟应≥120ms，实得 " + el);
@@ -181,13 +184,13 @@ t("vidspark：150 分＋peak_valley 慢档（固定延迟≥120ms）", async () 
   assert.strictEqual(job.art.take.cost_cents, 150);
 });
 
-t("vidspark：peak_valley=false 时不排队（快跑）", async () => {
+t("t2v.remote：peak_valley=false 时不排队（快跑）", async () => {
   const st = baseState();
   st.settings.peak_valley = false;
   const ctx = makeCtx(st);
-  const job = { id: "job_v3", type: "video", lane: "vidspark", payload: { shotId: "s3", episodeId: "e1" } };
+  const job = { id: "job_v3", type: "video", lane: "t2v.remote", payload: { shotId: "s3", episodeId: "e1" } };
   const t0 = Date.now();
-  const r = await workers.vidspark.run(job, ctx);
+  const r = await workers.t2v_remote.run(job, ctx);
   const el = Date.now() - t0;
   assert.ok(el < 100, "非慢档应 <100ms，实得 " + el);
   assert.strictEqual(readSidecar(ctx, r.art).peak_valley, false);
@@ -200,14 +203,14 @@ t("music：3 候选三标题规则＋usage/许可＋5–15 分/条", async () =>
   const r = await workers.music.run(job, ctx);
   const cands = job.result && job.result.candidates;
   assert.ok(Array.isArray(cands) && cands.length === 3, "job.result.candidates 必须 3 条");
-  assert.deepStrictEqual(cands.map((c) => c.title), ["码头暮色", "码头暮色 · 变奏", "码头暮色（未许可 demo）"]);
+  assert.deepStrictEqual(cands.map((c) => c.title), ["码头暮色", "码头暮色 · 变奏", "码头暮色（未许可 · 备选）"]);
   assert.ok(cands[2].title.includes("未许可"), "第 3 条固定带「未许可」");
   assert.deepStrictEqual(cands.map((c) => c.license.usage), ["ok", "ok", "missing"]);
   assert.deepStrictEqual(cands.map((c) => c.license.model), ["MIT", "MIT", "MIT"]);
   let sum = 0;
   for (const c of cands) {
     assert.ok(c.shadow_cents >= 5 && c.shadow_cents <= 15, "候选影子费 5–15，实得 " + c.shadow_cents);
-    assert.ok(c.sec >= 30 && c.sec <= 60, "sec 30–60，实得 " + c.sec);
+    assert.ok(c.sec >= 15 && c.sec <= 180, "sec 15–180（ACE-Step 契约域），实得 " + c.sec);
     assert.ok(fs.existsSync(c.art_abs), "候选 mp3 未写出");
     sum += c.shadow_cents;
   }
@@ -281,7 +284,7 @@ t("moderate：#7 必拦＋inspect 回写＋review reason", async () => {
   assert.strictEqual(job.art.pass, false);
   assert.strictEqual(job.art.verdict, "fail_review");
   assert.strictEqual(job.art.reason, "复审：疑似元素");
-  assert.ok((job.art.checks || []).includes("frame_tail7"), "尾号 7 → frame_tail7");
+  assert.ok((job.art.checks || []).includes("frame_rank7"), "集内序 #7 → frame_rank7");
 });
 
 t("moderate：普通镜过审＋无此镜抛 NOT_FOUND", async () => {
@@ -305,7 +308,7 @@ t("moderate：普通镜过审＋无此镜抛 NOT_FOUND", async () => {
 function ctxProbe() { return { util, store: null }; }
 
 t("卫生：无 Math.random／require 白名单（fs/path/名下 rules）", () => {
-  const ALLOW = /^(fs|path|\.\.\/rules\/[a-z0-9]+)$/;
+  const ALLOW = /^(fs|path|http|child_process|\.\.\/rules\/[a-z0-9]+|\.\.\/adapters\/[a-z0-9]+(\.js)?|\.\.\/\.\.\/prompts\/[a-z0-9]+(\.js)?|\.\.\/\.\.\/core\/[a-z0-9]+(\.js)?)$/;
   for (const f of WORKER_FILES) {
     const raw = fs.readFileSync(path.join(WDIR, f), "utf8");
     // 去注释后扫描（注释里允许出现术语本身）

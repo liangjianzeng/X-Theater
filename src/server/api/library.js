@@ -203,6 +203,7 @@ function register(router, ctx) {
             caption: p.caption || "",
             lyrics_head: String(p.lyrics || "").replace(/s+/g, " ").slice(0, 60),
             engine: c.engine || "",
+            voiceId: c.voiceId || p.voiceId || null, // 声纹克隆候选标记（2026-11-22）
             lane: "music", node: nodeLabelForLane(st, "music"),
             license: c.license || { model: "MIT", usage: "missing" },
             shadow_cents: c.shadow_cents || 0,
@@ -237,7 +238,7 @@ function register(router, ctx) {
               ratio: p.ratio || "9:16",
               gen: p.gen || null,
               engine: (job.result && job.result.engine) || "",
-              lane: job.lane || "img5060", node: nodeLabelForLane(st, job.lane || "img5060"),
+              lane: job.lane || "t2i.local", node: nodeLabelForLane(st, job.lane || "t2i.local"),
               shadow_cents: (job.result && (job.result.cents || job.result.cost_cents)) || 0,
               art,
               scope: p.projectId ? "project" : "global",
@@ -461,7 +462,20 @@ function register(router, ctx) {
     const type = ["bgm", "theme", "ambient", "mv"].indexOf(b.type) >= 0 ? b.type : "bgm";
     const sec = Math.max(15, Math.min(180, Number(b.sec) || 0)) || undefined;
 
-    const instrumental = !!b.instrumental;
+    // 声纹克隆（2026-11-22）：voiceId → 克隆声纹条目校验（kind=clone 且样本在盘），无效诚实 400；
+    // 克隆强制人声通道（克隆音色演唱歌词），纯音乐不适用。
+    let voiceId = null;
+    let cloneMode = "full";
+    if (b.voiceId) {
+      const vo = (((st.asset_lib.audio || {}).voices) || []).find((x) => x && x.id === b.voiceId);
+      if (!vo || vo.kind !== "clone" || !vo.ref) throw { code: "BAD_REQUEST", message: "声纹不存在或非克隆声纹: " + b.voiceId };
+      const voAbs = path.join(varRoot(ctx), String(vo.ref).slice("var/".length));
+      if (!fs.existsSync(voAbs)) throw { code: "BAD_REQUEST", message: "声纹样本文件缺失: " + vo.ref };
+      voiceId = vo.id;
+      cloneMode = b.cloneMode === "fast" ? "fast" : "full";
+    }
+
+    const instrumental = voiceId ? false : !!b.instrumental;
     // tags 组装（prompts/dicts.js composeMusicTags）：base 优先级＝专家自由 tags > 情绪词典 > 类型 hint
     const genres = Array.isArray(b.genres) ? b.genres.map((x) => String(x).slice(0, 40)).join(", ") : String(b.genres || "").slice(0, 200);
     const instruments = Array.isArray(b.instruments) ? b.instruments.map((x) => String(x).slice(0, 40)).join(", ") : String(b.instruments || "").slice(0, 200);
@@ -480,6 +494,7 @@ function register(router, ctx) {
     if (instrumental && !lyrics.trim()) lyrics = String(b.structure || preset.structureLine || "[instrumental]").slice(0, 400);
     const caption = String(b.caption || "").slice(0, 400);
     const warns = prompts.lyricsWarnings(lyrics, instrumental);
+    if (voiceId && !lyrics.trim()) throw { code: "BAD_REQUEST", message: "声纹克隆需要歌词（克隆音色演唱自定义歌词）" };
 
     const jobs = [];
     const count = Math.max(1, Math.min(3, Number(b.count) || 2));
@@ -487,11 +502,12 @@ function register(router, ctx) {
       jobs.push(engine.enqueue("music", {
         type, mood, tags: finalTags, lyrics, instrumental, bpm: Number(b.bpm) || undefined,
         caption: caption || undefined, sec, projectId,
-        gen: { mode: String(b.mode || "quick"), genres, instruments, bpm: Number(b.bpm) || null, vocal: instrumental ? "" : String(b.vocal || ""), instrumental },
+        voiceId: voiceId || undefined, cloneMode: voiceId ? cloneMode : undefined,
+        gen: { mode: String(b.mode || "quick"), genres, instruments, bpm: Number(b.bpm) || null, vocal: instrumental ? "" : String(b.vocal || ""), instrumental, voiceId: voiceId || null, cloneMode: voiceId ? cloneMode : null },
         gen_mode: String(b.mode || "quick").slice(0, 12)
       }, { initiated_by: "user" }));
     }
-    audit(ctx, auth, "studio_music_generate", projectId || "global", { type, mood, count, mode: b.mode || "quick", tags: finalTags.slice(0, 120), instrumental });
+    audit(ctx, auth, "studio_music_generate", projectId || "global", { type, mood, count, mode: b.mode || "quick", tags: finalTags.slice(0, 120), instrumental, voiceId, cloneMode: voiceId ? cloneMode : null });
     return router.json(res, 202, { jobs, expected: count * 3, tags: finalTags, lyrics_used: instrumental ? "structure-marks" : "user-lyrics", warnings: warns });
   }, { auth: true });
 
@@ -526,14 +542,16 @@ function register(router, ctx) {
   }, { auth: true });
 
   /* ================= 通用上传（B3，复用 castref/upload 原始字节范式） =================
-   * POST /api/studio/upload?domain=images|sfx|ambience&title=…&type=…&licenseModel=…&licenseUsage=…
-   * 图像域：PNG/JPEG（魔数校验）；音频域：WAV(RIFF)/MP3(ID3|FFFB)。直接入库（approved，source=upload）。 */
+   * POST /api/studio/upload?domain=images|sfx|ambience|voices&title=…&type=…&licenseModel=…&licenseUsage=…
+   * 图像域：PNG/JPEG（魔数校验）；音频域：WAV(RIFF)/MP3(ID3|FFFB)。直接入库（approved，source=upload）。
+   * voices 域（2026-11-22 声纹克隆）：只落盘不建条目——条目由 POST /api/studio/voices（kind=clone）
+   * 带授权勾选登记，文件路径经 ref 字段绑定。 */
 
   router.add("POST", "/api/studio/upload", (req, res, body, params, auth) => {
     if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
     const q = parseQ(req);
     const domain = q.domain;
-    if (["images", "sfx", "ambience"].indexOf(domain) < 0) throw { code: "BAD_REQUEST", message: "domain 只能是 images|sfx|ambience（?domain=）" };
+    if (["images", "sfx", "ambience", "voices"].indexOf(domain) < 0) throw { code: "BAD_REQUEST", message: "domain 只能是 images|sfx|ambience|voices（?domain=）" };
     const buf = Buffer.isBuffer(body) ? body : null;
     if (!buf || buf.length < 100) throw { code: "BAD_REQUEST", message: "请求体须为文件原始字节" };
     const s = buf.toString("latin1");
@@ -548,6 +566,11 @@ function register(router, ctx) {
     const ext = domain === "images" ? (isPng ? ".png" : ".jpg") : (isWav ? ".wav" : ".mp3");
     const fn = "up_" + util.uid("f") + ext;
     fs.writeFileSync(path.join(dir, fn), buf);
+    if (domain === "voices") {
+      // 声纹样本：文件先行，登记在后（POST /api/studio/voices kind=clone 校验 consent 后才入声纹库）
+      audit(ctx, auth, "voice_sample_upload", domain + ":" + fn, { file: fn, bytes: buf.length });
+      return router.json(res, 200, { file: fn, art: "var/assets/library/" + domain + "/" + fn, bytes: buf.length });
+    }
     const st = store.get();
     const entry = {
       id: util.uid(domain === "images" ? "img" : "aud"),
@@ -618,6 +641,8 @@ function register(router, ctx) {
         sec: d.sec || 45,
         tags: d.tags || "",
         engine: d.engine || "",
+        voiceId: d.voiceId || null, // 声纹克隆溯源（2026-11-22）：曲库条目保留克隆标记与生成要素快照
+        gen: d.gen || null,
         license: d.license || { model: "MIT", usage: "missing" },
         shadow_cents: d.shadow_cents || 0,
         art,
@@ -800,7 +825,7 @@ function register(router, ctx) {
     return router.json(res, 202, { job, variantTag: variant || null });
   }, { auth: true });
 
-  /* ================= 音色域（C3） ================= */
+  /* ================= 音色域（C3）+ 声纹克隆登记（2026-11-22） ================= */
 
   router.add("POST", "/api/studio/voices", (req, res, body, params, auth) => {
     if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
@@ -817,10 +842,38 @@ function register(router, ctx) {
       used_by: [],
       created_at: Date.now()
     };
+    if (b.kind === "clone") {
+      // 声纹克隆条目：样本须已上传落盘（/api/studio/upload?domain=voices）；
+      // 授权未勾选 → 400（合规底线：只克隆有授权的声音）。prompt_text 预留配音线（CosyVoice zero-shot）。
+      if (!b.consent) throw { code: "BAD_REQUEST", message: "声纹克隆须勾选「已获得声音所有者授权」" };
+      const ref = String(b.ref || "").trim();
+      if (ref.indexOf("var/assets/library/voices/") !== 0) throw { code: "BAD_REQUEST", message: "ref 须为已上传声纹样本（var/assets/library/voices/ 下）" };
+      const refAbs = path.join(varRoot(ctx), ref.slice("var/".length));
+      if (!fs.existsSync(refAbs)) throw { code: "BAD_REQUEST", message: "声纹样本文件不存在: " + ref };
+      entry.kind = "clone";
+      entry.spk = "";            // 克隆条目无 CosyVoice 内置 spk 键；配音线接入时走 ref+prompt_text 通道
+      entry.ref = ref;
+      entry.prompt_text = String(b.prompt_text || "").slice(0, 200);
+      entry.desc = String(b.desc || "").slice(0, 200);
+      entry.consent = true;
+      entry.consent_at = Date.now();
+    }
     st.asset_lib.audio.voices.push(entry);
     store.commit();
-    audit(ctx, auth, "voice_create", entry.id, { name });
+    audit(ctx, auth, "voice_create", entry.id, { name, kind: entry.kind || "builtin", ref: entry.ref || null });
     return router.json(res, 201, { voice: entry });
+  }, { auth: true });
+
+  router.add("DELETE", "/api/studio/voices/:id", (req, res, body, params, auth) => {
+    if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+    const st = store.get();
+    const arr = st.asset_lib.audio.voices;
+    const idx = arr.findIndex((x) => x && x.id === params.id);
+    if (idx < 0) throw { code: "NOT_FOUND", message: "音色不存在: " + params.id };
+    const gone = arr.splice(idx, 1)[0];
+    store.commit();
+    audit(ctx, auth, "voice_delete", params.id, { name: gone && gone.name, kind: (gone && gone.kind) || "builtin" });
+    return router.json(res, 200, { ok: true });
   }, { auth: true });
 
   /* ================= 设定域（C1） ================= */

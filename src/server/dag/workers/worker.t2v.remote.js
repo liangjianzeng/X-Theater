@@ -1,8 +1,8 @@
 "use strict";
 /**
- * workers/vidspark.js — 视频·DGX Spark（MiniMax H3 · ComfyUI :8188 高价值/夜间闲时档）
+ * workers/worker.t2v.remote.js — 视频·远端车道（MiniMax H3 · ComfyUI :8188 高价值/夜间闲时档）
  * 双模式（ADR-001 + 2026-11-21 裁决）：
- *  - spark-comfy 模式（cfg.comfySpark.enabled）：
+ *  - remote-comfy 模式（cfg.comfyRemote.enabled）：
  *      · 首选 h3-fl2va-video：首帧＝该镜分镜图（C2 payload.images 按 shotId 绑定），原生声画直出；
  *      · 无分镜图但有定妆 refs（C2 候选/剧本 refImage）→ h3-ref2va-video（subject reference 保脸）；
  *      · prompt＝h3ir 规则拼装 IR（可选 LLM 全英文重写），LENGTH 按 17k+5 帧网格；
@@ -16,7 +16,7 @@ const comfy = require("../adapters/comfy.js");
 const h3ir = require("../adapters/h3ir.js");
 const prompts = require("../../prompts/index.js");
 
-const NAME = "vidspark";
+const NAME = "t2v.remote";
 const ENGINE = "MiniMax-H3 int8_convrot turbo4";
 const ENGINE_USER = "自部署·高价值档";
 const TIER = "h3-int8";
@@ -109,7 +109,7 @@ function writeOut(ctx, fileName, data) {
   fs.writeFileSync(fp, data);
   return fp;
 }
-function log2(job, msg) { try { console.log("[vidspark " + String(job.id || "").slice(4, 10) + "] " + msg); } catch (e) {} }
+function log2(job, msg) { try { console.log("[t2v.remote " + String(job.id || "").slice(4, 10) + "] " + msg); } catch (e) {} }
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -121,7 +121,7 @@ function settingsOf(ctx) {
     return {};
   }
 }
-/** 该镜剧本数据：desc、台词、在场角色人设、镜头语言字段与场景情绪（shots 按 seq 对齐，同 video5060） */
+/** 该镜剧本数据：desc、台词、在场角色人设、镜头语言字段与场景情绪（shots 按 seq 对齐，同 t2v.local） */
 function shotScript(ctx, episodeId, shot) {
   const st = ctx.store.get();
   const ep = st.episodes && st.episodes[episodeId];
@@ -146,7 +146,7 @@ function shotScript(ctx, episodeId, shot) {
   if (!out.castDefs.length && cast.length) out.castDefs = cast.slice(0, 3);
   return out;
 }
-/** 分镜首帧：C2 payload.images 按 shotId 绑定的真图（同 video5060.sbFileForShot）。
+/** 分镜首帧：C2 payload.images 按 shotId 绑定的真图（同 t2v.local.sbFileForShot）。
  *  返回 { bytes, art }——art 供 meta 落盘（UI 展示每镜「首帧来源」与提示词受控链）。 */
 function sbArtForShot(ctx, episodeId, shotId) {
   try {
@@ -210,9 +210,9 @@ function castRefArts(ctx, episodeId, castDefs) {
   return arts.slice(0, 3);
 }
 
-async function runSparkComfy(ctx, job, p, seed, cents, settings) {
+async function runRemoteComfy(ctx, job, p, seed, cents, settings) {
   const j = job || {};
-  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfySpark && ctx.cfg.comfySpark.base) || "") || "").replace(/\/+$/, ""); // 本 lane 绑定节点的 Comfy 端点（注册表 lane→node），旧部署回退 comfySpark 通道
+  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, ""); // 本 lane 绑定节点的 Comfy 端点（注册表 lane→node），旧部署回退 comfyRemote 通道
   const shotId = p.shotId || null;
   const st = ctx.store.get();
   const shot = (st.shots || {})[shotId] || {};
@@ -235,7 +235,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const height = Number(p.height) > 0 ? Number(p.height) : 1344;
   const seedNum = parseInt(String(seed).slice(0, 8), 16) % 18446744073709551615;
 
-  // 素材上传到 Spark input
+  // 素材上传到远端 input
   const sb = sbArtForShot(ctx, episodeId, shotId);
   const sbBytes = sb && sb.bytes;
   const sbArt = sb && sb.art;
@@ -247,7 +247,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     try {
       const st2 = ctx.store.get();
       st2.settings = st2.settings || {};
-      const pool = st2.settings.spark_reuse_pool || (st2.settings.spark_reuse_pool = []);
+      const pool = st2.settings.remote_reuse_pool || (st2.settings.remote_reuse_pool = []);
       const keyDlg = String((scr.dialogue || "").trim().slice(0, 12));
       if (keyDlg) {
         const hist = await fetch(base + "/history", { signal: AbortSignal.timeout(15000) }).then((r) => r.json());
@@ -291,7 +291,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   } else if (sbBytes) {
     // 首帧等比适配到镜幅（开机前校准 2026-11-21：试妆抽帧 736×1312 → 镜幅 768×1344，cover 裁切防拉伸）
     const fitBytes = await fitFrame(sbBytes, width, height, safeSeg(shotId).slice(0, 24));
-    const ffName = await comfy.uploadAsset(base, fitBytes, "spark_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
+    const ffName = await comfy.uploadAsset(base, fitBytes, "t2vr_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
     const ir = h3ir.buildFL2VA({
       shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文",
       style: prompts.style.irStyleEn(pkg), sec,
@@ -306,7 +306,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   } else if (refs.length) {
     const names = [];
     for (let i = 0; i < refs.length; i++) {
-      names.push(await comfy.uploadAsset(base, refs[i].bytes, "spark_ref_" + safeSeg(refs[i].def.role || String(i)) + "_" + seed.slice(0, 6) + "_" + i + ".png"));
+      names.push(await comfy.uploadAsset(base, refs[i].bytes, "t2vr_ref_" + safeSeg(refs[i].def.role || String(i)) + "_" + seed.slice(0, 6) + "_" + i + ".png"));
     }
     while (names.length < 3) names.push(names[names.length - 1]);
     const ir = h3ir.buildRef2VA({
@@ -323,7 +323,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
     params = { SEED: seedNum, PROMPT: rewritten.ir, WIDTH: width, HEIGHT: height, LENGTH: length, STEPS: 4, REF_IMAGE_1: names[0], REF_IMAGE_2: names[1], REF_IMAGE_3: names[2] };
   } else {
     const e = new Error("该镜既无分镜首帧也无定妆参考（storyboard/casting 真图缺失）: " + shotId);
-    e.code = "NO_SPARK_INPUT_ART";
+    e.code = "NO_REMOTE_INPUT_ART";
     throw e;
   }
 
@@ -345,7 +345,7 @@ async function runSparkComfy(ctx, job, p, seed, cents, settings) {
   const takeId = safeSeg(p.takeId || "tk_" + seed.slice(0, 8));
   const fileName = takeId + ".mp4";
   const meta = {
-    kind: "video-comfy-spark", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER, tier: TIER,
+    kind: "video-comfy-remote", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER, tier: TIER,
     tmpl_id: tmplId, ir_llm_used: irLlmUsed,
     sec, length, shotId, episodeId,
     // 受控链透明化（2026-11-21）：最终下发 IR 提示词＋首帧来源——UI 可展示每镜「怎么被控制」
@@ -385,11 +385,11 @@ async function run(job, ctx) {
   const reg = (settings.registry || {})[NAME] || {};
   const peakValley = !!settings.peak_valley;
   const seed = hash12(ctx, { lane: NAME, jobId: j.id, payload: p, pv: peakValley });
-  const comfyOn = !!(ctx && ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled);
+  const comfyOn = !!(ctx && ctx.cfg && ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.enabled);
 
   if (comfyOn) {
     if (peakValley) await sleep(150); // 夜间闲时排队慢档（确定性固定延迟）
-    return runSparkComfy(ctx, j, p, seed, COST_CENTS, settings);
+    return runRemoteComfy(ctx, j, p, seed, COST_CENTS, settings);
   }
 
   // —— stub 模式（验收套件）——

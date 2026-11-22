@@ -4,7 +4,7 @@
  *
  * 方案（docs/theater-prompt-system-plan.md §6.2）落地：project.style_pkg（既有 {look,palette,ratio}
  * 形态向后兼容）按 look 名并入内置风格包，得到 t2i 后缀 / 视频风格 / IR grade / mood→光线 /
- * 场景→环境音 / 配乐 tags 的完整包；img5060 / imgspark / video5060 / h3ir 四处演示剧硬编码
+ * 场景→环境音 / 配乐 tags 的完整包；t2i.local / t2i.remote / t2v.local / h3ir 四处演示剧硬编码（车道名已按 2026-11-22 能力化迁移更新）
  * （"青橙影调，雨夜烛光" 等）全部改由本层供给。
  *
  * 优先级：project.style_pkg 覆盖 内置包（按 look 匹配）覆盖 DEFAULT。

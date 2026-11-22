@@ -15,8 +15,9 @@ const util = require("./util");
  * 存量库注册表引擎缺 node 绑定时的回退表（2026-11-22 之前的硬编码拓扑）。
  * 启动时 ensureRegistryNodes 会把绑定写进注册表，此后注册表是 lane→node 唯一事实源；
  * 本表仅兜底「注册表同族引擎全无绑定」的过渡态。引擎登记/改绑见 api/admin.js。 */
-const DEFAULT_LANE_NODE = { img5060: "local", vid5060: "local", imgspark: "dgx", vidsark: "dgx", vidspark: "dgx" };
-// 注：vidsark 为 2026-11-22 之前的拼写残留（兼容保留），正确键名 vidspark 修正同绑 dgx
+const DEFAULT_LANE_NODE = { "t2i.local": "local", "t2v.local": "local", "t2i.remote": "dgx", "t2v.remote": "dgx" };
+// 车道名＝能力名（2026-11-22 全量迁移，旧硬件名车道全部退役；映射见 git 历史与蓝图 §8.3）；
+// 节点是数据、车道是能力——代码里不再出现任何硬件名（蓝图 §8.3）。
 
 /** 幂等迁移：注册表引擎补 node 绑定字段（缺省按 DEFAULT_LANE_NODE，其余车道 null） */
 function ensureRegistryNodes(state) {
@@ -214,20 +215,20 @@ function seedState() {
       //   null＝不挂算力节点的独立服务/进程内车道。
       registry: {
         "qwen-image-2.1-turbo-Q5_K_M": {
-          lane: "img5060", node: "local", engine: "qwen-image-2.1-turbo", quant: "Q5_K_M",
+          lane: "t2i.local", node: "local", engine: "qwen-image-2.1-turbo", quant: "Q5_K_M",
           endpoint: "W-B ComfyUI :8188", published: ["Q5_K_M"], unavail: []
         },
         "MiniMax-H3-Image": {
-          lane: "imgspark", node: "dgx", engine: "MiniMax-H3-Image", quant: "int8_convrot",
-          endpoint: "Spark ComfyUI :8188", published: ["int8", "MXFP8+FP8"], unavail: ["nvfp4"]
+          lane: "t2i.remote", node: "dgx", engine: "MiniMax-H3-Image", quant: "int8_convrot",
+          endpoint: "远端 ComfyUI :8188", published: ["int8", "MXFP8+FP8"], unavail: ["nvfp4"]
         },
         "LTX-2.5": {
-          lane: "vid5060", node: "local", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
+          lane: "t2v.local", node: "local", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
           endpoint: "W-B ComfyUI :8188", published: ["UD-Q4_K_XL"], unavail: []
         },
         "FastH3": {
-          lane: "vidspark", node: "dgx", engine: "MiniMax-H3", quant: "int8_convrot",
-          endpoint: "Spark ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: []
+          lane: "t2v.remote", node: "dgx", engine: "MiniMax-H3", quant: "int8_convrot",
+          endpoint: "远端 ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: []
         },
         "ACE-Step 1.5": {
           lane: "music", node: null, engine: "ACE-Step 1.5", quant: "fp16",

@@ -210,7 +210,7 @@ function lyricsWarnings(lyrics, instrumental) {
   return warn;
 }
 
-/* ---------- 歌曲锚点（vidspark DEFAULT_SONG 按情绪+主唱性别生成，替代女性慢谣常量） ---------- */
+/* ---------- 歌曲锚点（t2v.remote DEFAULT_SONG 按情绪+主唱性别生成，替代女性慢谣常量） ---------- */
 const SONG_MOOD = {
   "释然": { motif: "one memorable gentle theme, the same melodic motif carried through the whole song", accompaniment: "soft piano arpeggios with light strings", tempo: "about 72 bpm", key: "G major" },
   "离别": { motif: "one melancholic falling theme repeated across the song", accompaniment: "soft strings with piano", tempo: "about 66 bpm", key: "A minor" },
