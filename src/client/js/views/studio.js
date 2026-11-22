@@ -21,14 +21,21 @@
     { v: "standard", label: "标准", hint: "曲风/乐器/人声/BPM 结构化配置" },
     { v: "expert", label: "专家", hint: "自由 tags＋完整歌词（结构标记）＋自然语言描述" }
   ];
+  /* 值＝引擎英文 tag（发给 ACE-Step）；label＝界面中文（2026-11-22 用户裁决：选项一律中文展示） */
   const MUSIC_GENRES = [
-    "pop", "ballad", "rock", "electronic", "synthwave", "orchestral", "solo piano", "strings",
-    "lo-fi", "jazz", "r&b", "hip-hop", "folk", "chinese traditional", "ambient", "cinematic",
-    "city pop", "blues"
+    { v: "pop", label: "流行" }, { v: "ballad", label: "抒情" }, { v: "rock", label: "摇滚" },
+    { v: "electronic", label: "电子" }, { v: "synthwave", label: "合成器浪潮" }, { v: "orchestral", label: "管弦" },
+    { v: "solo piano", label: "钢琴独奏" }, { v: "strings", label: "弦乐" }, { v: "lo-fi", label: "Lo-fi" },
+    { v: "jazz", label: "爵士" }, { v: "r&b", label: "R&B" }, { v: "hip-hop", label: "嘻哈" },
+    { v: "folk", label: "民谣" }, { v: "chinese traditional", label: "国风" }, { v: "ambient", label: "环境音乐" },
+    { v: "cinematic", label: "影视配乐" }, { v: "city pop", label: "City Pop" }, { v: "blues", label: "蓝调" }
   ];
   const MUSIC_INSTRUMENTS = [
-    "piano", "acoustic guitar", "electric guitar", "strings ensemble", "brass", "flute",
-    "dizi", "guzheng", "erhu", "synth pad", "drums", "bass", "guitar solo", "violin solo", "hand percussion"
+    { v: "piano", label: "钢琴" }, { v: "acoustic guitar", label: "木吉他" }, { v: "electric guitar", label: "电吉他" },
+    { v: "strings ensemble", label: "弦乐组" }, { v: "brass", label: "铜管" }, { v: "flute", label: "长笛" },
+    { v: "dizi", label: "笛箫" }, { v: "guzheng", label: "古筝" }, { v: "erhu", label: "二胡" },
+    { v: "synth pad", label: "合成器 Pad" }, { v: "drums", label: "鼓组" }, { v: "bass", label: "贝斯" },
+    { v: "guitar solo", label: "吉他独奏" }, { v: "violin solo", label: "小提琴独奏" }, { v: "hand percussion", label: "手打击乐" }
   ];
   const MUSIC_VOCALS = [
     { v: "", label: "纯音乐" }, { v: "female vocal", label: "女声" }, { v: "male vocal", label: "男声" },
@@ -78,6 +85,37 @@
       const audioFail = Vue.reactive({});
       global.addEventListener("keydown", function (e) { if (e.key === "Escape") preview.value = null; });
   function fmtSec(s) { return s == null ? "—" : s + " 秒"; }
+      /* 词典值→中文标签：引擎收英文 tag，界面只讲中文（2026-11-22 用户裁决）；候选池溯源同表 */
+      const GENRE_ZH = {}, INST_ZH = {}, VOCAL_ZH = {};
+      MUSIC_GENRES.forEach(g => { GENRE_ZH[g.v] = g.label; });
+      MUSIC_INSTRUMENTS.forEach(g => { INST_ZH[g.v] = g.label; });
+      MUSIC_VOCALS.forEach(v => { VOCAL_ZH[v.v] = v.label; });
+      function zhList(map, arr) { return (arr || []).map(v => map[v] || v).join("、"); }
+      const MODE_ZH = { quick: "快速", standard: "标准", expert: "专家" };
+      /* 候选池溯源：生成要素（中文）＋引擎/节点/时间（用户裁决「得把引擎节点时间显示」） */
+      function draftGenLine(d) {
+        const g = d.gen;
+        if (!g) return "";
+        if ((d.domain || d._domain || "music") === "music") {
+          const parts = [MODE_ZH[g.mode] || g.mode || ""];
+          if (g.genres) parts.push(zhList(GENRE_ZH, String(g.genres).split(/,s*/)));
+          if (g.instruments) parts.push(zhList(INST_ZH, String(g.instruments).split(/,s*/)));
+          if (g.bpm) parts.push(g.bpm + " BPM");
+          if (g.instrumental) parts.push("纯音乐");
+          else if (g.vocal) parts.push(VOCAL_ZH[g.vocal] || g.vocal);
+          return parts.filter(Boolean).join(" · ");
+        }
+        const parts = [MODE_ZH[g.mode] || g.mode || ""];
+        if (g.size) parts.push(g.size);
+        if (g.light) parts.push(g.light);
+        return parts.filter(Boolean).join(" · ");
+      }
+      function draftMetaLine(d) {
+        const seg = [];
+        if (d.engine) seg.push(String(d.engine));
+        if (d.node) seg.push(String(d.node));
+        return "⚙ " + ((seg.join(" · ") || "引擎未记录") + " · " + T.fmtTime(d.created_at));
+      }
 
   views.Studio = {
     components: {
@@ -98,13 +136,35 @@
       function startPolling(seconds) {
         pollLeft = Math.max(pollLeft, seconds || 40);
         if (pollTimer) return;
-        pollTimer = setInterval(() => {
+        pollTimer = setInterval(async () => {
           pollLeft -= 4;
-          store.loadStudioDrafts().catch(() => {});
-          if (pollLeft <= 0) { clearInterval(pollTimer); pollTimer = null; }
+          tickNow.value = Date.now();
+          try { await store.loadStudioDrafts(); store.loadStudioSummary().catch(() => {}); } catch (e) {}
+          checkGoing();
+          if (pollLeft <= 0) { clearInterval(pollTimer); pollTimer = null; going.music = null; going.images = null; }
         }, 4000);
       }
       function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+      /* 生成中横幅（2026-11-22 用户裁决：生成要有过程感——真机 ≈70s，别让用户以为没结果） */
+      const going = Vue.reactive({ music: null, images: null });
+      const tickNow = Vue.ref(Date.now());
+      function markGoing(domain, note) {
+        const cur = (store.studio.drafts && store.studio.drafts[domain]) || [];
+        going[domain] = { at: Date.now(), base: cur.length, note };
+        tickNow.value = going[domain].at;   // 同步计时基准，防首帧负数
+      }
+      function checkGoing() {
+        ["music", "images"].forEach((k) => {
+          if (!going[k]) return;
+          const cur = (store.studio.drafts && store.studio.drafts[k]) || [];
+          if (cur.length > going[k].base) going[k] = null;   // 候选已回流 → 收横幅
+        });
+      }
+      const genGoing = Vue.computed(() => ["music", "images"].filter(k => going[k]).map(k => {
+        const g = going[k];
+        const secs = Math.max(0, Math.floor((tickNow.value - g.at) / 1000));
+        return { k, text: (k === "music" ? "🎵 音乐" : "🖼 图像") + "生成中（" + g.note + "） · 已等 " + secs + " 秒" };
+      }));
 
       const summary = Vue.computed(() => store.studio.summary);
       const drafts = Vue.computed(() => store.studio.drafts);
@@ -194,7 +254,8 @@
           }
           const r = await store.studioGenerateMusic(spec);
           mWarns.value = (r && r.warnings) || [];
-          startPolling(60);
+          markGoing("music", (MODE_ZH[gMusic.mode] || gMusic.mode) + (gMusic.instrumental ? " · 纯音乐" : " · 人声"));
+          startPolling(180);   // 真机音乐 ≈70–120s：轮询窗口必须盖过生成时长（2026-11-22 用户裁决）
           goTab("drafts");
         } catch (e) { /* toast 已发 */ }
         finally { mBusy.value = false; }
@@ -264,7 +325,8 @@
           }
           if (gImage.mode === "expert") spec.negativeExtra = gImage.negativeExtra.trim() || undefined;
           await store.studioGenerateImage(spec);
-          startPolling(60);
+          markGoing("images", (MODE_ZH[gImage.mode] || gImage.mode) + " · " + gImage.count + " 张");
+          startPolling(150);
           goTab("drafts");
         } catch (e) { /* toast 已发 */ }
         finally { iBusy.value = false; }
@@ -283,7 +345,7 @@
         try {
           const r = await store.studioAiLyrics({
             paste, type: gMusic.type, mood: effMood.value || "释然",
-            style: gMusic.genres.join(", ") || gMusic.freeTags || "",
+            style: zhList(GENRE_ZH, gMusic.genres) || gMusic.freeTags || "",
             sec: gMusic.sec, instrumental: gMusic.instrumental
           });
           gMusic.lyrics = r.lyrics || "";
@@ -424,7 +486,7 @@
         exPick, exRoles, extractChar, promoteFrames, recast,
         gScene, createScene, estVariant, genEstablishing,
         canonLists, gCanon, loadCanon, saveStylePkg, saveRule,
-        adoptMusic, discardDraft, draftsAll, draftDomain
+        adoptMusic, discardDraft, draftsAll, draftDomain, genGoing, draftGenLine, draftMetaLine
       };
     },
     template: `
@@ -480,13 +542,13 @@
             <div class="v-studio-fieldrow">
               <span class="field-label">曲风</span>
               <div class="v-studio-chips">
-                <button v-for="g in MUSIC_GENRES" :key="g" type="button" class="chip" :class="{on: gMusic.genres.indexOf(g)>=0}" @click="toggleChip(gMusic.genres, g)">{{ g }}</button>
+                <button v-for="g in MUSIC_GENRES" :key="g.v" type="button" class="chip" :class="{on: gMusic.genres.indexOf(g.v)>=0}" @click="toggleChip(gMusic.genres, g.v)" :title="g.v">{{ g.label }}</button>
               </div>
             </div>
             <div class="v-studio-fieldrow">
               <span class="field-label">乐器</span>
               <div class="v-studio-chips">
-                <button v-for="g in MUSIC_INSTRUMENTS" :key="g" type="button" class="chip" :class="{on: gMusic.instruments.indexOf(g)>=0}" @click="toggleChip(gMusic.instruments, g)">{{ g }}</button>
+                <button v-for="g in MUSIC_INSTRUMENTS" :key="g.v" type="button" class="chip" :class="{on: gMusic.instruments.indexOf(g.v)>=0}" @click="toggleChip(gMusic.instruments, g.v)" :title="g.v">{{ g.label }}</button>
               </div>
             </div>
             <div class="v-studio-gen" style="margin-top:4px;">
@@ -761,6 +823,9 @@
         <!-- ================= 候选池 ================= -->
         <div class="panel" v-if="tab==='drafts'">
           <div class="panel-title">候选池 <span class="weak">生成未入库；评分收藏入库，不要的淘汰（7 天自动清）</span></div>
+          <div v-if="genGoing.length" style="margin:6px 0 10px;padding:8px 12px;border:1px dashed #33507e;border-radius:8px;background:rgba(51,80,126,.12)">
+            <div v-for="g in genGoing" :key="g.k" style="color:#9fc2ff">⏳ {{ g.text }}——真机生成约 1–2 分钟，完成后自动出现在下方</div>
+          </div>
           <empty-state v-if="!draftsAll.length" icon="📥" text="候选池是空的" sub="去「音频」或「图像」生成一批。"></empty-state>
                       <div class="v-studio-drafts" v-else>
               <div class="card v-studio-draft" v-for="d in draftsAll" :key="draftDomain(d)+d.id">
@@ -781,7 +846,10 @@
                     <span class="badge">{{ draftDomain(d)==='music' ? '音频' : '图像' }}</span>
                   </div>
                   <div class="weak" v-if="d.mood">{{ d.mood }} · {{ fmtSec(d.sec) }}</div>
-                  <div class="weak" v-if="d.tags">{{ d.tags }}</div>
+                  <div class="weak" v-if="d.tags">引擎 tags（模型英文词汇）：{{ d.tags }}</div>
+                  <div class="weak" v-if="draftGenLine(d)" style="color:#9fc2ff">要素：{{ draftGenLine(d) }}</div>
+                  <div class="weak" v-if="draftDomain(d)==='music' && d.caption">描述：{{ d.caption }}</div>
+                  <div class="weak">{{ draftMetaLine(d) }}</div>
                   <div class="weak v-studio-draft-desc" v-if="d.desc">{{ d.desc }}</div>
                   <div class="row" style="margin-top:4px"><license-badge v-if="d.license" :license="d.license"></license-badge><money v-if="d.shadow_cents" :cents="d.shadow_cents"></money></div>
                   <div class="v-studio-draft-acts">
