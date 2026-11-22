@@ -119,11 +119,18 @@ function parseIntent(text, chips, ctx, session) {
   const wantPick = /择优|选(?:最|择)|最佳|挑一?条/.test(t);
   const wantCost = /成本|花了|花费|费用|预算|多少钱/.test(t);
   const wantProject = /项目/.test(t) && /(哪些|列表|列|几个|多少|查询|查)/.test(t);
-  const wantProgress = /进度|完成|怎么样|咋样|状态|拍得|进行|到哪一步|走到哪|进展/.test(t);
-  // 卡流/GPU 查询（2026-11-22 芯片联动）：只读；拍板动作（批准/驳回/重出一版）不进规则表——拍板权在人
-  const wantCards = /待拍板|拍板|卡流|哪张卡|几张卡|卡片/.test(t);
-  const wantGpu = /被挡|挡了|开不了机|显存|GPU|gpu|显卡/.test(t);
-  const wantNewShow = /新建|建一部|开一部|新剧|创建/.test(t);
+  /* 回归集（test/selfcheck/intent-corpus.js）驱动的词表：拍到哪/拍完/没拍/到哪儿/待批/新卡/
+     节点/渲染不动/立项/新项目/建个——语料新增话术先补这里，保 LLM 离线兜底可接住。
+     裸「怎么样/咋样」双轨：短问句（咋样了）＝进度；长句需领域词且排除意见句式（你觉得这部剧怎么样＝闲聊）。 */
+  const strongProg = /进度|完成|状态|拍得|进行|到哪一步|走到哪|进展|拍到哪|拍完|没拍|到哪儿/.test(t);
+  const shortAsk = /^(咋样|怎么样|如何)(了|呢)?[？?]?$/.test(t.trim());
+  const weakTail = /怎么样|咋样|如何|顺不顺/.test(t) &&
+    /拍|镜|场|集|剧本|分镜|导出|渲染|卡/.test(t) &&
+    !/你觉得|好看|喜欢|值得/.test(t);
+  const wantProgress = strongProg || shortAsk || weakTail;
+  const wantCards = /待拍板|拍板|卡流|哪张卡|几张卡|卡片|待批|新卡/.test(t);
+  const wantGpu = /被挡|挡了|开不了机|显存|GPU|gpu|显卡|节点|渲染[^\s。！]{0,6}不动/.test(t);
+  const wantNewShow = /新建|建一部|开一部|新剧|创建|立项|新项目|建个/.test(t);
   const wantExport = /导出|成片|出片/.test(t);
 
   // —— 音乐类（先于 mood：出候选句里也可能带情绪词）——
@@ -186,13 +193,13 @@ function parseIntent(text, chips, ctx, session) {
   if (wantGpu) {
     return { tool: "query_gpu", name: "query_gpu", args: mkArgs({ episode_id: epId }) };
   }
+  // —— 进度（先于新建：语料「新剧拍得怎么样」是进度语义，不能被建剧引导抢走）——
+  if (wantProgress || /查/.test(t)) {
+    return { tool: "query_progress", name: "query_progress", args: mkArgs({ episode_id: epId }) };
+  }
   // —— 新建剧（规则模式保守引导：没剧名不能盲建；LLM 在线时由 LLM 追问剧名一步到位）——
   if (wantNewShow) {
     return { refusal: "新建一部剧得先有剧名，比如「帮我新建一部剧，就叫灯塔来信」。", name: "create_project" };
-  }
-  // —— 进度 ——
-  if (wantProgress || /查/.test(t)) {
-    return { tool: "query_progress", name: "query_progress", args: mkArgs({ episode_id: epId }) };
   }
   // —— 导出（覆盖意图但白名单无此工具 → 人话拒答，不算注入）——
   if (wantExport) {

@@ -538,6 +538,25 @@ async function main() {
     });
     const g2 = governance.validateArgs("apply_suggestion", { card_id: "card_test_pending" }, { uid: "u1", id: "s1", ctx: [] }, env3.ctx, { id: "u1" });
     ok(!g2, "采纳闸：有建议且待拍板 → 放行");
+
+    /* ---------- 意图回归集（蓝图 §6 P3：110 条话术规则脸路由＋注入红线） ---------- */
+    const corpus = require("./intent-corpus.js");
+    const env4 = makeCtx();
+    const l2d = l2facade.createL2(env4.ctx);
+    const sessC = l2d.createSession(AUTH, "B").session;
+    let cFail = 0;
+    corpus.rules.forEach(function (pair) {
+      const r = modeB.parseIntent(pair[0], [], env4.ctx, sessC);
+      const got = r ? (r.refusal ? "refusal:" + r.name : (r.tool || r.name || "?")) : "null";
+      if (got !== pair[1]) { cFail++; ok(false, "意图: 「" + pair[0] + "」 got=" + got + " want=" + pair[1]); }
+    });
+    ok(cFail === 0, "意图回归集：" + corpus.rules.length + " 条话术路由全对（错 " + cFail + "）");
+    let iFail = 0;
+    corpus.injection.forEach(function (pair) {
+      const d = modeB.detectInjection(pair[0]);
+      if (!d || d.pattern !== pair[1]) { iFail++; ok(false, "注入: 「" + pair[0] + "」 got=" + (d ? d.pattern : "null") + " want=" + pair[1]); }
+    });
+    ok(iFail === 0, "注入红线：" + corpus.injection.length + " 条全部拦截（错 " + iFail + "）");
   }
 
   /* ---------- 汇总 ---------- */
