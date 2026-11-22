@@ -252,3 +252,4 @@ ask 卡是长任务链的钩子。已通链路：
 4. **旧名兼容映射**（一次性迁移表，落库即删）：`img5060→cap:t2i@local`、`imgspark→cap:t2i@dgx`、`vid5060→cap:t2v@local`、`vidspark→cap:t2v@dgx`……worker 文件改名去硬件（img5060.js→worker.t2i.js 等）。
 5. **验收**：①新增一张虚拟节点（纯数据）跑通生图；②停本机 LLM 不再影响任何走 DGX/默认节点的任务；③素材中心无集生图零提示自动出图；④代码全局 grep `5060|spark` 零命中（worker 文件名与历史账本除外）。
 - **归属**：engine/workers 视频线 in-flight（节点注册表已建一半）；本规格＝其完成线。助手线只消费路由结果（GPU_BUSY 面文案与 hint 已按此同步语义）。
+- **实现状态 v1 ✅（2026-11-22，经用户直接裁决在已提交的注册表之上实现）**：engine.enqueue 内聚 poolPick——候选序（集指定→发起人默认算力→云 API 已配→远端 comfy→本机）、gpu_gate 节点自动跳过找下家、tier:high 固定不漂移、全空才一句 POOL_EMPTY 收口（替代 14.4GB 长文案）；selfcheck pool 7/7＋llm 9/9（更新到池契约）；真机实证：LLM 占卡时素材中心无集生图 → job.lane=imgspark（DGX）→ done，零提示。车道名退役（img5060 等改能力名＋worker 改名）为遗留迁移项，不影响池语义。

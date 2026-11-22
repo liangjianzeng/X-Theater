@@ -107,17 +107,32 @@ function makeStore() {
     assert.strictEqual(s.model, "FakeLLM");
   });
 
-  await t("监视缓存＋engine 显存互斥闸：LLM 在线 → 本机生图/拍摄类型拒绝，voice 放行", async () => {
+  await t("监视缓存＋算力池：LLM 在线 → 本机被闸自动改道（有下家）/ 无下家收口 POOL_EMPTY，voice 放行", async () => {
     llmMod.startMonitor(cfg);
     await new Promise((r) => setTimeout(r, 120));
-    const store = makeStore();
+    const workersDir = path.join(os.tmpdir(), "llmcheck_" + Date.now());
+    fs.mkdirSync(workersDir, { recursive: true });
+    ["img5060", "imgspark", "vid5060", "vidspark"].forEach((lane) => {
+      fs.writeFileSync(path.join(workersDir, lane + ".js"),
+        "exports.lane=" + JSON.stringify(lane) + ";exports.name='stub';exports.run=function(ctx,job,done){done();};");
+    });
     const bus = { publish() {}, on() {} };
-    const engine = createEngine({ store, bus, cfg: Object.assign({}, cfg, { workersDir: path.join(os.tmpdir(), "llmcheck_" + Date.now()) }) });
-    assert.throws(() => engine.enqueue("c1plan", { episodeId: "ep_t" }, { episodeId: "ep_t" }), (e) => e.code === "GPU_BUSY", "c1plan 应被闸");
-    assert.throws(() => engine.enqueue("video", { shotId: "s1" }, { episodeId: "ep_t" }), (e) => e.code === "GPU_BUSY", "video 应被闸");
-    // 非 GPU 类型（voice→tts lane）不在闸名单：但 lane 需要 worker 才执行——enqueue 本身不应抛 GPU_BUSY
+    /* 态1：只有本机（被闸）→ 池无下家 → POOL_EMPTY 收口（替代旧 GPU_BUSY 长文案） */
+    const engineSolo = createEngine({ store: makeStore(), bus, cfg: Object.assign({}, cfg, { workersDir }) });
+    assert.throws(() => engineSolo.enqueue("c1plan", { episodeId: "ep_t" }, { episodeId: "ep_t" }), (e) => e.code === "POOL_EMPTY", "本机被闸且无下家 → POOL_EMPTY");
+    assert.throws(() => engineSolo.enqueue("video", { shotId: "s1" }, { episodeId: "ep_t" }), (e) => e.code === "POOL_EMPTY", "video 同收口");
+    /* 态2：注册表有非 gated 远端节点（dgx）→ 自动改道，不再拒绝 */
+    const store2 = makeStore();
+    store2.get().nodes = { local: { id: "local", label: "本机", kind: "comfy", gpu_gate: true }, dgx: { id: "dgx", label: "DGX", kind: "comfy", gpu_gate: false } };
+    store2.get().settings = { registry: { r1: { lane: "img5060", node: "local" }, r2: { lane: "imgspark", node: "dgx" }, r3: { lane: "vid5060", node: "local" }, r4: { lane: "vidspark", node: "dgx" } } };
+    const engine2 = createEngine({ store: store2, bus, cfg: Object.assign({}, cfg, { workersDir }) });
+    const j1 = engine2.enqueue("c1plan", { episodeId: "ep_t" }, { episodeId: "ep_t" });
+    assert.strictEqual(j1.lane, "imgspark", "c1plan 改道 DGX 车道");
+    const j2 = engine2.enqueue("video", { shotId: "s1" }, { episodeId: "ep_t" });
+    assert.strictEqual(j2.lane, "vidspark", "video 改道 DGX 车道");
+    // 非 GPU 类型（voice→tts lane）不在闸名单：enqueue 本身不应抛 GPU_BUSY
     let enqErr = null;
-    try { engine.enqueue("voice", { episodeId: "ep_t", sceneId: "sc1", text: "x" }, { episodeId: "ep_t" }); } catch (e) { enqErr = e; }
+    try { engine2.enqueue("voice", { episodeId: "ep_t", sceneId: "sc1", text: "x" }, { episodeId: "ep_t" }); } catch (e) { enqErr = e; }
     assert.ok(!(enqErr && enqErr.code === "GPU_BUSY"), "voice 不应被 GPU 闸拦（enqErr=" + (enqErr && enqErr.code) + "）");
   });
 

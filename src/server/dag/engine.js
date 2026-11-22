@@ -421,9 +421,6 @@ function createEngine({ store, bus, cfg }) {
     enqueue(type, payload, opts) {
       opts = opts || {};
       const st = store.get();
-      // 剧集驱动节点路由（2026-11-22 数据驱动化）：episode.driver＝算力节点 id（state.nodes），
-      // img/video 改道目标＝该节点绑定的同族车道（注册表 lane→node）——加节点/改绑定/删节点不再改代码。
-      // driver 指向已不存在的节点（如节点被删后遗留）→ 回退首个登记节点（不写死 local，离开 5060 Ti 也能活）。
       /* ---------- 算力资源池（2026-11-22 用户裁决）：生图/音乐/视频/LLM 都是池资源 ----------
          候选序：集指定节点 → 发起人默认算力 → 云 API 节点（endpoint 未配置不计）→ 远端 comfy → 本机 → 其余登记节点。
          可用＝节点在册＋该族车道有绑定＋gpu_gate 不挡（LLM 占卡的本机被跳过，自动找下一个激活可用的）。
@@ -456,6 +453,25 @@ function createEngine({ store, bus, cfg }) {
       ) {
         throw { code: "GPU_BUSY", message: "本机渲染资源被 LLM 占用中，算力池暂无其它可用节点——可在左下角 GPU 徽章「让路」后重试。" };
       }
+      const ep = epOf(opts.episodeId);
+      if (ep && ep.paused) {
+        const err = { code: "BUDGET", message: "预算护栏已触发，该集任务暂停（需运营处理）" };
+        throw err;
+      }
+      const job = {
+        id: util.uid("job"),
+        type,
+        lane,
+        status: "queued",
+        episodeId: opts.episodeId || null,
+        // 域归属（S3-6）：经 episode 反查（账本/事件/SSE 域过滤的租户维度；episodeId 是全任务公共键）
+        tid: (epOf(opts.episodeId || (payload && payload.episodeId) || null) || {}).tenantId || null,
+        payload: payload || {},
+        initiated_by: opts.initiated_by || "user",
+        free: !!opts.free,
+        attempts: 0,
+        at: util.now()
+      };
       jobs.set(job.id, job);
       logJob(job, "queued");
       laneOf(lane).queue.push(job.id);
