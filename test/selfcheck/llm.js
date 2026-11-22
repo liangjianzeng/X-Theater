@@ -180,6 +180,54 @@ function makeStore() {
     s4.close();
   });
 
+  /* ---------- 会话记忆 v1（蓝图 §6 P2：项目事实摘要，跨会话） ---------- */
+  const mem = require("../../src/server/l2/memory.js");
+
+  await t("memory：真实结果→事实台账（查询/建议不记＋无 ID 纪律）", async () => {
+    const state = { projects: {}, episodes: {}, cards: {} };
+    const ctx = { store: { get: () => state, commit: () => {} }, util: { now: () => 1795400000000 } };
+    const e1 = mem.note(ctx, "pj_t", "create_project", { title: "记忆验证剧" }, { project_id: "pj_t", title: "记忆验证剧", look: "写实电影感" });
+    assert.ok(e1 && e1.text.indexOf("记忆验证剧") >= 0 && e1.text.indexOf("写实电影感") >= 0, "立项事实入库");
+    assert.strictEqual(mem.note(ctx, "pj_t", "query_progress", {}, { done: 1 }), null, "查询类不记");
+    assert.strictEqual(mem.note(ctx, "pj_t", "suggest_card", {}, {}), null, "建议类不记");
+    assert.strictEqual(mem.note(ctx, "pj_t", "query_gpu", {}, {}), null, "只读工具一律不记");
+    const arr = mem.list(ctx, "pj_t");
+    assert.strictEqual(arr.length, 1, "台账只有 1 条");
+    assert.ok(!/pj_|ep_|card_|sh_|l2s_/.test(arr[0].text), "无 ID 露出（用户面纪律）");
+  });
+
+  await t("memory：环缓冲 30＋block 注入最新在前 ≤8", async () => {
+    const state = { projects: { pj_t: { id: "pj_t" } }, episodes: { ep_t: { id: "ep_t", projectId: "pj_t" } }, cards: {} };
+    const ctx = { store: { get: () => state, commit: () => {} }, util: { now: () => 1795400000000 } };
+    for (let i = 1; i <= 35; i++) {
+      mem.note(ctx, "pj_t", "create_episode", { brief: "第" + i + "个故事" }, { episode_id: "ep_t", title: "第" + i + "集", project_id: "pj_t" });
+    }
+    assert.strictEqual(mem.list(ctx, "pj_t").length, 30, "环缓冲封顶 30");
+    assert.ok(mem.list(ctx, "pj_t")[0].text.indexOf("第6集") >= 0, "最老 5 条被挤出（保 6..35）");
+    const lines = mem.block(ctx, "ep_t").split("\n");
+    assert.strictEqual(lines.length, 8, "注入封顶 8（实际 " + lines.length + "）");
+    assert.ok(lines[0].indexOf("第35集") >= 0, "最新在前");
+    assert.ok(lines[7].indexOf("第28集") >= 0, "最旧注入第28集");
+  });
+
+  await t("memory：systemPrompt 注入项目记忆块（绑定集→项目→台账；无绑定则整块省略）", async () => {
+    const state = {
+      projects: { pj_t: { id: "pj_t", title: "记忆验证剧" } },
+      episodes: { ep_t: { id: "ep_t", projectId: "pj_t", title: "测试剧", stage: 1 } },
+      scenes: {}, shots: {}, cards: { card_x: { id: "card_x", episodeId: "ep_t" } }
+    };
+    const ctx = { store: { get: () => state, commit: () => {} }, util: { now: () => 1795400000000 } };
+    /* 卡片路径定位项目（decide_card 走审批执行，result.card_id → card.episodeId → project） */
+    mem.note(ctx, mem.projectIdFor(ctx, { ctx: [] }, "decide_card", { card_id: "card_x", type: "C1" }), "decide_card", { action: "accept" }, { card_id: "card_x", type: "C1", action: "accept" });
+    const sp = intent.systemPrompt(ctx, { id: "l2s_x", uid: "u2", ctx: [{ type: "episode", id: "ep_t" }] }, []);
+    assert.ok(sp.indexOf("项目记忆") >= 0, "块标题在场");
+    assert.ok(sp.indexOf("故事方向卡通过拍板") >= 0, "C1 拍板事实（cardLabel 中文名）");
+    assert.ok(sp.indexOf("card_x") < 0 && sp.indexOf("pj_t") < 0, "无 ID 露出");
+    /* 无绑定集会话：项目块整块省略（fail-open，prompt 不含空段落） */
+    const sp2 = intent.systemPrompt(ctx, { id: "l2s_y", uid: "u2", ctx: [{ type: "episode", id: "ep_none" }] }, []);
+    assert.ok(sp2.indexOf("项目记忆") < 0, "无绑定→无记忆块");
+  });
+
   srv.close();
   const fails = results.filter((r) => r[0] === "fail");
   console.log("\n== llm selfcheck: " + (results.length - fails.length) + "/" + results.length + " passed ==");

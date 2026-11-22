@@ -264,6 +264,12 @@ function createL2(ctx) {
       status: "done", trace_id: r.trace_id || trace, result: r.result
     });
 
+    /* 会话记忆 v1（蓝图 §6 P2）：批准执行成功 → 项目事实台账（与 runTurn 同步路径同口径） */
+    try {
+      const mem = require("./memory.js");
+      mem.note(ctx, mem.projectIdFor(ctx, s, a.tool, r.result), a.tool, a.args, r.result);
+    } catch (e) { /* 记忆失败绝不影响回合 */ }
+
     // —— 代跑任务（点击可跳 S8/S10；经 bus jobs 事件推进）——
     if (r.job_id) {
       const task = {

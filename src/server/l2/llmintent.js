@@ -87,6 +87,9 @@ const LLM_TOOLS = [
 const LLM_TOOL_NAMES = LLM_TOOLS.map(function (t) { return t[0]; });
 
 function systemPrompt(ctx, session, chips) {
+  /* 会话记忆 v1（蓝图 §6 P2）：跨会话项目事实台账注入（最新在前 ≤8 条；无记忆整块省略） */
+  let memBlock = "";
+  try { memBlock = require("./memory.js").block(ctx, governance.defaultEpisodeId(ctx, session)); } catch (e) { /* 无绑定集 → 无记忆 */ }
   return [
     "你是剧场 Studio 的制片组助手。根据用户的话与当前上下文，决定做什么。只输出一个 JSON 对象。",
     "",
@@ -96,6 +99,7 @@ function systemPrompt(ctx, session, chips) {
     "绑定纪律：你只服务上下文里的绑定剧集；对话历史若涉及其它剧集，一律以本次绑定为准，不要延续旧剧的语境、数字或进度。",
     "上下文：",
     stateSummary(ctx, session),
+    ...(memBlock ? ["项目记忆（此前会话沉淀的事实，供延续语境；与上面实时状态冲突时以实时状态为准）：", memBlock, ""] : []),
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",

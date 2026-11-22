@@ -241,6 +241,11 @@ async function runTurn(opts) {
     if (r.ok && tool === "create_project" && r.result && r.result.project_id) {
       session.lastProject = { id: r.result.project_id, title: r.result.title || "" };
     }
+    /* 会话记忆 v1（蓝图 §6 P2）：真实结果 → 项目事实台账，跨会话注入后续 prompt */
+    try {
+      const mem = require("./memory.js");
+      mem.note(ctx, mem.projectIdFor(ctx, session, tool, r.result), tool, args, r.result);
+    } catch (e) { /* 记忆失败绝不影响回合 */ }
     await say(rep, advisor.buildCard(tool, args, r, ctx, session)); // 顾问卡：现状之后直接给可点的下一步
   }
   return {
