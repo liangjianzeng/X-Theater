@@ -523,21 +523,32 @@ function register(router, ctx) {
     if (projectId && !(st.projects || {})[projectId]) throw { code: "NOT_FOUND", message: "项目不存在: " + projectId };
     const jobs = [];
     const count = Math.max(1, Math.min(4, Number(b.count) || 1));
+    // 画幅×清晰度两维 + 用法（2026-11-22）：ratio 6 档；tier=standard|hd|uhd（worker 按引擎能力自适应/回落）；
+    // usage=ref|edit（body.mode 是表单模式 quick/standard/expert，勿混——编辑用法走 usage 字段）。
+    const RATIO_SET = ["9:16", "16:9", "1:1", "3:4", "4:3", "21:9"];
+    const ratio = RATIO_SET.indexOf(b.ratio) >= 0 ? b.ratio : "9:16";
+    const tier = ["standard", "hd", "uhd"].indexOf(b.tier) >= 0 ? b.tier : "standard";
+    const usage = b.usage === "edit" ? "edit" : "ref";
+    const refImage = b.refImage ? String(b.refImage).trim().slice(0, 200) : "";
+    const editInstruction = String(b.editInstruction || "").trim().slice(0, 400);
+    if (usage === "edit" && (!refImage || !editInstruction)) throw { code: "BAD_REQUEST", message: "编辑改图需要参考图＋编辑指令（两者必填）" };
     for (let i = 0; i < count; i++) {
       jobs.push(engine.enqueue("img_free", {
         type: ["establishing", "empty", "prop", "poster", "mood", "mv"].indexOf(b.type) >= 0 ? b.type : "mood",
         desc: desc.slice(0, 800),
         styleLook: String(b.styleLook || "").slice(0, 30) || undefined,
-        refImage: b.refImage ? String(b.refImage).slice(0, 200) : undefined,
-        ratio: b.ratio === "9:16" || b.ratio === "16:9" || b.ratio === "1:1" ? b.ratio : "9:16",
+        refImage: refImage || undefined,
+        ratio, tier,
+        usage,
+        editInstruction: usage === "edit" ? editInstruction : undefined,
         size: String(b.size || "").slice(0, 12) || undefined,          // 景别（dicts.SHOT_SIZE 键）
         light: String(b.light || "").slice(0, 120) || undefined,        // 光线一句话
         negativeExtra: String(b.negativeExtra || "").slice(0, 200) || undefined,
-        gen: { mode: String(b.mode || "standard"), size: String(b.size || ""), light: String(b.light || ""), negativeExtra: String(b.negativeExtra || "") },
+        gen: { mode: String(b.mode || "standard"), size: String(b.size || ""), light: String(b.light || ""), negativeExtra: String(b.negativeExtra || ""), ratio, tier, usage },
         projectId
       }, { initiated_by: "user" }));
     }
-    audit(ctx, auth, "studio_image_generate", projectId || "global", { count, type: b.type || "mood", size: b.size || "", hasRef: !!b.refImage });
+    audit(ctx, auth, "studio_image_generate", projectId || "global", { count, type: b.type || "mood", size: b.size || "", ratio, tier, usage, hasRef: !!refImage });
     return router.json(res, 202, { jobs, expected: count });
   }, { auth: true });
 

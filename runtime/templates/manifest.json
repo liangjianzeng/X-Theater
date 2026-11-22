@@ -635,6 +635,47 @@
         "output": "runtime/spark-evidence/smoke/image_free_result.png"
       },
       "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "h3-image-free-ref": {
+      "tmpl_sha16": "24572ae763004b6c",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3image",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
+          "sha16": "83eb140f1ff95c06",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 20979314802
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_image_vae_fp16.safetensors",
+          "sha16": "d80e9c2e5cfc9844",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 1168505312
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；同 h3-image-free 档（1024² 14.9s/张）动态分页无 OOM",
+      "params": {
+        "PROMPT": "自由生图四层拼装＋参考说明（风格锚→景别机位→描述→光线）",
+        "REF_IMAGE": "Spark /upload/image 上传后的参考图文件名（subject-reference 保主体）",
+        "WIDTH": "imgSpecFor uhd 档（align16，≤2048²）",
+        "HEIGHT": "同 WIDTH",
+        "SEED": "int"
+      },
+      "notes": "素材中心自由生图＋参考图变体（2026-11-22 上传编辑）：h3-image-free 基础上 node7 MiniMaxH3ImageConditioning 加 images 槽（单参考图，subject-reference 保主体）——h3-image-cast 同款接线。试验档：先冒烟再扩面。",
+      "verified": null,
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
     }
   }
 }

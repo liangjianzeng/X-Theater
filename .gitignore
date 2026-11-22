@@ -14,6 +14,7 @@ node_modules/
 
 # 运行期产物（state/账本/out 不入库）
 var/
+var-e2e-vp/
 test/tmp/
 
 # ComfyUI 部署证据中的机器快照（大文件不入库）

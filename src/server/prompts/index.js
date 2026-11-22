@@ -186,6 +186,26 @@ function buildFreeImagePrompt(opts) {
 
 /* ================= 素材中心 AI 辅助（2026-11-22 下午③：歌词扩写/画面提示词） ================= */
 
+/** 图像编辑改图指令（img_free usage=edit，2026-11-22）：
+ *  - qwen（qwen-image-edit-cast）：中文指令＋主体保持子句（身份锚点纪律：不得与参考图矛盾的描述）
+ *  - h3（h3-image-edit）：官方 image_edit 语义——引用 <Picture 1> 的英文指令
+ * opts: {instruction, engine: "qwen"|"h3"} */
+function buildImageEditPrompt(opts) {
+  const o = opts || {};
+  const ins = String(o.instruction || "").trim().slice(0, 400);
+  if (o.engine === "h3") {
+    return [
+      "Edit <Picture 1>: " + ins,
+      "Keep the same person/subject identity, face and composition as <Picture 1>; only change what the instruction requires."
+    ].join(" ");
+  }
+  return [
+    "编辑参考图：" + ins,
+    "除指令要求修改的部分外，画面中的人物/主体身份、脸型、发型与整体构图与参考图保持一致。",
+    "单幅成图（single frame）：不要分屏、多格拼贴。"
+  ].join("\n");
+}
+
 /** 歌词 AI 扩写/结构化（ACE-Step 1.5 特性适配）：把粘贴的素材扩成带段标记的可生成歌词。
  * 硬纪律：段标记英文方括号；行短口；副歌记忆点重复；只输出歌词本体。 */
 function buildAssistLyricsSys() {
@@ -244,7 +264,7 @@ module.exports = Object.assign({}, dicts, {
   buildSuggestSys, buildSuggestUsr,
   buildAireviewSys, buildAireviewUsr, AIREVIEW_RUBRIC,
   buildCastInitPrompt, buildCastingPrompt, buildPosterPrompt,
-  buildFreeImagePrompt,
+  buildFreeImagePrompt, buildImageEditPrompt,
   buildAssistLyricsSys, buildAssistLyricsUsr,
   buildAssistImageSys, buildAssistImageUsr
 });

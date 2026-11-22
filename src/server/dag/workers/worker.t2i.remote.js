@@ -13,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const prompts = require("../../prompts/index.js");
+const coreUtil = require("../../core/util.js");
 
 const NAME = "t2i.remote";
 const ENGINE = "MiniMax-H3-Image int8_convrot 6step";
@@ -22,6 +23,7 @@ const TMPL_CAST = "h3-image-cast";
 const TMPL_EDIT = "h3-image-edit";
 const TMPL_FL2VA = "h3-fl2va-video";
 const TMPL_FREE = "h3-image-free"; // 素材中心自由生图（img_free）零参考纯 t2i 变体（2026-11-22 用户裁决：DGX 真承接，stub 冒充退役）
+const TMPL_FREE_REF = "h3-image-free-ref"; // 自由生图＋参考图槽（subject-reference 保主体；2026-11-22 上传编辑）
 // 试妆试镜视频规格：与原图 720×1280 等比例最近的 32 倍数画幅（736×1312，比例误差 0.27%）；
 // 10 秒档＝243 帧（17k+5 网格：243/24≈10.1s，训练范围 124-362 内），turbo 4 步。
 const ST_W = 736, ST_H = 1312, ST_LEN = 243, ST_STEPS = 4, ST_SEC = 10.13;
@@ -136,11 +138,14 @@ function castOf(ctx, episodeId) {
 function readRefBytes(ctx, refImage) {
   if (!refImage) return null;
   try {
+    const rel = String(refImage).replace(/\\/g, "/").replace(/^\/+/, "");
     const name = safeSeg(String(refImage).replace(/^.*[\\/]/, ""));
-    // 剧本 refImage 位于 var/assets/cast（t2i.local ensureInComfyInput 同源）；候选产物在 var/out
+    // 剧本 refImage 位于 var/assets/cast（ensureInComfyInput 同源）；候选产物在 var/out；
+    // 素材库上传为 var/ 全相对路径（2026-11-22 图像上传编辑）——三种候选按序找
     const candidates = [
       path.join(process.cwd(), "var", "assets", "cast", name),
-      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), name)
+      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), name),
+      path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel)
     ];
     for (const p of candidates) if (fs.existsSync(p)) return fs.readFileSync(p);
   } catch (e) { /* fallthrough */ }
@@ -695,28 +700,62 @@ async function runRemoteImgFree(ctx, job, p, seed, cents) {
   const pkg = prompts.style.resolve(ctx, p.episodeId || "");
   const lookPkg = (p.styleLook && prompts.style.BUILTIN_LOOKS[p.styleLook]) || null;
   const suffix = (lookPkg && lookPkg.t2i_suffix) || pkg.t2i_suffix;
-  // 四层拼装（与 t2i.local img_free 同构）：风格锚→景别机位→描述→光线；远端侧零参考纯 t2i
-  const prompt = prompts.buildFreeImagePrompt({
-    desc: p.desc,
-    styleSuffix: suffix,
-    size: p.size,
-    light: p.light,
-    refNote: "",
-    negative: [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，")
-  });
+  // 画幅×清晰度（2026-11-22）：imgSpecFor 按引擎能力自适应（DGX align16 / ≤2048² 官方调优档）；
+  // usage=ref（subject-reference 保主体）/edit（latent←输入图像素级保真改图）——参考图经 uploadAsset 上 Spark。
+  const usage = p.usage === "edit" ? "edit" : "ref";
+  const spec = coreUtil.imgSpecFor({ ratio: p.ratio, tier: p.tier }, { align: 16, maxMP: 4.2, maxEdge: 2048 });
+  const negFinal = [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，");
+  const seedBig = numFrom(seed) % 18446744073709551615;
 
   await comfy.ensureFree(base, 8);
-  const w = p.ratio === "16:9" ? 1536 : p.ratio === "1:1" ? 1152 : 864;
-  const h = p.ratio === "16:9" ? 864 : p.ratio === "1:1" ? 1152 : 1536;
+  let tmplId = TMPL_FREE;
+  const params = {
+    SEED: seedBig,
+    PROMPT: prompts.buildFreeImagePrompt({
+      desc: p.desc,
+      styleSuffix: suffix,
+      size: p.size,
+      light: p.light,
+      refNote: usage === "ref" ? "" : "",
+      negative: negFinal
+    }),
+    WIDTH: spec.w,
+    HEIGHT: spec.h
+  };
+  if (p.refImage) {
+    const bytes = readRefBytes(ctx, p.refImage);
+    if (!bytes) {
+      throw Object.assign(new Error("参考图不可达（" + String(p.refImage || "") + "）——诚实失败，不冒充 t2i"), { code: "EDIT_REF_MISSING" });
+    }
+    const refName = await comfy.uploadAsset(base, bytes, "libref_" + seed.slice(0, 6) + ".png");
+    if (usage === "edit") {
+      // 官方 image_edit 语义：引用 <Picture 1> 的编辑指令；latent←输入图＝像素级保真
+      if (!String(p.editInstruction || "").trim()) {
+        throw Object.assign(new Error("编辑改图缺编辑指令"), { code: "EDIT_INSTRUCTION_MISSING" });
+      }
+      tmplId = TMPL_EDIT;
+      params.PROMPT = prompts.buildImageEditPrompt({ instruction: p.editInstruction, engine: "h3" });
+      params.IMAGE = refName;
+    } else {
+      // subject-reference：conditioning images 槽保主体（新变体模板，试验档）
+      tmplId = TMPL_FREE_REF;
+      params.REF_IMAGE = refName;
+      params.PROMPT = prompts.buildFreeImagePrompt({
+        desc: p.desc,
+        styleSuffix: suffix,
+        size: p.size,
+        light: p.light,
+        refNote: "以参考图为基准：主体与参考图保持一致。",
+        negative: negFinal
+      });
+    }
+  } else if (usage === "edit") {
+    throw Object.assign(new Error("编辑改图需要参考图"), { code: "EDIT_REF_MISSING" });
+  }
   const r = await comfy.runTemplate(ctx, j, {
     base,
-    tmplId: TMPL_FREE,
-    params: {
-      SEED: numFrom(seed) % 18446744073709551615,
-      PROMPT: prompt,
-      WIDTH: w,
-      HEIGHT: h
-    },
+    tmplId,
+    params,
     pollMs: 1500,
     timeoutMs: 600000
   });
@@ -725,9 +764,11 @@ async function runRemoteImgFree(ctx, job, p, seed, cents) {
   const fileName = idSeg + "_free.png";
   const meta = {
     kind: "image-comfy-remote-free", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
-    tmpl_id: TMPL_FREE, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits,
+    tmpl_id: tmplId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits,
     weights: r.meta.weights, prompt_id: r.promptId, bytes: r.bytes.length,
-    desc: String(p.desc || "").slice(0, 200), ratio: p.ratio || "9:16", seed: String(numFrom(seed) % 18446744073709551615), cents,
+    desc: String(p.desc || "").slice(0, 200), ratio: p.ratio || "9:16", tier: p.tier || "standard",
+    usage, width: spec.w, height: spec.h, size_downgraded: spec.downgraded || false,
+    seed: String(seedBig), cents,
     ai_label: "AI 生成内容（MiniMax H3-Image）" // Community License：UI 显著标注
   };
   const art = "var/out/" + fileName;

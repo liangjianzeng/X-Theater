@@ -162,4 +162,74 @@ function stubPng(width, height) {
   ]);
 }
 
-module.exports = { uid, hash12, now, sign, verify, cas, stubPng, SECRET };
+/* ---------------- 图像尺寸自适应（2026-11-22 素材中心：比例×清晰度两维） ---------------- */
+
+/** 从 PNG/JPEG 字节读宽高（编辑模式按参考图自适应输出尺寸用）。失败返回 null。
+ *  PNG：IHDR 定长（offset 16 起大端 W/H）；JPEG：段扫描 SOF0/SOF1/SOF2（C0/C1/C2）。 */
+function imgSizeOfBuf(buf) {
+  try {
+    if (!buf || buf.length < 32) return null;
+    // PNG 魔数 89504E47
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    // JPEG 魔数 FFD8；逐段找 SOF（C0/C1/C2/C3 除外 C4/C8/CC 段类型）
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      let off = 2;
+      while (off + 9 < buf.length) {
+        if (buf[off] !== 0xff) { off++; continue; }
+        const marker = buf[off + 1];
+        if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) { off += 2; continue; }
+        const len = buf.readUInt16BE(off + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buf.readUInt16BE(off + 5), width: buf.readUInt16BE(off + 7) };
+        }
+        off += 2 + len;
+      }
+    }
+  } catch (e) { /* fallthrough */ }
+  return null;
+}
+
+/** 比例×清晰度 → 引擎安全像素（align 对齐 + maxMP/maxEdge 回落）。
+ *  caps={align,maxMP,maxEdge}：img5060（16G 卡）={8,2.1,1920}；imgspark（DGX）={16,4.2,2048}。
+ *  超能力等比就近回落，返回 {w,h,downgraded}（downgraded=true 时调用方必须进 meta 如实标注）。 */
+function imgSpecFor(spec, caps) {
+  const RATIO_STD = {
+    "9:16": [720, 1280], "16:9": [1280, 720], "1:1": [1024, 1024],
+    "3:4": [960, 1280], "4:3": [1280, 960], "21:9": [1520, 656]
+  };
+  const TIER_BASE = { "9:16": 720, "16:9": 1280, "1:1": 1024 }; // 高清/超清按短边基准等比推算
+  const ratio = String((spec && spec.ratio) || "9:16");
+  const tier = String((spec && spec.tier) || "standard");
+  const caps_ = Object.assign({ align: 16, maxMP: 4.2, maxEdge: 2048 }, caps || {});
+  const al = Math.max(8, Math.round(caps_.align) || 16);
+  const align = (v) => Math.max(al, Math.round(v / al) * al);
+  let target = RATIO_STD[ratio];
+  if (!target) target = [720, 1280];
+  if (tier === "hd" || tier === "uhd") {
+    // 高清≈2MP（9:16→1080×1920）、超清≈4.2MP（9:16→1152×2048）；其余比例按面积等比推算后对齐
+    const area = tier === "uhd" ? 2048 * 2048 : 1080 * 1920;
+    const [rw, rh] = target;
+    const scale = Math.sqrt(area / (rw * rh));
+    target = [align(rw * scale), align(rh * scale)];
+  }
+  let w = Math.round(target[0]), h = Math.round(target[1]);
+  // 引擎能力回落：单边超 maxEdge 或面积超 maxMP → 等比缩进能力内（对齐后取最小可行档）
+  const mp = (w * h) / 1e6;
+  if (w > caps_.maxEdge || h > caps_.maxEdge || mp > caps_.maxMP) {
+    const byEdge = Math.min(caps_.maxEdge / w, caps_.maxEdge / h);
+    const byArea = Math.sqrt((caps_.maxMP * 1e6) / (w * h));
+    const k = Math.min(byEdge, byArea);
+    w = align(w * k); h = align(h * k);
+    // 对齐向上取整可能再次越界：二次钳到边内（等步收缩直到入界）
+    while (w > caps_.maxEdge || h > caps_.maxEdge || (w * h) / 1e6 > caps_.maxMP) {
+      w = Math.max(al, w - al);
+      h = Math.max(al, h - al);
+    }
+    return { w, h, downgraded: true };
+  }
+  return { w, h, downgraded: false };
+}
+
+module.exports = { uid, hash12, now, sign, verify, cas, stubPng, imgSizeOfBuf, imgSpecFor, SECRET };

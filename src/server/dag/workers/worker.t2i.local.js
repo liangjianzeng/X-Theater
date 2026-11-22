@@ -13,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const comfy = require("../adapters/comfy.js");
 const prompts = require("../../prompts/index.js");
+const coreUtil = require("../../core/util.js");
 
 const NAME = "t2i.local";
 const ENGINE = "qwen-image-2.1-turbo-Q5_K_M";
@@ -194,10 +195,14 @@ async function runComfy(ctx, job, p, seed, cents) {
   }
 
   if (type === "img_free") {
-    // 素材中心自由生图（施工 B1/B2）：风格锚（L0）＋五要素＋可选参考图（i2i）；不挂集（裁决 K1）
+    // 素材中心自由生图（施工 B1/B2）：风格锚（L0）＋五要素＋可选参考图（i2i/edit）；不挂集（裁决 K1）
+    // 画幅×清晰度（2026-11-22）：imgSpecFor 按引擎能力自适应（本机 16G 卡 align8 / ≤2.1MP / 单边≤1920），
+    // 超档等比回落并进 meta 如实标注；usage=edit 走编辑模型（25 步保真改图，计费 15–25 分）。
     const pkg = prompts.style.resolve(ctx, p.episodeId || "");
     const lookPkg = (p.styleLook && prompts.style.BUILTIN_LOOKS[p.styleLook]) || null;
     const suffix = (lookPkg && lookPkg.t2i_suffix) || pkg.t2i_suffix;
+    const usage = p.usage === "edit" ? "edit" : "ref";
+    const spec = coreUtil.imgSpecFor({ ratio: p.ratio, tier: p.tier }, { align: 8, maxMP: 2.1, maxEdge: 1920 });
     let image = null;
     if (p.refImage) {
       // 参考图解析（素材中心 2026-11-22 修复）：库内 var/ 相对路径 ＋ 裸文件名（var/assets/cast 约定）
@@ -214,29 +219,47 @@ async function runComfy(ctx, job, p, seed, cents) {
         } catch (e) { image = null; }
       }
     }
-    const promptTxt = prompts.buildFreeImagePrompt({
-      desc: p.desc,
-      styleSuffix: suffix,
-      size: p.size,
-      light: p.light,
-      refNote: image ? "以参考图为基准：主体、场景与色调与参考图保持一致。" : "",
-      negative: [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，")
-    });
+    if (usage === "edit" && !image) {
+      throw Object.assign(new Error("编辑改图参考图不可达（" + String(p.refImage || "") + "）——诚实失败，不冒充 t2i"), { code: "EDIT_REF_MISSING" });
+    }
     const negFinal = [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，");
+    let tmplId, promptTxt, steps;
+    if (usage === "edit") {
+      // 编辑改图：qwen-image-edit-cast（全量档 25 步，身份锚点纪律）——指令＋主体保持，勿用四层拼装
+      tmplId = TMPL_EDIT;
+      steps = 25;
+      promptTxt = prompts.buildImageEditPrompt({ instruction: p.editInstruction || "", engine: "qwen" });
+    } else {
+      tmplId = image ? TMPL_I2I : TMPL_T2I;
+      steps = 8;
+      promptTxt = prompts.buildFreeImagePrompt({
+        desc: p.desc,
+        styleSuffix: suffix,
+        size: p.size,
+        light: p.light,
+        refNote: image ? "以参考图为基准：主体、场景与色调与参考图保持一致。" : "",
+        negative: negFinal
+      });
+    }
     const r = await genOne(ctx, j, {
-      tmplId: image ? TMPL_I2I : TMPL_T2I,
+      tmplId,
       prompt: promptTxt,
       image: image || undefined,
       negative: negFinal,
       seedHex: seed,
-      width: p.ratio === "16:9" ? 1280 : p.ratio === "1:1" ? 1024 : 864,
-      height: p.ratio === "16:9" ? 720 : p.ratio === "1:1" ? 1024 : 1536,
-      steps: 8, cfgv: 1.0
+      width: spec.w,
+      height: spec.h,
+      steps, cfgv: 1.0
     });
     const fn = idSeg + ".png";
     writeOut(ctx, fn, r.bytes);
-    const meta = Object.assign({}, baseMeta, { kind: "image-comfy-free", seed });
-    return bag(ctx, j, { bytes: r.bytes, fileName: fn, meta, cents });
+    const centsUse = usage === "edit" ? 15 + (numFrom(seed) % 11) : cents; // edit 档 25 步慢通道
+    const meta = Object.assign({}, baseMeta, {
+      kind: "image-comfy-free", seed, cents: centsUse,
+      usage, ratio: p.ratio || "9:16", tier: p.tier || "standard",
+      width: spec.w, height: spec.h, size_downgraded: spec.downgraded || false
+    });
+    return bag(ctx, j, { bytes: r.bytes, fileName: fn, meta, cents: centsUse });
   }
 
   if (type === "storyboard_char") {

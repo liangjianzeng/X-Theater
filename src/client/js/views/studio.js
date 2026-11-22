@@ -58,6 +58,15 @@
   ];
   /* 图像专业配置镜像（服务端 prompts/dicts SHOT_SIZE 口径） */
   const IMAGE_SIZES = ["远景", "全景", "中景", "近景", "特写"];
+  /* 画幅×清晰度两维（2026-11-22 上传编辑）：ratio 6 档（服务端 util.imgSpecFor 引擎自适应）；
+   * 清晰度档 standard≈1MP / hd≈2MP 全高清 / uhd 2048²（仅远端高价值线原生，本机线自动回落） */
+  const IMAGE_RATIOS = [
+    { v: "9:16", label: "9:16 竖屏（成片标准）" }, { v: "16:9", label: "16:9 横屏" }, { v: "1:1", label: "1:1 方图" },
+    { v: "3:4", label: "3:4 竖版" }, { v: "4:3", label: "4:3 横版" }, { v: "21:9", label: "21:9 宽幅" }
+  ];
+  const IMAGE_TIERS = [
+    { v: "standard", label: "标准 ≈1MP" }, { v: "hd", label: "高清 ≈2MP" }, { v: "uhd", label: "超清 2048²·远端" }
+  ];
   const IMAGE_LIGHTS = [
     { v: "冷蓝深夜，硬阴影", label: "夜雨冷蓝" }, { v: "暖金柔光，轻微逆光雾", label: "暖金柔光" },
     { v: "清晨侧逆光，薄雾", label: "清晨薄雾" }, { v: "正午顶光，高对比", label: "正午顶光" },
@@ -308,19 +317,71 @@
       const selVoice = Vue.computed(() => cloneVoices.value.find(v => v.id === gMusic.voiceId) || null);
       Vue.watch(() => gMusic.voiceId, (id) => { if (id && gMusic.instrumental) gMusic.instrumental = false; });
       const vpShow = Vue.ref(false);
-      const vpForm = Vue.reactive({ name: "", gender: "女", desc: "", prompt_text: "", consent: false, file: null, busy: false });
+      /* 声纹登记双入口（2026-11-22 用户裁决）：🎤 页面录音为主（MediaRecorder→16k 单声道 WAV），
+       * 📁 上传文件降为辅助。录音产物走既有上传链路（服务端 WAV 魔数校验零改动）。 */
+      const vpForm = Vue.reactive({ name: "", gender: "女", desc: "", prompt_text: "", consent: false, file: null, busy: false, src: "rec", recOn: false, recSec: 0, recBlob: null, recUrl: "", recErr: "" });
+      const vpRecSupported = window.__REC && window.__REC.supported();
+      let vpMedia = null, vpRecorder = null, vpChunks = [], vpTimer = null;
       function vpPick(e) {
         vpForm.file = e.target.files[0] || null;
         if (vpForm.file && !vpForm.name) vpForm.name = String((vpForm.file.name || "").replace(/\.[a-z0-9]+$/i, "")).slice(0, 30);
       }
+      async function vpRecStart() {
+        if (vpForm.recOn || !vpRecSupported) return;
+        vpForm.recErr = "";
+        try {
+          vpMedia = await navigator.mediaDevices.getUserMedia({ audio: true });
+          vpChunks = [];
+          vpRecorder = new MediaRecorder(vpMedia);
+          vpRecorder.ondataavailable = (e) => { if (e.data && e.data.size) vpChunks.push(e.data); };
+          vpRecorder.onstop = async () => {
+            try {
+              (vpMedia && vpMedia.getTracks() || []).forEach((t) => t.stop());
+              const raw = new Blob(vpChunks, { type: vpRecorder && vpRecorder.mimeType || "audio/webm" });
+              const wav = await window.__REC.blobToWav(raw);
+              vpForm.recBlob = wav;
+              if (vpForm.recUrl) URL.revokeObjectURL(vpForm.recUrl);
+              vpForm.recUrl = URL.createObjectURL(wav);
+            } catch (e) {
+              vpForm.recErr = "录音转码失败（可换「上传文件」入口）：" + ((e && e.message) || e);
+            }
+          };
+          vpRecorder.start();
+          vpForm.recOn = true; vpForm.recSec = 0; vpForm.recBlob = null;
+          if (vpForm.recUrl) { URL.revokeObjectURL(vpForm.recUrl); vpForm.recUrl = ""; }
+          vpTimer = setInterval(() => {
+            vpForm.recSec++;
+            if (vpForm.recSec >= 60) vpRecStop();   // 60s 自动停（清唱样本足够）
+          }, 1000);
+        } catch (e) {
+          vpForm.recErr = "无法访问麦克风：" + (e && e.name === "NotAllowedError" ? "权限被拒绝（请在浏览器地址栏允许麦克风后重试）" : ((e && e.message) || e));
+        }
+      }
+      function vpRecStop() {
+        if (!vpForm.recOn) return;
+        if (vpTimer) { clearInterval(vpTimer); vpTimer = null; }
+        vpForm.recOn = false;
+        try { if (vpRecorder && vpRecorder.state !== "inactive") vpRecorder.stop(); } catch (e) { /* 忽略 */ }
+      }
+      function vpRecReset() {
+        vpRecStop();
+        vpForm.recBlob = null; vpForm.recSec = 0;
+        if (vpForm.recUrl) { URL.revokeObjectURL(vpForm.recUrl); vpForm.recUrl = ""; }
+      }
       async function vpRegister() {
-        if (vpForm.busy || !vpForm.file || !String(vpForm.name || "").trim() || !vpForm.consent) return;
+        if (vpForm.busy || !String(vpForm.name || "").trim() || !vpForm.consent) return;
+        const file = vpForm.src === "rec" ? vpForm.recBlob : vpForm.file;
+        if (!file) return;
+        if (vpForm.src === "rec" && vpForm.recSec < 10) {
+          vpForm.recErr = "录音太短（" + vpForm.recSec + "s）——声纹样本建议清唱 20–40 秒"; return;
+        }
         vpForm.busy = true;
         try {
-          const v = await store.studioCreateVoice(vpForm.file, { name: vpForm.name.trim(), gender: vpForm.gender, desc: vpForm.desc, prompt_text: vpForm.prompt_text });
+          const v = await store.studioCreateVoice(file, { name: vpForm.name.trim(), gender: vpForm.gender, desc: vpForm.desc, prompt_text: vpForm.prompt_text });
           gMusic.voiceId = v.id;
           vpShow.value = false;
           vpForm.name = ""; vpForm.desc = ""; vpForm.prompt_text = ""; vpForm.consent = false; vpForm.file = null;
+          vpRecReset();
         } catch (e) { /* toast 已发 */ }
         finally { vpForm.busy = false; }
       }
@@ -440,25 +501,45 @@
       /* ================= 图像域（专业配置对齐音乐：预设/标准/专家＋AI 辅助） ================= */
       const gImage = Vue.reactive({
         mode: "standard", type: "establishing", idea: "", desc: "",
-        size: "远景", light: "", ratio: "9:16", styleLook: "", refImage: "", negativeExtra: "",
+        size: "远景", light: "", ratio: "9:16", tier: "standard", styleLook: "", refImage: "",
+        usage: "ref", editInstruction: "", negativeExtra: "",
         count: 1, projectId: ""
       });
       const iBusy = Vue.ref(false);
       const imgPreset = Vue.computed(() => IMAGE_TYPES.find(t => t.v === gImage.type) || {});
+      const iWarns = Vue.ref([]);
+      /* 参考图打通（2026-11-22 上传编辑）：上传直填路径＋图库点选；usage=ref（i2i 参考生图）|edit（编辑改图＋指令） */
+      async function imgUploadRef(e) {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        try {
+          const entry = await store.studioUpload("images", f, { title: f.name });
+          gImage.refImage = entry.art || "";
+          gImage.usage = gImage.usage || "ref";
+        } catch (err) { /* toast 已发 */ }
+        finally { e.target.value = ""; }
+      }
       async function genImage() {
         const desc = (gImage.mode === "quick" ? gImage.idea : gImage.desc).trim();
         if (iBusy.value || !desc) return;
+        iWarns.value = [];
+        const ref = gImage.refImage.trim();
+        if (gImage.mode !== "quick" && ref && gImage.usage === "edit" && !String(gImage.editInstruction || "").trim()) {
+          iWarns.value = ["编辑改图需要填写编辑指令（要改什么）"]; return;
+        }
         iBusy.value = true;
         try {
-          const spec = { type: gImage.type, desc, styleLook: gImage.styleLook || undefined, ratio: gImage.ratio, count: gImage.count, projectId: gImage.projectId || undefined };
+          const spec = { type: gImage.type, desc, styleLook: gImage.styleLook || undefined, ratio: gImage.ratio, tier: gImage.tier, count: gImage.count, projectId: gImage.projectId || undefined };
           if (gImage.mode !== "quick") {
             spec.size = gImage.size;
             spec.light = gImage.light || undefined;
-            spec.refImage = gImage.refImage.trim() || undefined;
+            spec.refImage = ref || undefined;
+            spec.usage = ref ? gImage.usage : undefined;
+            spec.editInstruction = (ref && gImage.usage === "edit") ? gImage.editInstruction.trim() : undefined;
           }
           if (gImage.mode === "expert") spec.negativeExtra = gImage.negativeExtra.trim() || undefined;
           await store.studioGenerateImage(spec);
-          markGoing("images", (MODE_ZH[gImage.mode] || gImage.mode) + " · " + gImage.count + " 张");
+          markGoing("images", (MODE_ZH[gImage.mode] || gImage.mode) + " · " + gImage.count + " 张" + (ref && gImage.usage === "edit" ? " · 编辑改图" : ""));
           startPolling(150);
           goTab("drafts");
         } catch (e) { /* toast 已发 */ }
@@ -605,15 +686,15 @@
 
       return {
         TABS, MUSIC_TYPES, MUSIC_MODES, MUSIC_GENRES, MUSIC_INSTRUMENTS, MUSIC_VOCALS, MUSIC_TYPE_PRESETS, LYRIC_MARKS,
-        IMAGE_TYPES, IMAGE_SIZES, IMAGE_LIGHTS, LOOKS, MOODS, SECS,
+        IMAGE_TYPES, IMAGE_SIZES, IMAGE_RATIOS, IMAGE_TIERS, IMAGE_LIGHTS, LOOKS, MOODS, SECS,
         tab, goTab, summary, drafts, lib, projects, episodes, srcOf, fmtSec,
         preview, openPreview, closePreview,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
-        cloneVoices, selVoice, vpShow, vpForm, vpPick, vpRegister, vpDelete,
+        cloneVoices, selVoice, vpShow, vpForm, vpPick, vpRegister, vpDelete, vpRecSupported, vpRecStart, vpRecStop, vpRecReset,
         assistPaste, assistShow, aiMusicBusy, aiLyrics, aiImgBusy, aiImage,
         gMusic, mBusy, mWarns, preset, effMood, genMusic, toggleChip, applyPreset, resetPreset, insLyric, markLyricsDirty,
         musicFilter, musicList,
-        gImage, iBusy, imgPreset, genImage,
+        gImage, iBusy, imgPreset, genImage, iWarns, imgUploadRef,
         sceneOptions, bindPick, bindPrimary, bindMusic, unbindMusic, rateMusic, retireMusic, usedBySheet, showUsedBy,
         adoptPick, adoptImage, imgFilter, imageList, rateImage, retireImage,
         upFile, upMeta, doUpload,
@@ -695,9 +776,25 @@
               </div>
             </div>
             <div v-if="vpShow" class="v-music-lyrics v-vp-form">
-              <div class="v-music-lyrics-head"><span class="field-label">登记声纹（克隆音色来源）</span></div>
+              <div class="v-music-lyrics-head"><span class="field-label">登记声纹（克隆音色来源）</span>
+                <div class="v-studio-chips">
+                  <button type="button" class="chip" :class="{on: vpForm.src==='rec'}" @click="vpForm.src='rec'" v-if="vpRecSupported">🎤 页面录音</button>
+                  <button type="button" class="chip" :class="{on: vpForm.src==='file'}" @click="vpForm.src='file'">📁 上传文件</button>
+                  <span class="weak">{{ vpForm.src==='rec' ? '推荐：按需录一段清唱' : '已有音频文件时使用' }}</span>
+                </div>
+              </div>
+              <div v-if="vpForm.src==='rec'" style="margin:4px 0">
+                <div class="v-music-acts" style="margin-top:2px">
+                  <button v-if="!vpForm.recOn" type="button" class="btn btn-sm" @click="vpRecStart()">● 开始录音</button>
+                  <button v-else type="button" class="btn btn-sm btn-danger" @click="vpRecStop()">■ 停止（{{ vpForm.recSec }}s）</button>
+                  <audio v-if="vpForm.recUrl" controls :src="vpForm.recUrl" style="max-width:200px;height:28px" title="录音试听"></audio>
+                  <button v-if="vpForm.recUrl" type="button" class="chip" @click="vpRecReset()">↺ 重录</button>
+                  <span class="weak">{{ vpForm.recOn ? '录音中…（60 秒自动停）' : '建议清唱 20–40 秒、无伴奏' }}</span>
+                </div>
+                <div class="weak" v-if="vpForm.recErr" style="color:var(--err,#c0392b)">{{ vpForm.recErr }}</div>
+              </div>
               <div class="v-studio-gen">
-                <label class="field"><span class="field-label">样本文件（WAV/MP3）</span>
+                <label class="field" v-if="vpForm.src==='file'"><span class="field-label">样本文件（WAV/MP3）</span>
                   <input type="file" accept="audio/*,.wav,.mp3" @change="vpPick" /></label>
                 <label class="field"><span class="field-label">名称</span>
                   <input class="input" v-model.trim="vpForm.name" maxlength="30" placeholder="例：阿岚" /></label>
@@ -710,7 +807,7 @@
               </div>
               <div class="v-music-acts" style="margin-top:6px">
                 <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" v-model="vpForm.consent" /> 我已获得该声音所有者的授权</label>
-                <button type="button" class="btn btn-sm btn-primary" style="white-space:nowrap" :disabled="vpForm.busy || !vpForm.file || !vpForm.name || !vpForm.consent" @click="vpRegister()">{{ vpForm.busy ? '登记中…' : '登记声纹' }}</button>
+                <button type="button" class="btn btn-sm btn-primary" style="white-space:nowrap" :disabled="vpForm.busy || !vpForm.name || !vpForm.consent || (vpForm.src==='rec' ? !vpForm.recBlob : !vpForm.file)" @click="vpRegister()">{{ vpForm.busy ? '登记中…' : '登记声纹' }}</button>
                 <span class="weak">样本建议清唱 20–40 秒、无伴奏；登记后即可在本表单选用克隆出歌</span>
               </div>
             </div>
@@ -837,7 +934,9 @@
             <label class="field"><span class="field-label">风格包</span>
               <select class="select" v-model="gImage.styleLook"><option value="">跟随项目/默认</option><option v-for="l in LOOKS" :key="l" :value="l">{{ l }}</option></select></label>
             <label class="field"><span class="field-label">画幅</span>
-              <select class="select" v-model="gImage.ratio"><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方图</option></select></label>
+              <select class="select" v-model="gImage.ratio"><option v-for="r in IMAGE_RATIOS" :key="r.v" :value="r.v">{{ r.label }}</option></select></label>
+            <label class="field"><span class="field-label">清晰度</span>
+              <select class="select" v-model="gImage.tier"><option v-for="t in IMAGE_TIERS" :key="t.v" :value="t.v">{{ t.label }}</option></select></label>
             <label class="field"><span class="field-label">张数</span>
               <select class="select" v-model="gImage.count"><option :value="1">1 张</option><option :value="2">2 张</option><option :value="3">3 张</option><option :value="4">4 张</option></select></label>
             <label class="field"><span class="field-label">归属项目（可空＝公共库）</span>
@@ -861,10 +960,32 @@
             <label class="field" style="width:100%"><span class="field-label">画面描述（四层：主体动作 → 环境道具 → 光线时间 → 氛围）</span>
               <textarea class="input v-music-lyrics-box" v-model="gImage.desc" rows="4" maxlength="800"
                 placeholder="例：女主攥着湿透的信封在码头疾走，频频回头；集装箱林立，积水反着路灯；冷蓝夜雨，路灯光晕；压抑急促" spellcheck="false"></textarea></label>
+            <!-- 参考图/编辑改图（2026-11-22 上传编辑）：上传直填＋图库点选＋用法二选一 -->
+            <div class="v-studio-fieldrow" style="margin-top:8px">
+              <span class="field-label">参考图</span>
+              <div class="v-studio-chips">
+                <input class="input" v-model.trim="gImage.refImage" maxlength="200" placeholder="库内路径 var/assets/library/images/…（可手填）" style="max-width:330px" />
+                <label class="chip" style="cursor:pointer">⬆ 上传图片<input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" style="display:none" @change="imgUploadRef" /></label>
+                <select class="select v-studio-sel" v-model="gImage.refImage">
+                  <option value="">从图库选…</option>
+                  <option v-for="m in imageList.slice(0, 30)" :key="m.id" :value="m.art">{{ (m.title || m.desc || '图').slice(0, 16) }}</option>
+                </select>
+                <button type="button" class="chip" v-if="gImage.refImage" @click="gImage.refImage = ''; gImage.usage = 'ref'">✕ 清除</button>
+              </div>
+            </div>
+            <div class="v-studio-fieldrow" v-if="gImage.refImage">
+              <span class="field-label">用法</span>
+              <div class="v-studio-chips">
+                <button type="button" class="chip" :class="{on: gImage.usage==='ref'}" @click="gImage.usage='ref'" title="以参考图为基准重绘（保影调变构图）">参考生图</button>
+                <button type="button" class="chip" :class="{on: gImage.usage==='edit'}" @click="gImage.usage='edit'" title="编辑模型保真改图：只改指令要求的部分">编辑改图</button>
+                <span class="weak" v-if="gImage.usage==='ref'">i2i 参考生图 · 保影调</span>
+                <span class="weak" v-else>编辑模型 · 保真改图（≈1 分钟/张）</span>
+              </div>
+            </div>
+            <label class="field" v-if="gImage.refImage && gImage.usage==='edit'" style="width:100%;margin-top:4px"><span class="field-label">编辑指令（必填——要改什么，例如「把背景换成雨夜码头，人物不动」）</span>
+              <input class="input" v-model.trim="gImage.editInstruction" maxlength="400" placeholder="例：把背景换成雨夜码头，人物姿势不动" /></label>
             <div class="v-studio-gen" style="margin-top:4px;">
-              <label class="field" style="grid-column:1/3"><span class="field-label">参考图（可空，库内路径——即梦式挂载）</span>
-                <input class="input" v-model.trim="gImage.refImage" maxlength="200" placeholder="var/assets/library/images/xxx.png 或 var/assets/cast/xxx.png" /></label>
-              <label class="field" v-if="gImage.mode==='expert'" style="grid-column:3/5"><span class="field-label">负面增补（可空，逗号分隔）</span>
+              <label class="field" v-if="gImage.mode==='expert'" style="grid-column:1/3"><span class="field-label">负面增补（可空，逗号分隔）</span>
                 <input class="input" v-model.trim="gImage.negativeExtra" maxlength="200" placeholder="例：文字, 水印, 多人" /></label>
             </div>
           </div>
@@ -873,7 +994,10 @@
             <button type="button" class="chip chip-ai" :disabled="aiImgBusy" @click="aiImage()" :title="gImage.mode==='quick' ? '把一句话想法按四层规范扩写成专业描述' : '把当前描述按四层规范润色扩写'">
               {{ aiImgBusy ? 'AI 写画面中…' : '✨ AI 写画面' }}</button>
             <button class="btn btn-primary" :disabled="iBusy || !(gImage.mode==='quick' ? gImage.idea.trim() : gImage.desc.trim())" @click="genImage">{{ iBusy ? '排队中…' : '生成候选（' + gImage.count + ' 张）' }}</button>
-            <span class="weak">{{ imgPreset.hint }}</span>
+            <span class="weak">{{ imgPreset.hint }}{{ gImage.tier !== 'standard' ? ' · ' + (IMAGE_TIERS.find(t => t.v === gImage.tier) || {}).label + '（本机线超档自动回落）' : '' }}</span>
+          </div>
+          <div class="v-music-warns" v-if="iWarns.length">
+            <div v-for="(w,i) in iWarns" :key="i">⚠ {{ w }}</div>
           </div>
 
           <div class="panel-title" style="margin-top:14px;">图库</div>

@@ -4,10 +4,14 @@ W-M 自部署生乐服务（ACE-Step 1.5）· FastAPI 常驻服务
 端口 127.0.0.1:8190 · 惰性加载 · 响应后释放显存（DiT/VAE/TE/LM 全部回 CPU RAM + empty_cache）
 
 API 契约:
-  POST /music            {mood, seconds 15-180, seed?, tags?, lyrics?, instrumental?, caption?, bpm?} -> {id, seconds, file, ...}
+  POST /music            {mood, seconds 15-180, seed?, tags?, lyrics?, instrumental?, caption?, bpm?,
+                          ref_audio?, src_audio?, cover_strength?} -> {id, seconds, file, task_type, ...}
   GET  /music/{id}/file  -> 音频字节 (audio/wav)
   POST /unload           -> 释放显存 {ok, vram_*}
   GET  /health           -> 服务/模型/显存状态
+
+声纹克隆（2026-11-22）：src_audio 给值 → task_type="cover"（保持源曲结构、按 reference+caption 变声，
+时长锁源曲）；仅 ref_audio → task_type="text2music"+参考音频条件化（audio_cover_strength=0.2 风格迁移档）。
 """
 
 import os
@@ -188,13 +192,17 @@ def _ensure_models() -> float:
 
 class MusicRequest(BaseModel):
     mood: str = Field(..., min_length=1, max_length=500, description="情绪/场景描述（任意语言）")
-    seconds: int = Field(..., ge=15, le=180, description="目标时长秒（15–180；模型支持 10–600）")
+    seconds: int = Field(..., ge=15, le=180, description="目标时长秒（15–180；模型支持 10–600；cover 任务锁源曲时长）")
     seed: int | None = Field(None, description="可复现随机种子；缺省随机")
     tags: str = Field("", max_length=600, description="曲风/乐器/人声/BPM 逗号串（并入 caption 通道）")
     lyrics: str = Field("", max_length=4000, description="歌词（含 [Verse] 等段标记）；空=纯音乐 [Instrumental]")
     instrumental: bool = Field(True, description="纯音乐")
     caption: str = Field("", max_length=500, description="自然语言主描述（缺省用 mood）")
     bpm: int | None = Field(None, ge=30, le=300, description="节拍（缺省自动估计）")
+    # 声纹克隆（2026-11-22）：参考音频条件化——模型原生通道，服务端此前只透出 text2music
+    ref_audio: str | None = Field(None, max_length=1000, description="声纹样本音频路径（绝对）；作 reference_audio 条件")
+    src_audio: str | None = Field(None, max_length=1000, description="两段式源曲路径（绝对）；给值则 task=cover，时长锁源曲")
+    cover_strength: float | None = Field(None, ge=0.0, le=1.0, description="参考/源曲影响强度；缺省 cover=0.7、风格迁移=0.2")
 
 
 @app.post("/music")
@@ -213,14 +221,29 @@ def post_music(req: MusicRequest):
         lyrics = (req.lyrics or "").strip() or "[Instrumental]"
         instrumental = bool(req.instrumental) or lyrics == "[Instrumental]"
         vocal_language = "unknown"
+
+        # 声纹克隆通道（2026-11-22）：src_audio 有值=cover 两段式变声（时长锁源曲）；
+        # 仅 ref_audio=text2music+参考音频（风格迁移档）。路径校验失败诚实 400。
+        ref_audio = (req.ref_audio or "").strip() or None
+        src_audio = (req.src_audio or "").strip() or None
+        if ref_audio and not os.path.isfile(ref_audio):
+            raise HTTPException(status_code=400, detail=f"ref_audio not found: {ref_audio}")
+        if src_audio and not os.path.isfile(src_audio):
+            raise HTTPException(status_code=400, detail=f"src_audio not found: {src_audio}")
+        task_type = "cover" if src_audio else "text2music"
+        cover_strength = req.cover_strength if req.cover_strength is not None else (0.7 if task_type == "cover" else 0.2)
+
         params = GenerationParams(
-            task_type="text2music",
+            task_type=task_type,
             caption=caption[:500],
             lyrics=lyrics[:4000],
             instrumental=instrumental,
             vocal_language=vocal_language,
             bpm=req.bpm if req.bpm else None,
             duration=float(req.seconds),
+            reference_audio=ref_audio,
+            src_audio=src_audio,
+            audio_cover_strength=cover_strength,
             inference_steps=8,          # turbo 官方档
             seed=req.seed if req.seed is not None else -1,
             thinking=True,
@@ -230,7 +253,8 @@ def post_music(req: MusicRequest):
         else:
             config = GenerationConfig(batch_size=1, use_random_seed=True, seeds=None, audio_format="wav")
 
-        logger.info(f"[gen] mood={req.mood!r} seconds={req.seconds} seed={req.seed}")
+        logger.info(f"[gen] mood={req.mood!r} seconds={req.seconds} seed={req.seed} task={task_type} "
+                    f"ref={bool(ref_audio)} src={bool(src_audio)} strength={cover_strength}")
         torch.cuda.reset_peak_memory_stats()
         t1 = time.time()
         result = generate_music(_state["handler"], _state["llm"], params, config, save_dir=str(OUT_DIR))
@@ -248,12 +272,21 @@ def post_music(req: MusicRequest):
         if src_path.resolve() != final_path.resolve():
             src_path.replace(final_path)
         bytes_n = final_path.stat().st_size
+        # cover 时长锁源曲（模型原生行为）：如实回读产物时长，别把请求值当真
+        actual_seconds = req.seconds
+        if task_type == "cover":
+            try:
+                import wave as _wave
+                with _wave.open(str(final_path), "rb") as _w:
+                    actual_seconds = round(_w.getnframes() / float(_w.getframerate()), 1)
+            except Exception as exc:
+                logger.warning(f"[gen] cover duration readback failed: {exc}")
 
         _release_gpu_vram()
         _state["gen_count"] += 1
         resp = {
             "id": gen_id,
-            "seconds": req.seconds,
+            "seconds": actual_seconds,
             "file": str(final_path),
             "url": f"/music/{gen_id}/file",
             "bytes": bytes_n,
@@ -263,6 +296,8 @@ def post_music(req: MusicRequest):
             "seed": audio0["params"].get("seed", req.seed),
             "vram_peak_mb": _vram_stats()["vram_peak_mb"],
             "mood": req.mood,
+            "task_type": task_type,
+            "cover_strength": cover_strength,
         }
         logger.info(f"[gen] OK id={gen_id} bytes={bytes_n} gen={resp['gen_seconds']}s "
                     f"(model={resp['model_seconds']}s warmup={resp['warmup_seconds']}s) "

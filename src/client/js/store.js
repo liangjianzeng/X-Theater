@@ -553,6 +553,29 @@
       return T.sanitizeDeep(r.entry || r);
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
+  /* 声纹克隆（2026-11-22）：两步登记——样本先落盘（upload?domain=voices 只存文件），
+   * 再 POST /studio/voices kind=clone 带授权绑定 ref；缺授权服务端 400。 */
+  store.studioCreateVoice = async function (file, meta) {
+    try {
+      const m = meta || {};
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const qs = new URLSearchParams();
+      qs.set("domain", "voices");
+      if (m.name) qs.set("title", String(m.name).slice(0, 60));
+      const up = await T.api.rawPost("/studio/upload?" + qs.toString(), buf);
+      const r = await T.api.post("/studio/voices", {
+        kind: "clone", name: m.name || "声纹", gender: m.gender === "男" ? "男" : "女",
+        desc: m.desc || "", prompt_text: m.prompt_text || "", consent: true, ref: up.art
+      });
+      store.toast("声纹已登记");
+      store.loadStudioDomain("voices").catch(() => {});
+      return T.sanitizeDeep(r.voice || r);
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.studioDeleteVoice = async function (id) {
+    try { await T.api.del("/studio/voices/" + encodeURIComponent(id)); store.loadStudioDomain("voices").catch(() => {}); }
+    catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
   store.studioExtractCharacter = async function (episodeId, role) {
     try {
       const r = await T.api.post("/studio/characters/extract", { episodeId, role });
