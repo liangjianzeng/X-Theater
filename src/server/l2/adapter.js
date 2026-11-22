@@ -89,6 +89,10 @@ const REPLY = {
   expensive_pre: function (tool, args, est, ctx) {
     const gpuNote = " ⚠ 本机 LLM 正在线——这些动作的下游生图/拍摄需要独占显卡，会被挡。建议先点左下角 GPU 徽章「停止 LLM 让路」再让我执行。";
     const gpuOn = ctx.llm && ctx.llm.enabled() && ctx.llm.blockedByLocalLLM ? ctx.llm.blockedByLocalLLM() : false;
+    if (tool === "batch_reroll") {
+      const nB = (args.shot_ids || []).length || (args.shot_nos || []).length || 0;
+      return "要重拍 " + nB + " 个镜头，预计 " + est.cents + " 分、约 " + est.time_min + " 分钟——一张确认票覆盖全部，不用一镜一镜批。确认卡已发出，请核对后批准。" + (gpuOn ? gpuNote : "");
+    }
     if (tool === "decide_card") {
       const t = String(args.card_type || "卡");
       return "你要「" + (args.action === "accept" ? "通过" : "重出") + "」" + t + "卡。这一步会推进制作流程，确认卡已发出，请在确认面板批准后我才执行。" + (gpuOn ? gpuNote : "");
@@ -299,6 +303,14 @@ function replyFor(tool, args, r, ctx, session) {
     case "query_cost": {
       const res = r.result || {};
       return "本集已花 " + res.cost_cents + " 分，影子账合计 " + res.billing_sum + " 分（" + res.billing_rows + " 笔），账本可逐镜穿透核对。";
+    }
+    case "batch_reroll": {
+      const resB = r.result || {};
+      const names = (resB.shot_names || []).slice(0, 6).map(function (n) { return "「" + n + "」"; }).join("、");
+      return (names || (resB.jobs || 0) + " 个镜头") + "已全部重新入队（" + (resB.jobs || 0) + " 个任务），拍完我帮你逐镜择优。";
+    }
+    case "remember": {
+      return "记下了：" + ((r.result || {}).remembered || "") + "——这部剧的备忘我会一直带着。";
     }
     case "pick_take": {
       const res = r.result || {};

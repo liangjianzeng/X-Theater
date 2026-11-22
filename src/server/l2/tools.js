@@ -157,6 +157,37 @@ async function execute(tool, args, ctx, session, auth, opts) {
       };
       break;
     }
+    case "batch_reroll": {
+      const ids = (args.shot_ids || []).filter(function (id) { return st.shots[id]; });
+      if (!ids.length) return fail(ctx, session, tool, "NOT_FOUND", "没找到可重拍的镜头——说清镜号，比如「重拍第3、5、7镜」", trace);
+      const jobsB = [];
+      const namesB = [];
+      ids.forEach(function (id) {
+        const shot = st.shots[id];
+        const job = ctx.engine.enqueue("video", { shotId: id }, {
+          episodeId: args.episode_id,
+          initiated_by: "user"
+        });
+        shot.rerolls = (shot.rerolls || 0) + 1;
+        shot.status = "generating";
+        jobsB.push(job ? job.id : null);
+        namesB.push(shot.name || id);
+      });
+      job_id = jobsB[0] || null;
+      used_cents = (approval && approval.est && approval.est.cents) || est.cents;
+      result = { shot_ids: ids, shot_names: namesB.slice(0, 8), jobs: jobsB.filter(Boolean).length, job_ids: jobsB };
+      break;
+    }
+    case "remember": {
+      const note = String(args.fact || args.note || "").trim().slice(0, 120);
+      if (!note) return fail(ctx, session, tool, "BAD_REQUEST", "要记住的内容是空的——说「记住：……」后面接内容", trace);
+      const memMod = require("./memory.js");
+      const pid = memMod.projectIdFor(ctx, session, "", {});
+      if (!pid) return fail(ctx, session, tool, "FORBIDDEN", "先绑定剧集再记备忘（备忘跟着剧走）", trace);
+      memMod.noteUser(ctx, pid, note);
+      result = { remembered: note };
+      break;
+    }
     case "pick_take": {
       const shot = st.shots[args.shot_id];
       const takes = shot.takes || [];

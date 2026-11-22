@@ -127,6 +127,21 @@ function buildCard(tool, args, r, ctx, session) {
             { label: "对这版还不满意", send: "重出一版故事方向" }
           ]
         };
+      case "decide_card": {
+        /* C2-C8 深化（§2 矩阵）：拍板后按依赖链指下一步——CARD_NEXT 是单一来源 */
+        const ctype = res.type || args.card_type || "";
+        const next = gov.CARD_NEXT[ctype] || "";
+        const isReject = args.action === "reject" || res.action === "reject";
+        return {
+          kind: "choices",
+          options: isReject ? [
+            { label: "去卡流页看重出进度", href: flowHref(epId) }
+          ] : [
+            { label: "推进下一步", hint: next || "去卡流页看全链", href: flowHref(epId) },
+            { label: "让助手查进度", send: "本集现在到哪一步了" }
+          ]
+        };
+      }
       default:
         return null;
     }

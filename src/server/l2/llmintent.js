@@ -39,7 +39,7 @@ function stateSummary(ctx, session) {
   const pendingCards = Object.keys(st.cards || {}).map(function (k) { return st.cards[k]; })
     .filter(function (c) { return c.status === "pending" && String(c.episodeId) === String(epId); });
   lines.push("待拍板卡：" + (pendingCards.map(function (c) { return c.type + "·" + (governance.cardLabel(c.type) || "") + "(" + c.id + ")"; }).join("、") || "无"));
-  lines.push("本集驱动：" + ((ep.driver === "dgx") ? "DGX 节点（生图/视频走远程，不占本机显存，LLM 可常驻）" : "本机 5060 Ti（与本机 LLM 互斥；可在运维台切 DGX）"));
+  lines.push("本集驱动：" + ((ep.driver === "dgx") ? "DGX 节点（生图/视频走远程，不占本机显存，LLM 可常驻）" : "本机渲染节点（与本机 LLM 互斥；可在运维台切换）"));
   const chips = [];
   return lines.join("\n");
 }
@@ -57,6 +57,8 @@ const LLM_TOOLS = [
   ["query_progress", "{} 查询拍摄进度"],
   ["query_cost", "{} 查询成本"],
   ["reroll_shot", '{"shot_no":N} 或 {"shot_id":"sh_..."} 重拍镜头（花钱，会出确认卡）'],
+  ["batch_reroll", '{"shot_nos":[3,5,7]} 批量重拍多个镜头（一张确认票覆盖全部；用户点名多个镜或说「这几镜都重拍」时用）'],
+  ["remember", '{"fact":"要记住的事"} 把用户显式交代的事记进项目备忘（用户说「记住：X」时用）'],
   ["pick_take", '{"shot_no":N} 或 {"shot_id":"sh_..."} 为镜头选最佳条'],
   ["music_candidates", '{"scene_no":N,"mood":"中文情绪词"} 生成配乐候选（花钱，会出确认卡）'],
   ["set_mood", '{"scene_no":N,"mood":"中文情绪词"} 设定场次情绪'],
@@ -103,7 +105,7 @@ function systemPrompt(ctx, session, chips) {
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",
-    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「采纳建议/就用建议这版」＝apply_suggestion；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
+    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「采纳建议/就用建议这版」＝apply_suggestion；说「记住：X」＝remember{fact:X}；点名多个镜重拍（如「重拍第3、5、7镜」「这几镜都重拍」）＝batch_reroll{shot_nos:[3,5,7]}；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
     "1a. 查询必须走工具拿实时数据——上下文摘要只是定位线索，不是实时面板，禁止拿它直接 say 回答：问卡/待拍板/有几张卡/卡流 → query_cards；问进度/到哪一步/拍完没有/完成了没 → query_progress；问花了多少/成本/预算/还要多少钱 → query_cost；问显存/GPU/占卡/为什么开不了机 → query_gpu。这四类永远输出对应工具调用。",
     "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
     "3. 与工具无关的一般问题（问剧情、要剧场内的创作建议、打招呼闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内；剧场外创作（写诗/写小说/写代码/讲故事）不是创作建议，走拒答且绝不调用任何工具。",
@@ -155,6 +157,8 @@ const TOOL_ARG_KEYS = {
   query_card: ["card_id"],
   decide_card: ["card_id", "card_type", "action"],
   apply_suggestion: ["card_id"],
+  batch_reroll: ["shot_ids", "shot_nos"],
+  remember: ["fact", "note"],
   suggest_card: ["card_id", "note"],
   create_project: ["title", "look"],
   create_episode: ["project_id", "project_name", "title", "brief"],
@@ -198,6 +202,10 @@ function toIntent(ctx, session, out, epId, text) {
     if (k === "shot_no" || k === "scene_no") {
       const n = Number(v);
       if (Number.isInteger(n) && n > 0 && n < 100) args[k] = n;
+    } else if (k === "shot_nos") {
+      if (Array.isArray(v)) args[k] = v.map(Number).filter(function (n) { return Number.isInteger(n) && n > 0 && n < 100; }).slice(0, 12);
+    } else if (k === "shot_ids") {
+      if (Array.isArray(v)) args[k] = v.map(function (x) { return String(x).replace(/[^A-Za-z0-9_\-]/g, ""); }).filter(Boolean).slice(0, 12);
     } else if (k === "mood") {
       const m = String(v).slice(0, 20);
       if (m) args[k] = m;
@@ -223,6 +231,18 @@ function toIntent(ctx, session, out, epId, text) {
     const id = resolveSceneNo(ctx, session, args.scene_no);
     if (id) args.scene_id = id;
     delete args.scene_no;
+  }
+  // batch_reroll：镜号数组 → shot_ids（逐个解析；解析不到的丢弃，全空交给 tools 报人话错）
+  if (tool === "batch_reroll" && Array.isArray(args.shot_nos) && args.shot_nos.length) {
+    const ids2 = Array.isArray(args.shot_ids) ? args.shot_ids.slice() : [];
+    args.shot_nos.forEach(function (n2) { const id2 = resolveShotNo(ctx, session, n2); if (id2) ids2.push(id2); });
+    args.shot_ids = ids2;
+    delete args.shot_nos;
+  }
+  // remember 机械兜底：小模型常漏拷 fact——从用户原话直抠「记住：X」（内容来自用户文本，不是幻觉）
+  if (tool === "remember" && !args.fact && !args.note) {
+    const mR = String(text || "").match(/(?:请?帮我?记住|请?记住|记一下|备忘)[：:，,\s]*(.+)$/);
+    if (mR && String(mR[1]).trim()) args.fact = String(mR[1]).trim().slice(0, 120);
   }
   // create_episode：LLM 忘传项目定位时的三级兜底——①用户话里提到项目名（原文匹配）；
   // ②会话链式语境（本会话刚建的项目＝lastProject，承接「建完项目答梗概就建集」的 ask 链）
@@ -275,7 +295,29 @@ const TOOL_ADVICE = {
   query_gpu: "解释谁占着谁，给解锁选项（运维台切 DGX／停 LLM 让路），助手绝不代停。",
   query_scenes: "点出最薄弱的一场，给一句改进方向。",
   query_music: "说清哪些场还没挂音轨。",
-  apply_suggestion: "说明建议落在卡上哪些地方（场次/镜头数变化），强调拍板权仍在用户。"
+  apply_suggestion: "说明建议落在卡上哪些地方（场次/镜头数变化），强调拍板权仍在用户。",
+  batch_reroll: "说明这次重拍覆盖哪几镜、为什么值得一起重拍（同一场或同一类问题），预算与确认票在下方。",
+  remember: "确认记下了什么、跟着哪部剧走；备忘会跨会话带上，不用重复交代。",
+  decide_card: "说清这次拍板推进了什么（用卡的中文名）、下游哪一步被解锁；重出则问一句不满意在哪，别替用户猜。",
+  reroll_shot: "点出重拍的是哪一镜、大概多久出片，建议拍完说「择优」。",
+  batch_reroll: "说明覆盖哪几镜、为什么值得一起重拍（同一场或同一类问题），预计时间与确认票位置。",
+  shoot_episode: "说全镜已派任务、预计时长，提醒去拍摄页看队列与并行度。",
+  export_episode: "说明预检与合成进度、成片在哪看。",
+  create_project: "报剧名与影调，顺势问第一集梗概。",
+  create_episode: "报集名，说明剧本与故事卡在生成中，好了会提示拍板。",
+  query_episodes: "列出各集并推荐该深入哪一集。",
+  revise_scenes: "说明改了哪几场、卡会重审，拍板权仍在人。",
+  set_mood: "确认哪一场改成什么基调、影响后续哪些镜头。",
+  music_candidates: "说明出了几条候选、去哪试听。",
+  generate_music: "说明候选进了素材池、去哪试听与挂接。",
+  generate_image: "说明候选进了素材池、去哪预览。",
+  adopt_music: "确认哪条曲挂到哪场、原曲去向。",
+  bind_asset: "确认绑定结果与主备选。",
+  search_assets: "报命中数量并推荐最合适的一条。",
+  library_stats: "报各域库存，点出缺什么素材。",
+  assist_lyrics: "说明歌词结构（段标记），建议拿去素材中心生成试听。",
+  assist_image_prompt: "展示扩写后的画面描述（四层），建议直接生成看效果。",
+  pick_take: "说明选了第几条、理由一句话。"
 };
 
 /** LLM 人话回执（成功后；失败 → 回退 replyFor 模板）

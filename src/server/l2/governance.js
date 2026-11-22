@@ -33,6 +33,7 @@ const TOOLS = {
   remember: { expensive: false, desc: "记住一条项目备忘（用户显式「记住：X」；跨会话注入后续对话）" },
   adopt_music: { expensive: false, desc: "采用某条配乐候选挂接到场次" },
   reroll_shot: { expensive: true, desc: "重拍指定镜头（花真金白银，必答门）" },
+  batch_reroll: { expensive: true, desc: "批量重拍多个镜头（一张确认票覆盖全部，必答门）" },
   pick_take: { expensive: false, desc: "为镜头选定最佳条" },
   music_candidates: { expensive: true, desc: "生成配乐候选（批量生成，必答门）" },
   set_mood: { expensive: false, desc: "设定场次情绪基调" },
@@ -128,6 +129,16 @@ function estimate(tool, args, ctx) {
       const shot = (args && st.shots[args.shot_id]) || null;
       const sec = (shot && (shot.sec || shot.sec_num)) || 5;
       return { cents: 80 * Math.max(1, Math.ceil(sec / 5)), time_min: 3 };
+    }
+    case "batch_reroll": {
+      const ids = (args && args.shot_ids) || [];
+      const per = function (id) {
+        const shot = (st.shots || {})[id];
+        const sec2 = (shot && (shot.sec || shot.sec_num)) || 5;
+        return 80 * Math.max(1, Math.ceil(sec2 / 5));
+      };
+      const cents = ids.length ? ids.reduce(function (a, id) { return a + per(id); }, 0) : 80;
+      return { cents: cents, time_min: 3 * Math.max(1, ids.length || 1) };
     }
     case "music_candidates":
       return { cents: 45, time_min: 2 }; // 3 条 × 影子 5–15 分/条，取保守上界

@@ -50,6 +50,12 @@ function extractShotNo(text) {
   const m = String(text).match(/第\s*([0-9一二三四五六七八九十两]+)\s*(?:镜|个镜头|镜头|条)/);
   return m ? toNum(m[1]) : null;
 }
+/** 批量镜号：「第3、5、7镜」「重拍 3、5、7」「3、5、7 镜都重拍」——顿号/逗号/和 串联 ≥2 个编号 */
+function extractShotNos(text) {
+  const m = String(text).match(/(?:第)?\s*([0-9一二三四五六七八九十两]+(?:\s*[、,，和跟]\s*(?:第)?\s*[0-9一二三四五六七八九十两]+)+)\s*(?:个?镜头|镜|条)/);
+  if (!m) return [];
+  return m[1].split(/\s*[、,，和跟]\s*/).map(function (x) { return toNum(String(x).replace(/^第/, "")); }).filter(function (n) { return n > 0; });
+}
 function extractSceneNo(text) {
   const m = String(text).match(/场\s*([0-9一二三四五六七八九十两]+)/);
   return m ? toNum(m[1]) : null;
@@ -117,6 +123,19 @@ function parseIntent(text, chips, ctx, session) {
   const wantMusic = /配乐|bgm|来\s*[0-9一二三四五两]+\s*(?:段|首|条)|候选|生成.{0,4}(音乐|配乐)|出.{0,4}(音乐|配乐)/i.test(t);
   const wantReroll = /重拍|重绘|再拍|再来一?[条个]/.test(t);
   const wantPick = /择优|选(?:最|择)|最佳|挑一?条/.test(t);
+
+  // —— 备忘（用户显式「记住：X」——入项目台账，跨会话注入）——
+  const memM = t.match(/^(?:请?帮我?记住|请?记住|记一下|备忘)[：:，,\s]*(.+)$/);
+  if (memM) return { tool: "remember", name: "remember", args: mkArgs({ episode_id: epId, fact: memM[1].slice(0, 120) }) };
+
+  // —— 批量重拍（一张确认票覆盖全部）——
+  const shotNosB = extractShotNos(t);
+  if (wantReroll && shotNosB.length >= 2) {
+    const listB = shotsOfEpisode(ctx, epId);
+    const idsB = shotNosB.map(function (n) { const sh = listB[n - 1]; return sh ? sh.id : null; }).filter(Boolean);
+    if (!idsB.length) return { refusal: adapter.REPLY.need_shot_no, name: "batch_reroll" };
+    return { tool: "batch_reroll", name: "batch_reroll", args: mkArgs({ episode_id: epId, shot_ids: idsB }) };
+  }
   const wantCost = /成本|花了|花费|费用|预算|多少钱/.test(t);
   const wantProject = /项目/.test(t) && /(哪些|列表|列|几个|多少|查询|查)/.test(t);
   /* 回归集（test/selfcheck/intent-corpus.js）驱动的词表：拍到哪/拍完/没拍/到哪儿/待批/新卡/

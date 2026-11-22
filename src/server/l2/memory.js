@@ -120,4 +120,22 @@ function block(ctx, epId) {
   }
 }
 
-module.exports = { note, list, block, factOf, projectIdFor, MAX_KEEP, MAX_INJECT, MAX_LEN };
+/** 用户显式备忘（「记住：X」）→ 台账（与结果事实同表，文本前缀区分；永不影响回合） */
+function noteUser(ctx, projectId, text) {
+  try {
+    if (!projectId) return null;
+    const t = String(text || "").trim().slice(0, MAX_LEN);
+    if (!t) return null;
+    const st = ctx.store.get();
+    const mem = storeOf(st);
+    const arr = Array.isArray(mem[projectId]) ? mem[projectId] : [];
+    arr.push({ ts: (ctx.util && ctx.util.now ? ctx.util.now() : Date.now()), text: "备忘：" + t });
+    mem[projectId] = arr.slice(-MAX_KEEP);
+    if (ctx.store && typeof ctx.store.commit === "function") ctx.store.commit();
+    return true;
+  } catch (e) {
+    return null;
+  }
+}
+
+module.exports = { note, noteUser, list, block, factOf, projectIdFor, MAX_KEEP, MAX_INJECT, MAX_LEN };
