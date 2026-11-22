@@ -227,7 +227,37 @@
         while (hints.value.length > 2) hints.value.shift();
         if (fresh) store.toast("有新卡等你拍板", "warn");
       });
-      Vue.watch(() => (boundEp.value && boundEp.value.id) || "", () => { hints.value = []; baselined.value = false; });
+      Vue.watch(() => (boundEp.value && boundEp.value.id) || "", () => { hints.value = []; baselined.value = false; seenRqIds.clear(); reviewBaselined.value = false; });
+      /* 复审事件 hint：复审台出现新 ⚠ 待复审镜头（经 shots_by_episode 归属到绑定集）——
+         单槽位（数量变化就更新文案），基线静默同卡流 hint。 */
+      const seenRqIds = new Set();
+      const reviewBaselined = Vue.ref(false);
+      const boundReviews = Vue.computed(() => {
+        const b = boundEp.value;
+        if (!b || !store.state) return [];
+        const shots = (store.state.shots_by_episode || {})[b.id] || [];
+        const ids = new Set(shots.map(s => s.id));
+        return (store.state.review_pending || []).filter(r => r && ids.has(r.shotId));
+      });
+      Vue.watch(boundReviews, (list) => {
+        if (!boundEp.value) return;
+        if (!reviewBaselined.value) { list.forEach(r => seenRqIds.add(r.id)); reviewBaselined.value = true; return; }
+        let fresh = 0;
+        list.forEach(r => { if (!seenRqIds.has(r.id)) { seenRqIds.add(r.id); fresh++; } });
+        if (!fresh) return;
+        const n = list.length;
+        hints.value = hints.value.filter(h => h.id !== "review");
+        hints.value.push({
+          id: "review",
+          text: "📌 " + n + " 个镜头待复审——建议先处理 ⚠ 密集的那场，批复完镜头才放行",
+          options: [
+            { label: "去复审台", href: "#/review" },
+            { label: "查本集现在到哪一步了", send: "本集现在到哪一步了" }
+          ]
+        });
+        while (hints.value.length > 2) hints.value.shift();
+        store.toast("有镜头待复审", "warn");
+      });
       function dismissHint(h) { hints.value = hints.value.filter(x => x !== h); }
       function hintOpt(h, o) {
         if (!h || !o) return;
