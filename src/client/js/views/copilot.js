@@ -338,7 +338,8 @@
       });
       const gpuBlocked = Vue.computed(() => {
         const e = epObj.value;
-        return !!((!e || e.driver !== "dgx") && store.gpu && store.gpu.data && store.gpu.data.gpu_busy);
+        // driver＝节点注册表节点 id：仅「local」（或未设）渲染吃本机独显，其余节点不吃
+        return !!((!e || !e.driver || e.driver === "local") && store.gpu && store.gpu.data && store.gpu.data.gpu_busy);
       });
       const CHIPS = Vue.computed(() => {
         const out = [];
@@ -588,10 +589,27 @@
         if (o.send) { send(String(o.send)); return; }
       }
 
+      /* ---------- AI 能力提示（2026-11-22）：LLM 未配置→规则模式引导；离线→守护拉起中 ---------- */
+      const llmState = Vue.computed(() => {
+        const g = store.gpu.data;
+        const llm = (g && g.llm) || {};
+        return {
+          configured: !!llm.configured,
+          online: !!llm.online,
+          isOps: !!(store.auth.user && store.auth.user.role === "ops"),
+          show: !!(g && llm && (!llm.configured || !llm.online)) // 未配置或离线才提示
+        };
+      });
+      function goLlmConfig() {
+        try { global.__ROUTER.go("#/admin"); global.scrollTo({ top: 0 }); } catch (e) {}
+        try { store.toast("在「算力节点」页顶部的 🧠 LLM 大脑 面板填写端点即可启用 AI 能力"); } catch (e2) {}
+      }
+
       return {
         store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, menuOpen, histOpen, histList, openHist, loadSession, newSession, copyMsg, histSnip, histTs,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
+        llmState, goLlmConfig,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
         canDecide, estCents, estTime, decide, pickOpt, isUsed, hints, dismissHint, hintOpt,
         fmtArgsStatic: fmtArgs,
@@ -625,6 +643,16 @@
             <div class="weak v-copilot-hist-empty" v-if="!histList.length">还没有历史会话</div>
           </div>
           <div class="v-copilot-off" v-if="sseOff">实时断了，重连中</div>
+
+          <!-- AI 能力提示（2026-11-22）：未配置→规则模式引导；已配置离线→守护拉起中 -->
+          <div class="v-copilot-off" v-if="llmState.show && !llmState.configured"
+            style="cursor:pointer" @click="llmState.isOps && goLlmConfig()"
+            :title="llmState.isOps ? '点击去运维台配置' : ''">
+            ⚠️ AI 能力未启用——助手与 AI 剧本/审查正运行在规则兜底模式。<template v-if="llmState.isOps">点这里去运维台填 LLM 端点启用 →</template><template v-else>请运营在运维台配置 LLM。</template>
+          </div>
+          <div class="v-copilot-off" v-else-if="llmState.show && llmState.configured && !llmState.online">
+            ⏳ LLM 离线——守护自动拉起中，AI 增强暂不可用（规则兜底继续）。
+          </div>
 
           <div class="v-copilot-tabwrap">
             <div class="rail-tabs">

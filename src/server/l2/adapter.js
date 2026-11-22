@@ -326,11 +326,11 @@ function replyFor(tool, args, r, ctx, session) {
     case "query_gpu": {
       const res = r.result || {};
       const llmOn = !!res.llmOnline;
-      if (res.episode_driver === "dgx") {
-        return "本集走 DGX 节点渲染，不吃本机显存；本机 LLM " + (llmOn ? "在线，两边互不打架。" : "当前离线/未启用。") + (llmOn ? "创作咨询随时说。" : "");
+      if (res.render_on_llm_host === false && res.episode_driver) {
+        return "本集走「" + (res.episode_node_label || res.episode_driver) + "」节点渲染，不吃本机显存；本机 LLM " + (llmOn ? "在线，两边互不打架。" : "当前离线/未启用。") + (llmOn ? "创作咨询随时说。" : "");
       }
       return llmOn
-        ? "本机 LLM 正占着 5060 Ti，本机生图/拍摄暂时进不去——两个解法：去运维台把这部局的渲染节点切到 DGX（推荐，LLM 不用停），或临时停 LLM 让路。我不代停，选项卡里带你去。"
+        ? "本机 LLM 正占着独显，本机生图/拍摄暂时进不去——两个解法：去运维台把这部局的渲染节点切到别的节点（推荐，LLM 不用停），或临时停 LLM 让路。我不代停，选项卡里带你去。"
         : "本机 LLM 离线/未启用，本机渲染畅通，直接开机就行。";
     }
     case "query_projects": {

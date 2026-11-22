@@ -12,7 +12,7 @@ const fs = require("fs");
 const path = require("path");
 
 const util = require("./core/util");
-const { openStore } = require("./core/store");
+const { openStore, DEFAULT_LANE_NODE } = require("./core/store");
 const { createBus } = require("./core/bus");
 const { createRouter } = require("./core/router");
 const { createEngine } = require("./dag/engine");
@@ -31,33 +31,80 @@ fs.mkdirSync(outDir, { recursive: true });
 
 /* ---------- 装配 ---------- */
 const store = openStore(varDir, { minimal: process.env.THEATER_SEED_MINIMAL === "1" });
-const bus = createBus();
+const tenants = require("./core/tenants");
+// bus 带域解析器（S3-6）：订阅端可按域过滤 SSE——消息体里的 project/episode/episodeId/card/shotId
+// 反查归属域；解析不出（系统级消息如 alerts）→ 广播给所有人。
+const bus = createBus({
+  tidOf(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    if (obj.tid) return obj.tid;
+    if (obj.job && obj.job.tid) return obj.job.tid;
+    try {
+      const st = store.get();
+      if (obj.project && obj.project.tenantId) return obj.project.tenantId;
+      if (obj.episode && obj.episode.tenantId) return obj.episode.tenantId;
+      let eid =
+        obj.episodeId ||
+        (obj.card && obj.card.episodeId) ||
+        (obj.ep && obj.ep.id) ||
+        null;
+      if (!eid && obj.shotId) {
+        eid = ((st.shots || {})[obj.shotId] || {}).episodeId || null;
+      }
+      if (eid) return ((st.episodes || {})[eid] || {}).tenantId || null;
+    } catch (e) { /* 反查失败＝广播 */ }
+    return null;
+  }
+});
 // comfy 通道：THEATER_COMFY=1 启用真引擎（W-B 无头 ComfyUI :8188）；不设＝stub 模式（验收套件）
 // comfySpark 通道：THEATER_COMFY_SPARK=1 启用 DGX Spark ComfyUI（H3 线 vidspark/imgspark 真引擎）
-// base 挂节点档案（state.nodes[id].comfy.base，运维台改端点热生效，单一事实源）；env 作首启种子与兜底
-const nodeBase = (id, envUrl, fallback) => {
+// 端点解析（2026-11-22 节点注册表化）：一律经 cfg.laneBase(lane)→注册表 lane→node 绑定→节点档案，
+// 运维台改绑定/改端点热生效，单一事实源是 state.nodes——代码里不再写死机器 IP。
+// env 仅作内建回退表覆盖不到时的部署种子（老部署路径）。
+const LANE_ENV_FALLBACK = {
+  img5060: "THEATER_COMFY_URL", vid5060: "THEATER_COMFY_URL",
+  imgspark: "THEATER_COMFY_SPARK_URL", vidspark: "THEATER_COMFY_SPARK_URL"
+};
+const laneBase = (lane) => {
   try {
     const st = store.get();
-    const b = st && st.nodes && st.nodes[id] && st.nodes[id].comfy && st.nodes[id].comfy.base;
-    if (b) return b;
-  } catch (e) { /* store 未就绪走 env */ }
-  return process.env[envUrl] || fallback;
+    const reg = (st.settings && st.settings.registry) || {};
+    const hit = Object.keys(reg).map((k) => reg[k]).find((e) => e && e.lane === lane && e.node);
+    const nodeId = hit ? hit.node : DEFAULT_LANE_NODE[lane];
+    const nd = nodeId && st.nodes && st.nodes[nodeId];
+    if (!nd) return process.env[LANE_ENV_FALLBACK[lane]] || "";
+    // 云 API 目标（2026-11-22）：kind:"cloud" 的节点端点在 api.endpoint（非 ComfyUI）
+    if (nd.kind === "cloud" && nd.api && nd.api.endpoint) return nd.api.endpoint;
+    if (nd.comfy && nd.comfy.base) return nd.comfy.base;
+  } catch (e) { /* store 未就绪走 env 兜底 */ }
+  return process.env[LANE_ENV_FALLBACK[lane]] || "";
 };
 const cfg = {
   outDir,
   seed: true,
+  // lane→节点档案端点解析挂到 cfg 上：workers / 运维台 resolveServe 经 cfg.laneBase(lane) 取拨号端点
+  laneBase,
   comfy: {
     enabled: process.env.THEATER_COMFY === "1",
     inputDir: process.env.THEATER_COMFY_INPUT || "E:/ComfyUI/input",
-    get base() { return nodeBase("local", "THEATER_COMFY_URL", "http://127.0.0.1:8188"); }
+    get base() { return laneBase("img5060"); }
   },
   comfySpark: {
     enabled: process.env.THEATER_COMFY_SPARK === "1",
-    get base() { return nodeBase("dgx", "THEATER_COMFY_SPARK_URL", "http://100.81.83.59:8188"); }
+    get base() { return laneBase("imgspark"); }
   },
   h3ir: {
     llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
     llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
+  },
+  // LLM 承载机器的 Comfy 端点（显存互斥监视/卸载用——与 LLM 同机才有显存冲突）
+  get llmHostComfy() {
+    try {
+      const st = store.get();
+      const nd = st.nodes && (st.nodes[st.llm_node || "local"] || st.nodes.local);
+      if (nd && nd.comfy && nd.comfy.base) return nd.comfy.base;
+    } catch (e) { /* store 未就绪走 env */ }
+    return process.env.THEATER_COMFY_URL || "";
   },
   // llm-gw：LLM 档案挂节点（state.nodes[state.llm_node].llm，运维设置热切换）；env 作首启种子
   get llm() {
@@ -92,7 +139,7 @@ const rules = {
 };
 engine.rules = rules; // worker ctx.rules 由此注入
 
-const ctx = { store, bus, engine, rules, l2: null, util, cfg, llm: null };
+const ctx = { store, bus, engine, rules, l2: null, util, cfg, llm: null, tenants };
 
 // llm-gw：真脑通道＋显存互斥监视（LLM 在线＝本机 Comfy 生图/拍摄被闸；engine 同步读缓存）
 try {
@@ -110,27 +157,38 @@ if (l2Facade && typeof l2Facade.createL2 === "function") {
 
 const router = createRouter();
 
-// 鉴权：Authorization: Bearer <util.sign 的 token> → state.users 记录
-// SSE 例外：EventSource 无法带自定义头，仅 /api/events 允许 ?token= 兜底
-router.useAuth((req) => {
-  let raw = "";
+// 鉴权：凭据三路提取（2026-11-22）：Authorization Bearer ＋ Cookie theater_tok（/var/ 资产
+// 标签带不上自定义头，同源自动携带）＋ ?token=（EventSource 兜底，仅 /api/events 与 /var/ 面）
+function tokenOf(req) {
   const h = req.headers["authorization"] || "";
   const m = /^Bearer\s+(.+)$/i.exec(String(h).trim());
-  if (m) raw = m[1];
-  else if (String(req.url || "").split("?")[0] === "/api/events") {
-    const qi = String(req.url || "").indexOf("?");
-    if (qi >= 0) raw = new URLSearchParams(req.url.slice(qi + 1)).get("token") || "";
+  if (m) return m[1];
+  const cm = /(?:^|;\s*)theater_tok=([^;]+)/.exec(String(req.headers["cookie"] || ""));
+  if (cm) {
+    try { return decodeURIComponent(cm[1]); } catch (e) { return cm[1]; }
   }
+  const url = String(req.url || "");
+  const p = url.split("?")[0];
+  if (p === "/api/events" || p.startsWith("/var/out/") || p.startsWith("/var/assets/")) {
+    const qi = url.indexOf("?");
+    if (qi >= 0) return new URLSearchParams(url.slice(qi + 1)).get("token") || "";
+  }
+  return "";
+}
+
+router.useAuth((req) => {
+  const raw = tokenOf(req);
   if (!raw) return null;
   const payload = util.verify(raw);
   if (!payload) return null;
   const uidv = payload.uid || payload.id || (payload.user && payload.user.id) || null;
   if (!uidv) return null;
   const st = store.get();
-  return (
-    st.users[String(uidv)] ||
-    (payload.role ? { id: String(uidv), name: payload.name || String(uidv), role: payload.role } : null)
-  );
+  const u = st.users[String(uidv)];
+  // 2026-11-22 堵兜底：账号已被删/不存在 → 一律 401，不再信任 token 里的 role 造用户
+  if (!u) return null;
+  // 域上下文（S3-4）：token.tid 随凭据走，切换域＝重签 token
+  return { id: u.id, name: u.name, role: u.role, tid: payload.tid || null };
 });
 
 // api 模块：module.exports.register = (router, ctx) => {}
@@ -180,9 +238,29 @@ function serveStatic(req, res) {
   if (!pathname || pathname === "/") pathname = "/index.html";
 
   // /var/out/* 与 /var/assets/* → 产物/定妆资产静态面（仅这两个目录，防穿越）
+  // 登录墙（2026-11-22）：产物不再裸奔——Bearer/Cookie/?token= 任一有效凭据才可读，
+  // 账号须仍存在（与 useAuth 同一裁决）。
   const varRoots = ["/var/out/", "/var/assets/"];
   const vr = varRoots.find((p) => pathname.startsWith(p));
   if (vr) {
+    const cred = util.verify(tokenOf(req));
+    const uidv = cred && (cred.uid || cred.id);
+    if (!uidv || !store.get().users[String(uidv)]) {
+      return router.json(res, 401, { error: { code: "UNAUTHORIZED", message: "需要登录（凭据缺失或已失效）" } });
+    }
+    // 域级 ACL（S3-7）：资产归属反查——命中他域资产 → 404（不确认存在）；
+    // 反查不到（历史/系统文件）→ 退化为登录墙语义放行。
+    try {
+      const assetTid = tenants.assetTid(store.get(), pathname.replace(/^\//, ""));
+      if (assetTid) {
+        const ctxTid = tenants.contextTid(store.get(), {
+          id: uidv, role: cred.role, tid: cred.tid || null
+        });
+        if (assetTid !== ctxTid && cred.role !== "ops") {
+          return router.json(res, 404, { error: { code: "NOT_FOUND", message: "产物不存在" } });
+        }
+      }
+    } catch (e) { /* ACL 反查失败不阻断（登录墙已过） */ }
     const root = path.join(varDir, vr.slice("/var/".length).replace(/\/+$/, ""));
     const fp = path.normalize(path.join(root, pathname.slice(vr.length)));
     const rootN = path.resolve(root).toLowerCase();
@@ -229,7 +307,10 @@ function serveStatic(req, res) {
     const buf = fs.readFileSync(target);
     res.writeHead(200, {
       "Content-Type": MIME[path.extname(target).toLowerCase()] || "application/octet-stream",
-      "Content-Length": buf.length
+      "Content-Length": buf.length,
+      // 客户端静态面 no-cache（2026-11-22 修复：无缓存头时浏览器启发式缓存旧 JS——
+      // 同一 ?v= 版本键下的代码更新用户侧永远看不到，素材中心视图渲染空白即此因）
+      "Cache-Control": "no-cache"
     });
     res.end(buf);
   } catch (e) {

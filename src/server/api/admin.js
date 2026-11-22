@@ -2,12 +2,17 @@
 /**
  * api/admin.js — 后台（契约 §3/§4，ops）
  * GET  /api/admin/registry · GET /api/admin/registry/:engineId（渲染字段 langlint 豁免 exempt:true）
+ * POST /api/admin/registry {engineId,lane,node?,...} → 登记新引擎（lane 需为已装载车道）
+ * POST /api/admin/registry/remove {engineId,confirmed:true} → 注销引擎（护栏：可加回，审计留痕）
+ * POST /api/admin/registry/node {engineId,node,confirmed:true} → 改绑引擎归属节点（拨号热生效）
  * POST /api/admin/registry/quant {engineId,tier,reason?} → rules.quant.decide 裁决：
  *      QUANT_RULE → 409 复述 message；audit_needed → store.log("audit",{action:"quant_fallback",audit_id:"Q-"+hash12.slice(0,4)})
  * POST /api/admin/registry/endpoint|model → body 无 confirmed:true → 428 {code:"CONFIRM_REQ"}
  * POST /api/admin/alerts/simulate → 3 条 alert＋bus
  * GET  /api/admin/audit?kind= → readLog(kind)（默认 audit）
  */
+
+const { ensureRegistryNodes } = require("../core/store");
 
 const FALLBACK_TIER = "MXFP8+FP8"; // tier 序 nvfp4→int8→MXFP8+FP8 的兜底档
 
@@ -41,7 +46,7 @@ function parseQuery(req) {
 }
 
 function register(router, ctx) {
-  const { store, util, bus, cfg } = ctx;
+  const { store, util, bus, cfg, engine } = ctx;
 
   function audit(auth, action, target, extra) {
     const obj = { operator: (auth && (auth.uid || auth.id)) || null, action, target };
@@ -53,20 +58,24 @@ function register(router, ctx) {
     const st = store.get();
     st.settings = st.settings || {};
     st.settings.registry = st.settings.registry || {};
+    ensureRegistryNodes(st); // 幂等：存量条目补 node 绑定（正常已在启动迁移时补齐）
     return st.settings.registry;
   }
 
-  // 引擎→实际服务归属解析（与 dag/workers 的通道接线一致，映射住后端、前端零写死）：
-  //   img5060/vid5060 → cfg.comfy（＝ local 节点档案的渲染端点，getter 动态读）；
-  //   imgspark/vidspark → cfg.comfySpark（＝ dgx 节点档案）；
+  // 引擎→实际服务归属解析（2026-11-22 注册表化：lane→node 绑定住注册表，前端零写死）：
+  //   img*/vid* → 注册表引擎的归属节点档案端点（cfg.laneBase 动态读，改绑/改端点即热生效）；
   //   music/tts → cfg.music/tts.url 独立服务（可空＝未配置/stub）；其余 → 服务器进程内。
   // 返回 serve＝workers 实际拨号的地址；node＝归属节点 id（不挂节点的服务为 null）。
   function resolveServe(lane) {
     const l = String(lane || "").toLowerCase();
-    if (l === "img5060" || l === "vid5060") return { node: "local", serve: String(cfg.comfy.base || "") };
-    if (l === "imgspark" || l === "vidspark") return { node: "dgx", serve: String(cfg.comfySpark.base || "") };
     if (l === "music") return { node: null, serve: String((cfg.music && cfg.music.url) || "") };
     if (l === "tts") return { node: null, serve: String((cfg.tts && cfg.tts.url) || "") };
+    if (l.indexOf("img") === 0 || l.indexOf("vid") === 0) {
+      return {
+        node: engine && typeof engine.laneBoundNode === "function" ? engine.laneBoundNode(l) : null,
+        serve: typeof cfg.laneBase === "function" ? cfg.laneBase(l) : ""
+      };
+    }
     return { node: null, serve: "in-proc" };
   }
 
@@ -97,7 +106,12 @@ function register(router, ctx) {
           exempted = true;
         }
       }
-      return router.json(res, 200, { registry: registryView(), langlint_exempt: exempted });
+      return router.json(res, 200, {
+        registry: registryView(),
+        langlint_exempt: exempted,
+        // 合法车道枚举（登记/改绑引擎用）：ALL_LANES ∪ 已装载 worker 车道
+        lanes: engine && typeof engine.laneNames === "function" ? engine.laneNames() : []
+      });
     },
     { auth: true }
   );
@@ -113,6 +127,111 @@ function register(router, ctx) {
       if (!e) throw { code: "NOT_FOUND", message: "引擎不存在: " + params.engineId };
       const r = resolveServe(e.lane);
       return router.json(res, 200, { engineId: params.engineId, entry: Object.assign({}, e, { node: r.node, serve: r.serve }) });
+    },
+    { auth: true }
+  );
+
+  /* ---------------- 引擎注册表 CRUD（2026-11-22：登记/注销/改绑不再改代码） ---------------- */
+
+  // 引擎登记/改绑共用的载荷清洗（字符串截断、档位数组去空白）
+  function cleanEntryPayload(b) {
+    const str = (v, cap) => String(v == null ? "" : v).trim().slice(0, cap);
+    const tiers = (v) =>
+      Array.isArray(v) ? v.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 16) : undefined;
+    return {
+      engine: str(b.engine, 60),
+      quant: str(b.quant, 40),
+      endpoint: str(b.endpoint, 80),
+      published: tiers(b.published),
+      unavail: tiers(b.unavail)
+    };
+  }
+
+  // POST /api/admin/registry {engineId,lane,node?,engine?,quant?,endpoint?,published?,unavail?} — 登记新引擎
+  router.add(
+    "POST",
+    "/api/admin/registry",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      const engineId = String(b.engineId || "").trim().slice(0, 80);
+      if (!engineId) throw { code: "BAD_REQUEST", message: "engineId 必填（如「SDXL-turbo-Q8」）" };
+      const lane = String(b.lane || "").trim();
+      const lanes = engine && typeof engine.laneNames === "function" ? engine.laneNames() : [];
+      if (lanes.length && lanes.indexOf(lane) < 0) {
+        throw { code: "BAD_REQUEST", message: "未知车道: " + (lane || "（空）") + "——可选: " + lanes.join("、") };
+      }
+      const reg = getRegistry();
+      if (reg[engineId]) throw { code: "CONFLICT", message: "引擎已存在: " + engineId };
+      // 归属节点：可空（进程内/独立服务）；给了必须在节点注册表里
+      let node = b.node == null || b.node === "" ? null : String(b.node).trim();
+      if (node) {
+        const st = store.get();
+        if (!((st.nodes || {})[node])) throw { code: "BAD_REQUEST", message: "未知节点: " + node + "——先在「算力节点」登记" };
+      }
+      const c = cleanEntryPayload(b);
+      reg[engineId] = {
+        lane,
+        node,
+        engine: c.engine || engineId,
+        quant: c.quant || "n/a",
+        endpoint: c.endpoint || "",
+        published: c.published || [],
+        unavail: c.unavail || []
+      };
+      store.commit();
+      audit(auth, "registry_add", engineId, { lane, node, quant: reg[engineId].quant });
+      try { bus.publish("alerts", { kind: "registry", msg: "引擎已登记: " + engineId + "（lane=" + lane + "，node=" + (node || "—") + "）" }); } catch (e) {}
+      return router.json(res, 201, { engineId, entry: reg[engineId] });
+    },
+    { auth: true }
+  );
+
+  // POST /api/admin/registry/remove {engineId,confirmed:true} — 注销引擎（二次确认；在飞任务不受影响）
+  router.add(
+    "POST",
+    "/api/admin/registry/remove",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      const engineId = String(b.engineId || "").trim();
+      if (!engineId) throw { code: "BAD_REQUEST", message: "engineId 必填" };
+      if (b.confirmed !== true) throw { code: "CONFIRM_REQ", status: 428, message: "注销引擎需二次确认：body 带 confirmed:true" };
+      const reg = getRegistry();
+      if (!reg[engineId]) throw { code: "NOT_FOUND", message: "引擎不存在: " + engineId };
+      const gone = reg[engineId];
+      delete reg[engineId];
+      store.commit();
+      audit(auth, "registry_remove", engineId, { lane: gone.lane, node: gone.node || null });
+      return router.json(res, 200, { removed: engineId, note: "引擎「" + engineId + "」已注销；指向其车道的新任务将按注册表重新解析归属" });
+    },
+    { auth: true }
+  );
+
+  // POST /api/admin/registry/node {engineId,node,confirmed:true} — 改绑引擎归属节点（拨号热生效）
+  router.add(
+    "POST",
+    "/api/admin/registry/node",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      const engineId = String(b.engineId || "").trim();
+      if (!engineId) throw { code: "BAD_REQUEST", message: "engineId 必填" };
+      if (b.confirmed !== true) throw { code: "CONFIRM_REQ", status: 428, message: "改绑归属节点需二次确认：body 带 confirmed:true" };
+      const reg = getRegistry();
+      const entry = reg[engineId];
+      if (!entry) throw { code: "NOT_FOUND", message: "引擎不存在: " + engineId };
+      let node = b.node == null || b.node === "" ? null : String(b.node).trim();
+      if (node) {
+        const st = store.get();
+        if (!((st.nodes || {})[node])) throw { code: "BAD_REQUEST", message: "未知节点: " + node + "——先在「算力节点」登记" };
+      }
+      const before = entry.node || null;
+      entry.node = node;
+      store.commit();
+      audit(auth, "registry_node_rebind", engineId, { from: before, to: node });
+      try { bus.publish("alerts", { kind: "registry", msg: "引擎改绑节点: " + engineId + "（" + (before || "—") + " → " + (node || "—") + "）" }); } catch (e) {}
+      return router.json(res, 200, { engineId, entry, note: "归属节点已改绑，绑定该引擎的任务下一次拨号即读取新端点" });
     },
     { auth: true }
   );
@@ -342,6 +461,84 @@ function register(router, ctx) {
         rows = [];
       }
       return router.json(res, 200, { kind, rows, total: rows.length });
+    },
+    { auth: true }
+  );
+
+  /* ---------------- 邀请码管理（2026-11-22 按人发码：一人一码一号） ---------------- */
+  function inviteMapOf(st) {
+    if (Array.isArray(st.invites)) {
+      const m = {};
+      st.invites.forEach((c) => { if (c) m[String(c)] = {}; });
+      st.invites = m;
+      store.commit();
+    }
+    return st.invites && typeof st.invites === "object" && !Array.isArray(st.invites) ? st.invites : {};
+  }
+
+  // GET /api/admin/invites — 码清单（含绑定人与首用状态）
+  router.add(
+    "GET",
+    "/api/admin/invites",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const st = store.get();
+      const m = inviteMapOf(st);
+      const invites = Object.keys(m).map((code) => {
+        const bound = m[code].uid ? (st.users || {})[String(m[code].uid)] : null;
+        return {
+          code,
+          name: m[code].name || null,
+          role: m[code].role || null,
+          used: !!m[code].uid,
+          bound_name: bound ? bound.name : null,
+          bound_uid: m[code].uid || null
+        };
+      });
+      return router.json(res, 200, { invites });
+    },
+    { auth: true }
+  );
+
+  // POST /api/admin/invites {name, role} → 生成新码（一人一码；role 仅 ops|creator）
+  router.add(
+    "POST",
+    "/api/admin/invites",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      const m = inviteMapOf(store.get());
+      const code = "INV-" + util.hash12({ ts: util.now(), rnd: Math.random() }).slice(0, 8).toUpperCase();
+      if (m[code]) throw { code: "CONFLICT", message: "码冲突，重试一次即可" };
+      m[code] = {
+        name: String(b.name || "creator").slice(0, 20),
+        role: b.role === "ops" ? "ops" : "creator"
+      };
+      store.commit();
+      audit(auth, "invite_add", code, { name: m[code].name, role: m[code].role });
+      return router.json(res, 201, { code, name: m[code].name, role: m[code].role });
+    },
+    { auth: true }
+  );
+
+  // POST /api/admin/invites/remove {code} — 吊销（保护最后一个码，防自锁门外）
+  router.add(
+    "POST",
+    "/api/admin/invites/remove",
+    (req, res, body, params, auth) => {
+      requireOps(auth);
+      const b = body || {};
+      const code = String(b.code || "");
+      const m = inviteMapOf(store.get());
+      if (!m[code]) throw { code: "NOT_FOUND", message: "邀请码不存在: " + code };
+      if (Object.keys(m).length <= 1) {
+        throw { code: "LAST_CODE", message: "至少保留一个邀请码，否则无人能登录" };
+      }
+      const bound = m[code].uid || null;
+      delete m[code];
+      store.commit();
+      audit(auth, "invite_remove", code, { bound_uid: bound });
+      return router.json(res, 200, { removed: code });
     },
     { auth: true }
   );

@@ -29,10 +29,11 @@ function register(router, ctx) {
       if (q.session) {
         // core bus 契约：{session} → 放行全部非 l2 topic ＋ 该会话 l2:<sid>
         if (typeof bus.attach === "function") {
-          bus.attach(res, { session: q.session });
+          bus.attach(res, { session: q.session, tid: auth.tid || null });
         }
       } else {
-        if (typeof bus.attach === "function") bus.attach(res);
+        // 域过滤（S3-6）：订阅端只收本域消息；系统级消息（解析不出域）广播
+        if (typeof bus.attach === "function") bus.attach(res, { tid: auth.tid || null });
       }
       // SSE 已接管 res（含 :ping 心跳）；不再 json。
       return undefined;

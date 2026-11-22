@@ -8,6 +8,17 @@
 
 const DEFAULT_BUDGET_CENTS = 5000;
 
+const Tenants = require("../core/tenants.js");
+
+/** 建集算力路由（2026-11-22 用户级路由）：请求显式节点 > 用户默认算力 > 首个登记节点。
+ *  节点全部来自 state.nodes 注册表——离开 5060 Ti 也能活，云 API 目标同样落此路由。 */
+function routeDriver(st, auth, want) {
+  const nodes = st.nodes || {};
+  const pick = (id) => (id && nodes[id] ? id : null);
+  const u = auth && (st.users || {})[auth.id || auth.uid];
+  return pick(want) || pick(u && u.driver) || Object.keys(nodes)[0] || "local";
+}
+
 // 确定性预估（契约：12×80 + 3×150 + 1×110 分档 ＋ music/tts 行，time_min≈24）
 const ESTIMATE_PLAN = {
   time_min: 24,
@@ -80,6 +91,8 @@ function register(router, ctx) {
       if (!b.projectId || !(st.projects || {})[b.projectId]) {
         throw { code: "NOT_FOUND", message: "项目不存在: " + b.projectId };
       }
+      const project = st.projects[b.projectId];
+      Tenants.guardWrite(st, auth, project.tenantId || Tenants.defaultTid(st)); // 域外项目一律 404
       const kind = b.kind === "novel" ? "novel" : "one_liner";
       // 剧本结构（真实流程档）：scenes 分镜表（场/镜/台词）＋cast 角色定义（含参考图）。
       // 一期不用 LLM 解析——剧本即结构化输入；C1/C2/拍摄全链按此跑。
@@ -113,6 +126,7 @@ function register(router, ctx) {
       const ep = {
         id: util.uid("ep"),
         projectId: b.projectId,
+        tenantId: project.tenantId || Tenants.defaultTid(st),
         title: b.title,
         brief: b.brief,
         kind,
@@ -121,7 +135,7 @@ function register(router, ctx) {
         stage: 1,
         decisions: 0,
         budget_cents: typeof b.budget_cents === "number" ? b.budget_cents : DEFAULT_BUDGET_CENTS,
-        driver: b.driver === "dgx" ? "dgx" : "local", // 节点驱动：local=本机 5060 Ti｜dgx=DGX H3 全家桶
+        driver: routeDriver(st, auth, b.driver), // 渲染节点＝节点注册表任意节点（state.nodes）；未知值兜底本机
         cost_cents: 0,
         paused: false,
         estimate_ver: null,
@@ -135,7 +149,7 @@ function register(router, ctx) {
         "c1plan",
         { episodeId: ep.id, title: ep.title, brief: ep.brief, kind },
         // Spark 通道启用 → c1plan 走 imgspark（H3-Image 海报，全套 H3）
-        { episodeId: ep.id, initiated_by: "user", tier: ctx.cfg && ctx.cfg.comfySpark && ctx.cfg.comfySpark.enabled ? "high" : undefined }
+        { episodeId: ep.id, initiated_by: "user" }
       );
       audit(auth, "episode_create", ep.id, { job_id: job && job.id, kind });
       try { bus.publish("cards", { event: "episode_created", episode: ep }); } catch (e) {}
@@ -168,16 +182,22 @@ function register(router, ctx) {
 
       // 项目：显式指定 or 自动新建（模板 style 预设落到项目 style_pkg）
       let project = null;
+      let tid = null;
       if (b.projectId) {
         project = (st.projects || {})[b.projectId];
         if (!project) throw { code: "NOT_FOUND", message: "项目不存在: " + b.projectId };
+        tid = project.tenantId || Tenants.defaultTid(st);
+        Tenants.guardWrite(st, auth, tid); // 域外项目一律 404
       } else {
+        tid = Tenants.contextTid(st, auth);
+        Tenants.guardWrite(st, auth, tid);
         const style = tpl && tpl.style
           ? { look: String(tpl.style.look || "写实电影感").slice(0, 30), palette: String(tpl.style.palette || "青橙").slice(0, 20), ratio: String(tpl.style.ratio || "9:16").slice(0, 10) }
           : { look: "写实电影感", palette: "青橙", ratio: "9:16" };
         project = {
           id: util.uid("pj"),
           title: titleIn || (tpl ? tpl.name : brief.slice(0, 12) + "…"),
+          tenantId: tid,
           style_pkg: style,
           music_enabled: true
         };
@@ -189,6 +209,7 @@ function register(router, ctx) {
       const ep = {
         id: util.uid("ep"),
         projectId: project.id,
+        tenantId: tid,
         title: titleIn || brief.slice(0, 20),
         brief,
         kind,
@@ -197,7 +218,7 @@ function register(router, ctx) {
         stage: 1,
         decisions: 0,
         budget_cents: DEFAULT_BUDGET_CENTS,
-        driver: b.driver === "dgx" ? "dgx" : "local",
+        driver: routeDriver(st, auth, b.driver),
         cost_cents: 0,
         paused: false,
         estimate_ver: null,
@@ -230,6 +251,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
       const ep = requireEpisode(ctx, params.id);
+      Tenants.guardRead(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404
       if (!ep.estimate_ver) {
         throw { code: "NOT_READY", message: "预估未生成：请先完成 C5 样片确认" };
       }
@@ -249,6 +271,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
       const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404；viewer 不可开机
       if (!ep.estimate_ver) {
         throw { code: "NOT_READY", message: "预估未生成，无法开机" };
       }
@@ -295,6 +318,122 @@ function register(router, ctx) {
     { auth: true }
   );
 
+  // POST /api/episodes/:id/compose — 重合成（ops）：take 音轨策略/镜头变化后无需走卡流直接出新片
+  router.add(
+    "POST",
+    "/api/episodes/:id/compose",
+    (req, res, body, params, auth) => {
+      const epId = params.id;
+      const stC = store.get();
+      requireEpisode(ctx, epId);
+      Tenants.guardRead(stC, auth, (stC.episodes || {})[epId].tenantId || Tenants.defaultTid(stC)); // 域外一律 404（ops 角色闸在 opts）
+      const job = engine.enqueue(
+        "compose",
+        { episodeId: epId, purpose: "export", resolution: "720x1280", explicit_mark: true, implicit_mark: true },
+        { episodeId: epId, initiated_by: "user" }
+      );
+      audit(auth, "compose_rerun", epId, { job_id: job && job.id });
+      try { bus.publish("alerts", { msg: "已重新合成成片（compose 重跑）" }); } catch (e) {}
+      return router.json(res, 202, { job });
+    },
+    { auth: true, role: "ops" }
+  );
+
+  // DELETE /api/episodes/:id — 删除单集（2026-11-22）：登录即可删（与 DELETE /api/cards/:id
+  // 同一授权口径），前端二次确认后才发请求。级联清理：场景/镜头（含 takes 成片文件）/卡片
+  // （含 var/out 过程产物，收集逻辑与 cards.js 卡删除同款）/复审队列指向已删镜头的条目/
+  // 引用已删场景的音乐候选/集级附属（viewRefs、voice_lines、music_pending）。
+  // 排队中任务取消；在跑 GPU 任务任其跑完（费用已发生，强杀无收益）——回写由
+  // upsertCard 的缺集守卫拦截，不产孤儿卡。账本 append-only：历史 job/billing/audit 行保留。
+  router.add(
+    "DELETE",
+    "/api/episodes/:id",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404；viewer 不可删
+      const epId = ep.id;
+      const fs = require("fs");
+      const pathm = require("path");
+      const outs = [];
+      const collect = (rel) => {
+        const s = rel && String(rel);
+        if (s && s.indexOf("var/out/") === 0 && outs.indexOf(s) < 0) outs.push(s);
+      };
+
+      // 排队中任务取消（stop 仅对 queued 有效；running 已在 GPU 上，不管）
+      let cancelled = 0;
+      if (engine.listJobs) {
+        (engine.listJobs({ episodeId: epId, status: "queued" }) || []).forEach((j) => {
+          try { engine.stop(j.id); cancelled++; } catch (e) { /* 已被并发取消则忽略 */ }
+        });
+      }
+
+      // 卡片（含过程产物文件引用）
+      const cardIds = Object.keys(st.cards || {}).filter((k) => st.cards[k] && st.cards[k].episodeId === epId);
+      cardIds.forEach((k) => {
+        const c = st.cards[k];
+        collect(c.art);
+        const p = c.payload || {};
+        collect(p.grid);
+        (p.views || []).forEach((v) => { if (v && v.art) collect(v.art); });
+        (p.images || []).forEach((v) => { if (v && v.art) collect(v.art); });
+        delete st.cards[k];
+      });
+
+      // 镜头（含 takes 成片文件）与场景
+      const shotIds = Object.keys(st.shots || {}).filter((k) => st.shots[k] && st.shots[k].episodeId === epId);
+      const shotSet = {};
+      shotIds.forEach((k) => {
+        (st.shots[k].takes || []).forEach((t) => collect(t && t.art));
+        shotSet[k] = true;
+        delete st.shots[k];
+      });
+      const sceneIds = Object.keys(st.scenes || {}).filter((k) => st.scenes[k] && st.scenes[k].episodeId === epId);
+      const sceneSet = {};
+      sceneIds.forEach((k) => { sceneSet[k] = true; delete st.scenes[k]; });
+
+      // 复审队列：指向已删镜头的条目一并清（防复审页出现死条目）
+      if (Array.isArray(st.review_q)) {
+        st.review_q = st.review_q.filter((r) => !r || !r.shotId || !shotSet[r.shotId]);
+      }
+      // 音乐库候选：引用已删场景的条目一并清
+      if (Array.isArray(st.music_lib)) {
+        st.music_lib = st.music_lib.filter((m) => !m || !m.sceneId || !sceneSet[m.sceneId]);
+      }
+      // 集级附属（分镜选帧参考/配音台词轨/配乐候选暂存）
+      if (st.viewRefs) delete st.viewRefs[epId];
+      if (st.voice_lines) delete st.voice_lines[epId];
+      if (st.music_pending) delete st.music_pending[epId];
+
+      delete st.episodes[epId];
+      store.commit();
+      outs.forEach((rel) => {
+        try { fs.unlinkSync(pathm.join(process.cwd(), rel)); } catch (e) {}
+        try { fs.unlinkSync(pathm.join(process.cwd(), rel + ".meta.json")); } catch (e) {}
+      });
+      audit(auth, "episode_delete", epId, {
+        title: ep.title,
+        shots: shotIds.length,
+        scenes: sceneIds.length,
+        cards: cardIds.length,
+        files_removed: outs.length,
+        jobs_cancelled: cancelled
+      });
+      try { bus.publish("episodes", { event: "deleted", id: epId }); } catch (e) {}
+      return router.json(res, 200, {
+        deleted: epId,
+        shots: shotIds.length,
+        scenes: sceneIds.length,
+        cards: cardIds.length,
+        files_removed: outs.length,
+        jobs_cancelled: cancelled
+      });
+    },
+    { auth: true }
+  );
+
     router.add(
       "POST",
       "/api/episodes/:id/cast",
@@ -302,6 +441,7 @@ function register(router, ctx) {
         if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
         const st = store.get();
         const ep = requireEpisode(ctx, params.id);
+        Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404
         const b = body || {};
         const list = Array.isArray(b.cast) ? b.cast : [];
         if (!list.length) throw { code: "BAD_REQUEST", message: "cast 不能为空" };
@@ -343,6 +483,7 @@ function register(router, ctx) {
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(store.get(), auth, ep.tenantId || Tenants.defaultTid(store.get())); // 域外一律 404
       const q = parseQ(req);
       const role = String(q.role || "").trim();
       if (!role) throw { code: "BAD_REQUEST", message: "role 必填（query ?role=）" };
@@ -373,6 +514,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
       const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404
       const b = body || {};
       const role = String(b.role || "").trim();
       const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
@@ -405,6 +547,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
       const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st)); // 域外一律 404
       const b = body || {};
       const role = String(b.role || "").trim();
       const cur = (ep.script && ep.script.cast || []).find((x) => x.role === role);
@@ -458,7 +601,14 @@ function register(router, ctx) {
       let dedupedN = 0;
       const allCast = ep.script.cast || [];
       if (allCast.every((c) => c.refImage)) {
-        allCast.forEach((c) => {
+        // 已有试妆卡的角色不重渲（2026-11-22）：重复 confirm/重启后 re-confirm 只补缺卡的角色
+        const hasC2S = new Set(
+          Object.keys(st.cards || {})
+            .map((k) => st.cards[k])
+            .filter((c) => c.episodeId === ep.id && c.type === "C2S")
+            .map((c) => (c.payload || {}).role)
+        );
+        allCast.filter((c) => !hasC2S.has(c.role)).forEach((c) => {
           const r = engine.enqueueOnce
             ? engine.enqueueOnce("screen_test", { episodeId: ep.id, role: c.role }, { episodeId: ep.id, initiated_by: "system" })
             : { deduped: false, job: engine.enqueue("screen_test", { episodeId: ep.id, role: c.role }, { episodeId: ep.id, initiated_by: "system" }) };
@@ -481,6 +631,7 @@ function register(router, ctx) {
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const e = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(store.get(), auth, e.tenantId || Tenants.defaultTid(store.get())); // 域外一律 404
       if ((e.stage || 1) >= 7) throw { code: "LOCKED", message: "已开拍，歌曲锚点锁定" };
       if (!e.script) throw { code: "BAD_REQUEST", message: "本集无剧本" };
       const b = body || {};
@@ -512,7 +663,8 @@ function register(router, ctx) {
     episode_create: "建集", card_accept: "拍板", card_reject: "驳回", card_edit: "递修改意见",
     castref_upload: "上传初始定妆图", castref_confirm: "确认初始定妆", castref_generate: "AI 生成初始图",
     song_revise: "歌曲锚点修订", viewrefs_refresh: "参考库重固化", review_decide: "复审批复",
-    shoot: "开机拍摄", quant_change: "量化档调整", export_artifacts: "成片导出"
+    shoot: "开机拍摄", quant_change: "量化档调整", export_artifacts: "成片导出",
+    episode_delete: "删除本集", project_delete: "删除项目"
   };
   router.add(
     "GET",
@@ -520,7 +672,9 @@ function register(router, ctx) {
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const epId = params.id;
+      const stT = store.get();
       requireEpisode(ctx, epId);
+      Tenants.guardRead(stT, auth, ((stT.episodes || {})[epId] || {}).tenantId || Tenants.defaultTid(stT)); // 域外一律 404
       const events = [];
       const fs = require("fs");
       const pathm = require("path");
@@ -585,6 +739,7 @@ function register(router, ctx) {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
       const e = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, e.tenantId || Tenants.defaultTid(st)); // 域外一律 404
       if ((e.stage || 1) >= 7) throw { code: "LOCKED", message: "已开拍，场景表锁定" };
       if (!e.script || !Array.isArray(e.script.cast)) throw { code: "BAD_REQUEST", message: "本集无剧本" };
       const b = body || {};

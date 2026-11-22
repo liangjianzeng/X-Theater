@@ -23,7 +23,8 @@ function httpOf(r) {
 
 function normAuth(auth) {
   if (!auth) return null;
-  return { id: auth.id || auth.uid, role: auth.role };
+  // tid 随身份走（S3-4）：会话建档记域，Phase 2 副驾域感知用
+  return { id: auth.id || auth.uid, role: auth.role, tid: auth.tid || null };
 }
 
 module.exports.register = (router, ctx) => {

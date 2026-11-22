@@ -49,21 +49,22 @@ async function call(method, p, body, tok) {
     const before = ledger().length;
     await call("POST", "/l2/sessions/" + sid + "/messages", { text, ctx: [] }, tok);
     let tool = "none";
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 28; i++) { // CPU 推理延迟宽窗：最长 42s
       await sleep(1500);
       const rows2 = ledger();
       const mine = rows2.slice(before).filter((r) => r.status === "ok" || r.status === "denied_tenant");
       if (mine.length) { tool = mine[mine.length - 1].tool; break; }
     }
+    const norm = (x) => (x === "null" ? "none" : x); // 闲聊期望归一：null≡none（未落任何工具）
     let pass;
     if (want === "null") pass = tool === "none"; // 闲聊不落任何工具
     else pass = tool === want || (tool === "none"); // LLM 直答也算未越界（不判错，只统计路由）
-    results.push({ text, want, tool, pass });
+    results.push({ text, want: norm(want), tool, pass });
     process.stdout.write((pass ? "✓" : "✗") + " ");
   }
   console.log("\n");
   const n = results.length;
-  const strictPass = results.filter((r) => (r.want === "null" ? r.tool === "none" : r.tool === r.want)).length;
+  const strictPass = results.filter((r) => (r.want === "none" ? r.tool === "none" : r.tool === r.want)).length;
   const safePass = results.filter((r) => r.pass).length;
   const byWant = {};
   results.forEach((r) => { byWant[r.want] = byWant[r.want] || [0, 0]; byWant[r.want][1]++; if (r.tool === r.want) byWant[r.want][0]++; });
@@ -72,8 +73,8 @@ async function call(method, p, body, tok) {
   console.log("  严格路由一致: " + strictPass + "/" + n);
   console.log("  安全执行（未越权落动作）: " + safePass + "/" + n);
   results.filter((r) => !r.pass).forEach((r) => console.log("  ✗ 「" + r.text + "」 want=" + r.want + " got=" + r.tool));
-  /* 清账：测试会话不留历史 */
-  const st = await call("GET", "/state", null, tok);
-  void st;
+  const gotDist = {};
+  results.forEach((r) => { gotDist[r.tool] = (gotDist[r.tool] || 0) + 1; });
+  console.log("  实际路由分布: " + JSON.stringify(gotDist));
   console.log("(验收会话 " + sid + " 请在运维台或下次清账时移除；本脚本不自动删会话)");
 })();

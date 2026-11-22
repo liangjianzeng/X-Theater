@@ -243,6 +243,18 @@
         }
       }
 
+      /* ---------- 删除（二次确认在 store 层；2026-11-22） ---------- */
+      async function delEpisode(e) {
+        if (!e || !e.id) return;
+        try { await store.deleteEpisode(e.id); } catch (err) { /* store 已 toast */ }
+      }
+      async function delProject(p) {
+        if (!p || !p.id) return;
+        const n = epsOf(p.id).length;
+        if (n) { store.toast("项目下还有 " + n + " 集，先删集再删项目", "warn"); return; }
+        try { await store.deleteProject(p.id); } catch (err) { /* store 已 toast */ }
+      }
+
       return {
         store, state, err, bootLoading, projects, episodes,
         epsOf, retry, costPct, costOver, epTone, epHref, stageName,
@@ -251,7 +263,8 @@
         goTemplates, dirSheet,
         templates, tplSheet, tplForm, busyTpl, useTemplate, startFromTemplate,
         form, busy, formErr, submit,
-        formP, busyP, formErrP, submitProject
+        formP, busyP, formErrP, submitProject,
+        delEpisode, delProject
       };
     },
     template: `
@@ -370,6 +383,9 @@
               <span class="badge" v-if="p.style_pkg && p.style_pkg.look">{{ p.style_pkg.look }}</span>
               <span class="badge" v-if="p.style_pkg && p.style_pkg.palette">配色 {{ p.style_pkg.palette }}</span>
               <span class="badge" v-if="p.style_pkg && p.style_pkg.ratio">{{ p.style_pkg.ratio }}</span>
+              <span class="grow"></span>
+              <button type="button" class="btn btn-sm btn-danger"
+                @click="delProject(p)">删除项目</button>
             </div>
 
             <div class="list" v-if="epsOf(p.id).length">
@@ -383,6 +399,8 @@
                   <span class="grow"></span>
                   <a class="btn btn-primary btn-sm" :href="epHref('flow', e.id)">进工作台</a>
                   <a class="btn btn-sm" :href="epHref('shoot', e.id)">拍摄</a>
+                  <button type="button" class="btn btn-sm btn-danger"
+                    @click="delEpisode(e)">删除</button>
                 </div>
                 <div class="v-home-cost">
                   <money :cents="e.cost_cents"></money>

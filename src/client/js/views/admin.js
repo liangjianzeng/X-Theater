@@ -37,7 +37,14 @@
     music_adopt: "配乐挂接", music_candidates: "配乐候选生成", music_regenerate: "配乐重出",
     episode_driver_switch: "剧集驱动切换", llm_config_update: "LLM 档案更新", llm_node_switch: "LLM 承载节点切换", l2_gpu_yield: "助手 GPU 让路", llm_stop: "停止 LLM 让路",
     node_comfy_update: "节点渲染端点更新", node_probe: "节点探测",
+    node_add: "登记节点", node_update: "节点信息更新", node_remove: "撤除节点",
+    user_driver_switch: "用户默认算力切换",
     template_create: "模板新建", template_update: "模板更新", template_remove: "模板删除",
+    invite_add: "发新邀请码", invite_remove: "吊销邀请码",
+    tenant_create: "新建域", tenant_switch: "切换域", tenant_delete: "删除域",
+    tenant_transfer: "转让域主", tenant_budget: "域预算调整",
+    member_role: "成员身份变更", member_remove: "成员移出",
+    episode_delete: "删除剧集", project_delete: "删除项目", episode_purge: "清空剧集（调试）",
     quickstart: "一句话开拍",
     scriptgen: "LLM 剧本生成",
     job_retry: "任务重试", job_stop: "任务叫停"
@@ -52,7 +59,8 @@
       "err-state": T.components.ErrState,
       "empty-state": T.components.EmptyState,
       "loading": T.components.Loading,
-      "time-ago": T.components.TimeAgo
+      "time-ago": T.components.TimeAgo,
+      "money": T.components.Money
     },
     template: `
       <div class="v-admin">
@@ -60,74 +68,189 @@
           <button :class="{ on: tab === 'nodes' }" @click="tab = 'nodes'">🖥 算力节点</button>
           <button :class="{ on: tab === 'registry' }" @click="tab = 'registry'">⚙️ 引擎段位</button>
           <button :class="{ on: tab === 'templates' }" @click="tab = 'templates'">🧩 模板</button>
+          <button :class="{ on: tab === 'invites' }" @click="tab = 'invites'">🔐 成员</button>
           <button :class="{ on: tab === 'alerts' }" @click="tab = 'alerts'">🔔 告警<i class="admin-tab-badge" v-if="alertCount">{{ alertCount }}</i></button>
           <button :class="{ on: tab === 'audit' }" @click="tab = 'audit'">📜 审计</button>
+          <button :class="{ on: tab === 'public' }" @click="tab = 'public'; loadPubLedger()">🏛 公共科目</button>
         </div>
 
         <!-- ═══ Tab 1 算力节点：机器卡片＋显存闸＋剧集渲染分配 ═══ -->
         <template v-if="tab === 'nodes'">
-          <div class="hint">💡 节点＝一台干活的机器：既能跑「渲染」（ComfyUI 出图/出片），也能跑「LLM 大脑」（剧本理解 / 复审 / 助手）。大脑同一时刻只落在一台机器上；每部剧的渲染活可在下方单独指派。机器卡上的「承载引擎」即这台机实际在跑的渲染引擎。</div>
+          <div class="hint">💡 节点＝一台干活的机器：既能跑「渲染」（ComfyUI 出图/出片／付费云 API），也能跑「LLM 大脑」（剧本理解 / 复审 / 助手）。大脑同一时刻只落在一台机器上；每部剧的渲染活可在下方单独指派。机器卡上的「承载引擎」即这台机实际在跑的渲染引擎。</div>
+
+          <!-- 🧠 LLM 大脑（2026-11-22 统一配置面）：剧场 AI 能力＋制片助手共用 -->
+          <div class="panel">
+            <div class="panel-title">🧠 LLM 大脑
+              <span class="weak">剧场 AI 能力（AI 剧本 / AI 审查 / 建议片）＋制片助手——同一份配置，配什么用什么</span>
+              <span class="badge badge-ok" v-if="nodesState.data && nodesState.data.llm.online">在线 · {{ nodesState.data.llm.model }}</span>
+              <span class="badge badge-warn" v-else-if="nodesState.data && nodesState.data.llm.base">离线（守护自动拉起中）</span>
+              <span class="badge badge-err" v-else-if="nodesState.data">未配置</span>
+            </div>
+            <div class="gate-warn" v-if="nodesState.data && !nodesState.data.llm.base">
+              ⚠️ LLM 未配置＝AI 能力全部规则兜底：AI 剧本落占位结构、AI 审查只走规则、助手无人话增强、建议片不可用。填下面端点保存即可启用。
+            </div>
+            <div class="row wrap" style="align-items:flex-end;gap:8px" v-if="nodesState.data">
+              <label class="weak">承载节点<br />
+                <select class="select" style="max-width:180px" :value="nodesState.data.llm_node" @change="switchLlmHost($event.target.value)">
+                  <option v-for="n in nodesState.data.nodes" :key="n.id" :value="n.id">{{ n.label }}</option>
+                </select></label>
+              <label class="weak">端点（OpenAI 兼容 /v1）<br />
+                <input class="input" v-model.trim="llmHostForm.base" placeholder="http://127.0.0.1:8090" style="max-width:260px" /></label>
+              <label class="weak">模型别名<br />
+                <input class="input" v-model.trim="llmHostForm.model" placeholder="如 Huihui35B:vision" style="max-width:180px" /></label>
+              <label class="weak">自动拉起脚本<br />
+                <input class="input" v-model.trim="llmHostForm.bat" placeholder="E:\\MyLLM\\xxx.bat（可空＝不守护）" style="max-width:240px" /></label>
+              <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlmHost" @click="saveLlmHost">保存（热生效）</button>
+            </div>
+            <div class="weak" style="margin-top:6px">
+              守护：掉线自动拉起脚本（45s 冷却，10 分钟内 ≤3 次，超限转人工告警）。档案跟节点走——各节点独立 LLM 档案，切换承载即用那台的配置；本面板改的是当前承载节点的档案。
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">🖥 节点注册表
+              <button class="btn btn-ghost btn-sm" @click="nodesState.showAdd = !nodesState.showAdd">
+                {{ nodesState.showAdd ? "收起" : "➕ 新增节点" }}</button>
+              <span class="weak">加机器/撤机器在这里，不用改代码</span>
+            </div>
+            <div class="row wrap" v-if="nodesState.showAdd" style="align-items:flex-end;gap:8px">
+              <label class="weak">节点 ID<br /><input class="input" v-model.trim="nodeForm.id" placeholder="如 gpu3（字母数字-_)，登记后不可改" style="max-width:180px" /></label>
+              <label class="weak">名称<br /><input class="input" v-model.trim="nodeForm.label" placeholder="如 3 号机房 A100" style="max-width:200px" /></label>
+              <label class="weak">类型<br />
+                <select class="select" v-model="nodeForm.kind" style="max-width:170px">
+                  <option value="comfy">🖥 渲染机（ComfyUI）</option>
+                  <option value="cloud">☁️ 付费云 API</option>
+                </select></label>
+              <template v-if="nodeForm.kind === 'cloud'">
+                <label class="weak">API 端点<br /><input class="input" v-model.trim="nodeForm.api_endpoint" placeholder="OpenAI 兼容 /v1 基址" style="max-width:260px" /></label>
+                <label class="weak">密钥<br /><input class="input" type="password" v-model.trim="nodeForm.api_key" placeholder="sk-…" style="max-width:180px" /></label>
+                <label class="weak">模型<br /><input class="input" v-model.trim="nodeForm.api_model" placeholder="如 dall-e-3 / 即梦-x" style="max-width:160px" /></label>
+                <label class="weak">单价（分/张）<br /><input class="input num" v-model.number="nodeForm.api_price" placeholder="30" style="max-width:90px" /></label>
+              </template>
+              <template v-else>
+                <label class="weak">渲染端点<br /><input class="input" v-model.trim="nodeForm.comfy_base" placeholder="http://192.168.1.20:8188（可留空后补）" style="max-width:280px" /></label>
+                <label class="weak" style="white-space:nowrap"><input type="checkbox" v-model="nodeForm.gpu_gate" /> 显存互斥闸<br /><span class="weak mono">16G 单卡才开</span></label>
+              </template>
+              <button class="btn btn-sm btn-primary" :disabled="nodesState.adding" @click="addNode">登记</button>
+            </div>
+          </div>
 
           <div class="node-cards" v-if="nodesState.data">
             <div class="node-card" v-for="nd in nodesState.data.nodes" :key="nd.id">
               <div class="row wrap node-card-head">
-                <b>{{ nd.label }}</b>
+                <input class="input node-input" v-model.trim="nd.label" style="max-width:180px" title="改名后点「保存信息」生效" />
+                <button class="btn btn-sm" :disabled="nodesState.savingInfo === nd.id" @click="saveNodeInfo(nd)">保存信息</button>
+                <span class="badge" :class="nd.kind === 'cloud' ? '' : 'badge-ok'">{{ nd.kind === 'cloud' ? '☁️ 付费云 API' : '🖥 渲染机' }}</span>
+                <label class="weak" v-if="nd.kind !== 'cloud'" style="white-space:nowrap" title="开启后：LLM 在线时该机的生图/拍摄任务被显存闸挡（16G 单卡机器才开）">
+                  <input type="checkbox" v-model="nd.gpu_gate" @change="saveNodeInfo(nd)" /> 显存互斥闸</label>
                 <span class="badge badge-ok" v-if="nd.is_llm_host">🧠 LLM 承载中</span>
-                <span class="badge" v-else>渲染机器</span>
+                <button class="btn btn-sm btn-danger" style="margin-left:auto" @click="removeNodeCard(nd)">撤节点</button>
               </div>
 
-              <div class="node-card-row">
-                <span class="node-label">渲染端点</span>
-                <input class="input node-input" v-model.trim="nd.comfy.base" />
-                <button class="btn btn-sm" :disabled="nodesState.savingComfy === nd.id" @click="saveComfy(nd)">保存</button>
-                <button class="btn btn-ghost btn-sm" :disabled="nodeProbe[nd.id] && nodeProbe[nd.id].busy" @click="probeNode(nd)">
-                  {{ nodeProbe[nd.id] && nodeProbe[nd.id].busy ? "探测中…" : "探测" }}</button>
-              </div>
-              <div class="node-card-sub">
-                <span class="v-admin-dot stat st-ok" v-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && nodeProbe[nd.id].ok"><i></i>可达 · {{ nodeProbe[nd.id].ms }}ms</span>
-                <span class="v-admin-dot stat st-err" v-else-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && !nodeProbe[nd.id].ok"><i></i>不通 · {{ nodeProbe[nd.id].detail }}</span>
-                <span class="weak" v-else>点「探测」测连通；端点改动保存后即时生效（workers 下个任务读取）</span>
-              </div>
-
-              <div class="node-card-row">
-                <span class="node-label">LLM 端点</span>
-                <input class="input node-input" v-model.trim="nd.llm.base" placeholder="http://127.0.0.1:8090" />
-              </div>
-              <div class="node-card-row">
-                <span class="node-label">模型别名</span>
-                <input class="input node-input" v-model.trim="nd.llm.model" placeholder="模型别名" />
-                <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlm === nd.id" @click="saveLlm(nd)">保存档案</button>
-              </div>
-
-              <div class="node-card-actions">
-                <button class="btn btn-sm" v-if="!nd.is_llm_host && nd.llm && nd.llm.base" @click="switchLlmNode(nd)">让 LLM 大脑落在这台机器</button>
-                <span class="weak" v-if="nd.is_llm_host">剧本理解 / 复审 / 助手都调用这台机器上的 LLM</span>
-                <span class="weak" v-else-if="!(nd.llm && nd.llm.base)">这台机器还没配 LLM 档案，填好并保存后才能承接大脑</span>
-              </div>
-
-              <div class="node-card-row" v-if="enginesOf(nd.id)">
-                <span class="node-label">承载引擎</span>
-                <span class="weak">{{ enginesOf(nd.id) }}</span>
-              </div>
-
-              <div class="gate-warn" v-if="nd.id === 'local' && gpuData && gpuData.llm && gpuData.llm.online">
-                <div>⚠️ LLM 正跑在本机：独显被占用，本机生图/拍摄已被挡。</div>
-                <div class="row wrap" style="margin-top:6px">
-                  <button class="btn btn-sm btn-danger" @click="yieldGpu">停止 LLM 让路</button>
-                  <span class="weak">或把剧的渲染分配切到其它节点，绕开本机显存。</span>
+              <!-- 云 API 节点：api 档案（key 只显示状态，改密钥整串重填） -->
+              <template v-if="nd.kind === 'cloud'">
+                <div class="node-card-row">
+                  <span class="node-label">API 端点</span>
+                  <input class="input node-input" v-model.trim="nd.api.endpoint" placeholder="OpenAI 兼容 /v1 基址" />
                 </div>
-              </div>
+                <div class="node-card-row">
+                  <span class="node-label">模型</span>
+                  <input class="input node-input" v-model.trim="nd.api.model" placeholder="模型名" />
+                  <span class="weak">{{ nd.api.has_key ? '🔑 密钥已配置' : '⚠️ 未配密钥' }}</span>
+                </div>
+                <div class="node-card-row">
+                  <span class="node-label">新密钥</span>
+                  <input class="input node-input" v-model.trim="nd._newKey" type="password" placeholder="不填＝不改动" />
+                  <span class="node-label">单价/张</span>
+                  <input class="input node-input num" style="max-width:90px" v-model.number="nd.api.price_cents" />
+                  <button class="btn btn-sm btn-primary" :disabled="nodesState.savingInfo === nd.id" @click="saveNodeApi(nd)">保存云档案</button>
+                  <button class="btn btn-ghost btn-sm" :disabled="nodeProbe[nd.id] && nodeProbe[nd.id].busy" @click="probeNode(nd)">
+                    {{ nodeProbe[nd.id] && nodeProbe[nd.id].busy ? "探测中…" : "探测" }}</button>
+                </div>
+                <div class="node-card-sub">
+                  <span class="v-admin-dot stat st-ok" v-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && nodeProbe[nd.id].ok"><i></i>可达 · {{ nodeProbe[nd.id].ms }}ms</span>
+                  <span class="v-admin-dot stat st-err" v-else-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && !nodeProbe[nd.id].ok"><i></i>不通 · {{ nodeProbe[nd.id].detail }}</span>
+                  <span class="weak" v-else>计费＝单价×张数（影子账本）；计费走 /v1/images/generations 适配</span>
+                </div>
+                <div class="node-card-row" v-if="enginesOf(nd.id)">
+                  <span class="node-label">承载引擎</span>
+                  <span class="weak">{{ enginesOf(nd.id) }}</span>
+                </div>
+              </template>
+
+              <!-- ComfyUI 渲染机：原有 comfy/LLM 档案 -->
+              <template v-else>
+                <div class="node-card-row">
+                  <span class="node-label">渲染端点</span>
+                  <input class="input node-input" v-model.trim="nd.comfy.base" />
+                  <button class="btn btn-sm" :disabled="nodesState.savingComfy === nd.id" @click="saveComfy(nd)">保存</button>
+                  <button class="btn btn-ghost btn-sm" :disabled="nodeProbe[nd.id] && nodeProbe[nd.id].busy" @click="probeNode(nd)">
+                    {{ nodeProbe[nd.id] && nodeProbe[nd.id].busy ? "探测中…" : "探测" }}</button>
+                </div>
+                <div class="node-card-sub">
+                  <span class="v-admin-dot stat st-ok" v-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && nodeProbe[nd.id].ok"><i></i>可达 · {{ nodeProbe[nd.id].ms }}ms</span>
+                  <span class="v-admin-dot stat st-err" v-else-if="nodeProbe[nd.id] && nodeProbe[nd.id].done && !nodeProbe[nd.id].ok"><i></i>不通 · {{ nodeProbe[nd.id].detail }}</span>
+                  <span class="weak" v-else>点「探测」测连通；端点改动保存后即时生效（workers 下个任务读取）</span>
+                </div>
+
+                <div class="node-card-row">
+                  <span class="node-label">LLM 端点</span>
+                  <input class="input node-input" v-model.trim="nd.llm.base" placeholder="http://127.0.0.1:8090" />
+                </div>
+                <div class="node-card-row">
+                  <span class="node-label">模型别名</span>
+                  <input class="input node-input" v-model.trim="nd.llm.model" placeholder="模型别名" />
+                  <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlm === nd.id" @click="saveLlm(nd)">保存档案</button>
+                </div>
+
+                <div class="node-card-actions">
+                  <button class="btn btn-sm" v-if="!nd.is_llm_host && nd.llm && nd.llm.base" @click="switchLlmNode(nd)">让 LLM 大脑落在这台机器</button>
+                  <span class="weak" v-if="nd.is_llm_host">剧本理解 / 复审 / 助手都调用这台机器上的 LLM</span>
+                  <span class="weak" v-else-if="!(nd.llm && nd.llm.base)">这台机器还没配 LLM 档案，填好并保存后才能承接大脑</span>
+                </div>
+
+                <div class="node-card-row" v-if="enginesOf(nd.id)">
+                  <span class="node-label">承载引擎</span>
+                  <span class="weak">{{ enginesOf(nd.id) }}</span>
+                </div>
+
+                <div class="gate-warn" v-if="nd.gpu_gate && nd.is_llm_host && gpuData && gpuData.llm && gpuData.llm.online">
+                  <div>⚠️ LLM 正跑在这台机器：独显被占用，本机生图/拍摄已被挡。</div>
+                  <div class="row wrap" style="margin-top:6px">
+                    <button class="btn btn-sm btn-danger" @click="yieldGpu">停止 LLM 让路</button>
+                    <span class="weak">或把剧的渲染分配切到其它节点，绕开本机显存。</span>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
           <loading v-else-if="nodesState.loading"></loading>
           <err-state v-else-if="nodesState.err" :err="nodesState.err" :on-retry="loadNodes" compact></err-state>
 
           <div class="panel">
+            <div class="panel-title">👤 用户默认算力 <span class="weak">该用户新建剧集自动落在这个节点（剧集行仍可单集改派）</span></div>
+            <div class="kv" v-if="nodesState.data && nodesState.data.users && nodesState.data.users.length">
+              <div class="kv-row" v-for="u in nodesState.data.users" :key="u.uid">
+                <span class="grow"><b>{{ u.name }}</b>
+                  <span class="badge">{{ u.role === 'ops' ? '运营' : '创作' }}</span>
+                  <span class="weak mono">{{ u.uid }}</span></span>
+                <span class="weak">默认走「{{ u.driver ? nodeLabelOf(u.driver) : '首个登记节点' }}」</span>
+                <select class="select" style="max-width:170px" :value="u.driver" :disabled="nodesState.savingUser === u.uid"
+                  @change="saveUserDriver(u, $event.target.value)">
+                  <option value="">跟随全局（首个登记节点）</option>
+                  <option v-for="n in (nodesState.data ? nodesState.data.nodes : [])" :key="n.id" :value="n.id">{{ n.label }}</option>
+                </select>
+              </div>
+            </div>
+            <empty-state v-else-if="nodesState.data" icon="👤" text="还没有用户" sub="有人用邀请码进来后，在这里指派默认算力"></empty-state>
+          </div>
+
+          <div class="panel">
             <div class="panel-title">📺 每部剧的渲染分配 <span class="weak">这部戏的生图/出片派给哪台机器</span></div>
             <div class="kv" v-if="nodesState.data && nodesState.data.episodes.length">
               <div class="kv-row" v-for="ep in nodesState.data.episodes" :key="ep.id">
                 <span class="grow"><b>{{ ep.title }}</b> <span class="weak mono">{{ ep.id }}</span></span>
-                <span class="weak admin-driver-note">渲染走「{{ nodeLabelOf(ep.driver) }}」<template v-if="ep.driver === 'local'">（LLM 在线时生图会被显存闸挡）</template></span>
+                <span class="weak admin-driver-note">渲染走「{{ nodeLabelOf(ep.driver) }}」<template v-if="nodeGateOf(ep.driver)">（该机开着显存互斥闸：LLM 在线时生图会被挡）</template></span>
                 <select class="select" style="max-width:170px" :value="ep.driver" :disabled="nodesState.savingEp === ep.id" @change="switchDriver(ep, $event.target.value)">
                   <option v-for="n in (nodesState.data ? nodesState.data.nodes : [])" :key="n.id" :value="n.id">{{ n.label }}</option>
                 </select>
@@ -142,9 +265,28 @@
           <div class="panel">
             <div class="panel-title">⚙️ 引擎段位注册表
               <span class="badge" v-if="data && data.langlint_exempt">语言表豁免面</span>
+              <button class="btn btn-ghost btn-sm" @click="showAddEngine = !showAddEngine">
+                {{ showAddEngine ? "收起" : "➕ 登记引擎" }}</button>
               <button class="btn btn-ghost btn-sm" @click="probeAll" :disabled="probing" :aria-busy="probing">
                 {{ probing ? '巡检中…' : '段位巡检' }}</button>
               <button class="btn btn-ghost btn-sm" @click="reload" :aria-busy="loading">刷新</button>
+            </div>
+            <div class="row wrap" v-if="showAddEngine" style="align-items:flex-end;gap:8px">
+              <label class="weak">引擎 ID<br /><input class="input" v-model.trim="engineForm.engineId" placeholder="如 SDXL-turbo-Q8" style="max-width:200px" /></label>
+              <label class="weak">车道 lane<br />
+                <select class="select" v-model="engineForm.lane" style="max-width:160px">
+                  <option v-for="l in (lanesList || [])" :key="l" :value="l">{{ l }}</option>
+                </select></label>
+              <label class="weak">归属节点<br />
+                <select class="select" v-model="engineForm.node" style="max-width:180px">
+                  <option value="">— 独立服务/进程内 —</option>
+                  <option v-for="n in (nodesList || [])" :key="n.id" :value="n.id">{{ n.label }}</option>
+                </select></label>
+              <label class="weak">量化档<br /><input class="input" v-model.trim="engineForm.quant" placeholder="如 int8 / Q5_K_M / fp16" style="max-width:150px" /></label>
+              <label class="weak">端点名<br /><input class="input" v-model.trim="engineForm.endpoint" placeholder="如 W-B ComfyUI :8188" style="max-width:200px" /></label>
+              <label class="weak">已发布档<br /><input class="input" v-model.trim="engineForm.published" placeholder="逗号分隔，如 nvfp4,int8" style="max-width:180px" /></label>
+              <label class="weak">不可用档<br /><input class="input" v-model.trim="engineForm.unavail" placeholder="逗号分隔" style="max-width:150px" /></label>
+              <button class="btn btn-sm btn-primary" :disabled="addingEngine" @click="addEngineRow">登记</button>
             </div>
             <div class="hint">每个引擎落在哪个量化档；端点列第一行是你自定义的端点名，第二行是归属节点（名字取自「算力节点」档案）＋workers 实际拨号的服务地址。调档走规则裁决，切到兜底档要写理由并留审计号；点引擎名展开泳道与档位明细。</div>
             <loading v-if="loading && !data"></loading>
@@ -197,6 +339,14 @@
                   <tr v-if="ui[x.id] && ui[x.id].open" class="admin-detail-row">
                     <td colspan="5">
                       <div class="row wrap"><span class="weak">泳道</span><span class="mono weak">{{ raw(x.lane) || "—" }}</span></div>
+                      <div class="row wrap">
+                        <span class="weak">归属节点</span>
+                        <select class="select" style="max-width:200px" v-model="ui[x.id].node" @change="rebindEngineRow(x)">
+                          <option value="">— 独立服务/进程内 —</option>
+                          <option v-for="n in (nodesList || [])" :key="n.id" :value="n.id">{{ n.label }}</option>
+                        </select>
+                        <button class="btn btn-sm btn-danger" @click="removeEngineRow(x)">注销引擎</button>
+                      </div>
                       <div class="row wrap"><span class="weak">已发布</span>
                         <span class="badge badge-ok" v-for="(p, i) in (x.published || [])" :key="'p' + i">{{ tierLabel(p) }}</span>
                         <span class="muted" v-if="!(x.published && x.published.length)">—</span></div>
@@ -264,6 +414,24 @@
           </div>
         </template>
 
+        <!-- ═══ Tab 公共科目（素材中心 C8）：素材账本单独口径 ═══ -->
+        <template v-else-if="tab === 'public'">
+          <div class="panel">
+            <div class="panel-title">🏛 公共库科目
+              <span class="weak">素材任务不进任何单集 Σcost——公共池单独对账（施工 K8 口径）</span>
+              <button class="btn btn-ghost btn-sm" @click="loadPubLedger" :aria-busy="pubLoading">刷新</button>
+            </div>
+            <loading v-if="pubLoading && !pubLedger"></loading>
+            <div class="kv num" v-else-if="pubLedger">
+              <div>账本行数：<b class="num">{{ pubLedger.rows }}</b></div>
+              <div>公共池累计：<money :cents="pubLedger.total"></money></div>
+              <div v-for="(v,k) in (pubLedger.by_kind || {})" :key="k">{{ k }}：<money :cents="v"></money></div>
+              <div>公共库库存：曲 {{ (pubLedger.counts || {}).global_music || 0 }} · 图 {{ (pubLedger.counts || {}).global_images || 0 }}</div>
+            </div>
+            <div class="weak" v-else>公共科目暂不可读（需要 ops 角色）</div>
+          </div>
+        </template>
+
         <!-- ═══ Tab 5 题材节拍模板（FR-1001 最小闭环 + FR-1304 运营可配） ═══ -->
         <template v-else-if="tab === 'templates'">
           <div class="hint">💡 模板＝题材节拍器＋风格预设。首页「模板流」用它一键开拍；节拍表会作为 LLM 剧本生成（scriptgen）的展开骨架。改动即时生效，版本只增可回溯。</div>
@@ -326,6 +494,57 @@
             </form>
           </div>
         </template>
+
+        <!-- ═══ Tab 6 成员与邀请码（2026-11-22 按人发码：一人一码一号） ═══ -->
+        <template v-else-if="tab === 'invites'">
+          <div class="hint">💡 一人一码一号：新成员用各自的码登录，审计里分得清谁拍的板。码吊销后无法再登录（已绑定账号不受影响）。</div>
+
+          <div class="panel">
+            <div class="panel-title">🔐 邀请码
+              <button class="btn btn-ghost btn-sm" @click="loadInvites" :aria-busy="invitesLoading">刷新</button>
+            </div>
+            <form class="v-home-form" @submit.prevent="newInvite">
+              <label class="field"><span class="field-label">成员名</span>
+                <input class="input" v-model.trim="invForm.name" placeholder="例：运营小王" /></label>
+              <label class="field"><span class="field-label">身份</span>
+                <select class="select" v-model="invForm.role">
+                  <option value="creator">创作（工作台全功能）</option>
+                  <option value="ops">运营（＋运维台/重合成）</option>
+                </select></label>
+              <div class="v-home-acts">
+                <button class="btn btn-primary" type="submit">＋ 生成新码</button>
+              </div>
+            </form>
+            <div class="card" v-if="invForm.lastCode" style="margin-top:8px">
+              ✅ 新码：<b class="mono">{{ raw(invForm.lastCode) }}</b>
+              <span class="weak">——发给对应成员，用它在登录页进入</span>
+              <button type="button" class="btn btn-sm" @click="copyCode">复制</button>
+            </div>
+
+            <loading v-if="invitesLoading && !invites"></loading>
+            <empty-state v-else-if="invites && !invites.length" icon="🔐" text="还没有邀请码"
+              sub="生成一个码，发给要协作的成员"></empty-state>
+            <div class="table-scroll" v-else-if="invites">
+              <table class="table">
+                <thead><tr><th>邀请码</th><th>预置身份</th><th>状态</th><th></th></tr></thead>
+                <tbody>
+                  <tr v-for="iv in invites" :key="iv.code">
+                    <td class="mono"><b>{{ raw(iv.code) }}</b></td>
+                    <td>
+                      <span v-if="iv.name">{{ hs(iv.name) }}</span><span v-else class="weak">—</span>
+                      <span class="badge" v-if="iv.role">{{ iv.role === 'ops' ? '运营' : '创作' }}</span>
+                    </td>
+                    <td>
+                      <span v-if="iv.used" class="badge badge-ok">已绑定 {{ hs(iv.bound_name || '') }}</span>
+                      <span v-else class="badge">未使用</span>
+                    </td>
+                    <td><button class="btn btn-sm btn-danger" @click="revokeInvite(iv)">吊销</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
       </div>`,
     setup() {
       /* ---- Tab 状态 ---- */
@@ -360,13 +579,13 @@
         return out;
       }
 
-      /* 每行局部 UI 状态（下拉选择/理由/巡检结果/最近一次裁决/明细展开） */
+      /* 每行局部 UI 状态（下拉选择/理由/巡检结果/最近一次裁决/明细展开/归属节点改绑） */
       Vue.watch(rows, list => {
         list.forEach(x => {
           if (!ui[x.id]) {
             const opts = tierOptions(x);
             const cur = rawTier(x.tier) || rawTier(x.quant);
-            ui[x.id] = { tier: cur || opts[0] || "", reason: "", busy: false, probe: "", last: null, open: false };
+            ui[x.id] = { tier: cur || opts[0] || "", reason: "", busy: false, probe: "", last: null, open: false, node: x.node || "" };
           }
         });
       }, { immediate: true });
@@ -412,6 +631,58 @@
       }
 
       function reload() { return store.loadRegistry().catch(() => {}); }
+
+      /* ---- 引擎登记/注销/改绑（tab 2，2026-11-22 注册表化） ---- */
+      const showAddEngine = Vue.ref(false);
+      const addingEngine = Vue.ref(false);
+      const engineForm = Vue.reactive({
+        engineId: "", lane: "", node: "", engine: "", quant: "", endpoint: "", published: "", unavail: ""
+      });
+      /* 合法车道枚举：后端 GET /admin/registry 随注册表下发（ALL_LANES ∪ 已装载 worker 车道） */
+      const lanesList = Vue.computed(() => {
+        const d = store.registry.data;
+        return (d && d.lanes) || [];
+      });
+      /* 节点清单（登记引擎/改绑归属节点用）：算力节点 tab 的加载结果直接复用 */
+      const nodesList = Vue.computed(() => {
+        return (nodesState.data && nodesState.data.nodes) || [];
+      });
+      function csvTiers(s) {
+        return String(s || "").split(/[,，]/).map(t => t.trim()).filter(Boolean);
+      }
+      async function addEngineRow() {
+        const f = engineForm;
+        const engineId = String(f.engineId || "").trim();
+        if (!engineId) { store.toast("先给引擎起个 ID（如 SDXL-turbo-Q8）", "warn"); return; }
+        if (!f.lane) { store.toast("选一个车道 lane（任务跑在哪条流水线上）", "warn"); return; }
+        addingEngine.value = true;
+        try {
+          await store.addEngine({
+            engineId,
+            lane: f.lane,
+            node: f.node || null,
+            engine: String(f.engine || "").trim() || engineId,
+            quant: String(f.quant || "").trim() || "n/a",
+            endpoint: String(f.endpoint || "").trim(),
+            published: csvTiers(f.published),
+            unavail: csvTiers(f.unavail)
+          });
+          Object.assign(f, { engineId: "", engine: "", quant: "", endpoint: "", published: "", unavail: "" });
+          showAddEngine.value = false;
+        } catch (e) { /* store 已 toast 人话 */ }
+        finally { addingEngine.value = false; }
+      }
+      async function removeEngineRow(x) {
+        try { await store.removeEngine(x.id, false); } catch (e) { /* store 已 toast（含确认取消） */ }
+      }
+      async function rebindEngineRow(x) {
+        const u = ui[x.id];
+        if (!u) return;
+        try {
+          await store.rebindEngine(x.id, u.node || null);
+          u.node = u.node || ""; // 成功后保持下拉与注册表一致
+        } catch (e) { /* store 已 toast；失败时回读注册表还原下拉 */ reload(); }
+      }
 
       /* ---- 系统告警（tab 3） ---- */
       const alertsLoading = Vue.ref(false);
@@ -511,6 +782,115 @@
         loadNodes().catch(() => {});
       }
 
+      /* ---- 节点注册表 CRUD（2026-11-22 运维台化：加机器/撤机器/改信息不再改代码） ---- */
+      nodesState.showAdd = false; nodesState.adding = false; nodesState.savingInfo = ""; nodesState.savingUser = "";
+      const nodeForm = Vue.reactive({ id: "", label: "", kind: "comfy", comfy_base: "", gpu_gate: false, api_endpoint: "", api_key: "", api_model: "", api_price: 30 });
+      async function addNode() {
+        const f = nodeForm;
+        const id = String(f.id || "").trim();
+        if (!id) { store.toast("先给节点起个 ID（如 gpu3）", "warn"); return; }
+        if (!String(f.label || "").trim()) { store.toast("给节点起个人看的名字", "warn"); return; }
+        const payload = { id, label: f.label, kind: f.kind, gpu_gate: f.gpu_gate };
+        if (f.kind === "cloud") {
+          payload.api = { endpoint: f.api_endpoint, key: f.api_key, model: f.api_model, price_cents: Number(f.api_price) || 0 };
+        } else {
+          payload.comfy_base = f.comfy_base;
+        }
+        nodesState.adding = true;
+        try {
+          await store.addNode(payload);
+          Object.assign(f, { id: "", label: "", kind: "comfy", comfy_base: "", gpu_gate: false, api_endpoint: "", api_key: "", api_model: "", api_price: 30 });
+          nodesState.showAdd = false;
+          await loadNodes();
+        } catch (e) { /* store 已 toast 人话 */ }
+        finally { nodesState.adding = false; }
+      }
+      /* 云 API 档案保存（endpoint/model/price＋可选新密钥） */
+      async function saveNodeApi(nd) {
+        nodesState.savingInfo = nd.id;
+        try {
+          const api = { endpoint: nd.api.endpoint, model: nd.api.model, price_cents: Number(nd.api.price_cents) || 0 };
+          if (nd._newKey) api.key = nd._newKey; // 空＝不改密钥
+          await store.updateNode(nd.id, { api });
+          nd._newKey = "";
+          store.toast("云 API 档案已保存");
+          await loadNodes();
+        } catch (e) { /* store 已 toast */ }
+        finally { nodesState.savingInfo = ""; }
+      }
+      /* 用户默认算力（账户→默认节点；""＝跟随全局） */
+      async function saveUserDriver(u, driver) {
+        nodesState.savingUser = u.uid;
+        try {
+          const r = await T.api.put("/nodes/users/" + encodeURIComponent(u.uid) + "/driver", { driver });
+          store.toast((r && r.note) || "用户默认算力已更新");
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { nodesState.savingUser = ""; }
+      }
+
+      /* ---- 🧠 LLM 大脑（统一配置面）：改当前承载节点的档案＋切承载 ---- */
+      nodesState.savingLlmHost = false;
+      const llmHostForm = Vue.reactive({ base: "", model: "", bat: "" });
+      Vue.watch(() => nodesState.data, (d) => {
+        if (!d) return;
+        llmHostForm.base = (d.llm && d.llm.base) || "";
+        const host = (d.nodes || []).find(n => n.id === d.llm_node) || {};
+        llmHostForm.model = (host.llm && host.llm.model) || "";
+        llmHostForm.bat = (host.llm && host.llm.bat) || "";
+      });
+      async function saveLlmHost() {
+        if (!nodesState.data) return;
+        nodesState.savingLlmHost = true;
+        try {
+          const r = await T.api.put("/nodes/llm", {
+            node: nodesState.data.llm_node,
+            base: llmHostForm.base, model: llmHostForm.model, bat: llmHostForm.bat
+          });
+          store.toast((r && r.note) || "LLM 档案已保存（热生效）");
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { nodesState.savingLlmHost = false; }
+      }
+      async function switchLlmHost(node) {
+        try {
+          await T.api.put("/nodes/llm-node", { node });
+          store.toast("LLM 大脑已切到「" + nodeLabelOf(node) + "」");
+          await loadNodes();
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+      }
+      async function saveNodeInfo(nd) {
+        nodesState.savingInfo = nd.id;
+        try {
+          await store.updateNode(nd.id, { label: nd.label, gpu_gate: nd.gpu_gate === true });
+          await loadNodes();
+        } catch (e) { /* store 已 toast；失败回读还原 */ loadNodes().catch(() => {}); }
+        finally { nodesState.savingInfo = ""; }
+      }
+      async function removeNodeCard(nd) {
+        try {
+          const r = await store.removeNode(nd.id, false);
+          if (r) await loadNodes();
+        } catch (e) { /* store 已 toast（含确认取消） */ }
+      }
+      /* 剧集行提示：驱动指向的节点是否开着显存互斥闸（名字一律取节点档案，不写死机器） */
+      function nodeGateOf(id) {
+        const ns = (nodesState.data && nodesState.data.nodes) || [];
+        const n = ns.filter(v => v.id === id)[0];
+        return !!(n && n.gpu_gate);
+      }
+
+      /* ---- 公共库科目（素材中心 C8）：素材任务不进单集 Σcost，公共池单独口径 ---- */
+      const pubLedger = Vue.ref(null);
+      const pubLoading = Vue.ref(false);
+      async function loadPubLedger() {
+        pubLoading.value = true;
+        try { pubLedger.value = await T.api.get("/studio/public_ledger"); }
+        catch (e) { pubLedger.value = null; }
+        finally { pubLoading.value = false; }
+        return pubLedger.value;
+      }
+
       /* ---- 题材节拍模板（tab 5）：运营可配（FR-1304） ---- */
       const templatesLoading = Vue.ref(false);
       const templates = Vue.ref(null);
@@ -578,12 +958,42 @@
         } catch (err) { /* store 已 toast（含确认取消） */ }
       }
 
+      /* ---- 成员与邀请码（tab 6，2026-11-22 按人发码） ---- */
+      const invites = Vue.ref(null);
+      const invitesLoading = Vue.ref(false);
+      const invForm = Vue.reactive({ name: "", role: "creator", lastCode: "" });
+      function loadInvites() {
+        invitesLoading.value = true;
+        Promise.resolve(store.loadInvites())
+          .then(list => { invites.value = list; })
+          .catch(() => {})
+          .finally(() => { invitesLoading.value = false; });
+      }
+      async function newInvite() {
+        const name = String(invForm.name || "").trim();
+        if (!name) { store.toast("给新成员起个名字", "warn"); return; }
+        try {
+          const r = await store.addInvite(name, invForm.role);
+          invForm.name = "";
+          invForm.lastCode = (r && r.code) || "";
+          loadInvites();
+        } catch (e) { /* store 已 toast */ }
+      }
+      async function revokeInvite(iv) {
+        try { await store.removeInvite(iv.code); loadInvites(); } catch (e) { /* store 已 toast */ }
+      }
+      function copyCode() {
+        try { navigator.clipboard.writeText(invForm.lastCode); store.toast("已复制"); }
+        catch (e) { store.toast("复制失败，手动选中文本复制", "warn"); }
+      }
+
       /* ---- Tab 懒加载＋告警页 10s 轮询 ---- */
       let alertsTimer = null;
       Vue.watch(tab, (t) => {
         if (t === "registry" && !store.registry.data) reload();
         if (t === "templates" && !templates.value) loadTemplates();
         if (t === "audit" && !store.registry.audit) loadAuditRows();
+        if (t === "invites" && !invites.value) loadInvites();
         if (t === "alerts") {
           loadAlerts();
           if (!alertsTimer) alertsTimer = setInterval(() => loadAlerts(), 10000);
@@ -606,8 +1016,14 @@
           return Array.isArray(a) ? a.slice(-50).slice().reverse() : null;
         }),
         auditLoading, loadAuditRows,
+        pubLedger, pubLoading, loadPubLedger,
         templates, templatesLoading, loadTemplates, tplEdit, tplSaving, editTemplate, saveTemplate, toggleTemplate, deleteTemplate,
+        invites, invitesLoading, loadInvites, invForm, newInvite, revokeInvite, copyCode,
         nodesState, nodeProbe, gpuData, loadNodes, switchDriver, saveLlm, saveComfy, switchLlmNode, probeNode, yieldGpu, nodeLabelOf, enginesOf,
+        nodeForm, addNode, saveNodeInfo, saveNodeApi, saveUserDriver, removeNodeCard, nodeGateOf,
+        llmHostForm, saveLlmHost, switchLlmHost,
+        nodeForm, addNode, saveNodeInfo, removeNodeCard, nodeGateOf,
+        showAddEngine, addingEngine, engineForm, lanesList, nodesList, addEngineRow, removeEngineRow, rebindEngineRow,
         tierOptions, tierLabel, actionCn,
         hs: s => T.sanitize(s),
         // 运维台注册表＝语言表豁免面：段位/引擎/泳道/端点显原值

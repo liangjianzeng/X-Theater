@@ -104,7 +104,23 @@
       const STATUS_RANK = { running: 0, queued: 1, pending: 1, failed: 2 };
       function jobTs(j) { return Number(j.ts != null ? j.ts : (j.at != null ? j.at : 0)); }
       const queueJobs = computed(() => {
-        const act = jobRows.value.filter(j => j.live !== false && STATUS_RANK[String(j.status)] != null);
+        // 失败行只显示「仍是该镜最新一版」的（2026-11-22）：重新开机后旧失败行是残影，
+        // 留在队列区会让用户以为还在连着失败（热舞派对「报错没动静」反馈）
+        const newestPerShot = new Map();
+        jobRows.value.forEach(j => {
+          const sid = j.shotId || (j.payload && j.payload.shotId);
+          if (!sid) return;
+          const c = newestPerShot.get(sid);
+          if (!c || jobTs(j) >= jobTs(c)) newestPerShot.set(sid, j);
+        });
+        const act = jobRows.value.filter(j => {
+          if (j.live === false || STATUS_RANK[String(j.status)] == null) return false;
+          if (String(j.status) === "failed") {
+            const sid = j.shotId || (j.payload && j.payload.shotId);
+            if (sid && newestPerShot.get(sid) !== j) return false; // 已被新批次取代的旧失败
+          }
+          return true;
+        });
         return act.slice().sort((a, b) => {
           const ra = STATUS_RANK[String(a.status)] || 0, rb = STATUS_RANK[String(b.status)] || 0;
           if (ra !== rb) return ra - rb;
@@ -114,12 +130,47 @@
           return jobTs(a) - jobTs(b);
         });
       });
-      const queuedN = computed(() => jobRows.value.filter(j => ["queued", "pending"].indexOf(String(j.status)) >= 0).length);
-      const runningN = computed(() => jobRows.value.filter(j => String(j.status) === "running").length);
+      const queuedN = computed(() => (shots.value || []).filter(s => { const j = jobOf(s); return !!j && ["queued", "pending"].indexOf(String(j.status)) >= 0; }).length);
+      const runningN = computed(() => (shots.value || []).filter(s => { const j = jobOf(s); return !!j && String(j.status) === "running"; }).length);
       const totalN = computed(() => (shots.value || []).length || 16);
       const doneN = computed(() => (shots.value || []).filter(s => String(s.status) === "ok").length);
       const reviewN = computed(() => (shots.value || []).filter(s => String(s.status) === "pending_review").length);
-      const failedN = computed(() => jobRows.value.filter(j => j.live !== false && String(j.status) === "failed").length);
+      const failedN = computed(() => (shots.value || []).filter(s => jobFailed(s)).length);
+
+      /* 渲染批次进度带（2026-11-22「用户怎么知道」）：按镜收敛账本历史成一句话——
+         系统在干活必须可见。完成/渲染中/排队/失败 + 已完成镜均耗时推算剩余分钟。 */
+      const batch = computed(() => {
+        const raw = (store.jobs.epId === props.epId && Array.isArray(store.jobs.list)) ? store.jobs.list : [];
+        const perJob = new Map(); // job_id → {first,last,statusTs,status,shotId}
+        raw.forEach(r => {
+          if (!r || r.type !== "video") return;
+          const k = String(r.job_id != null ? r.job_id : r.id);
+          const ts = Number(r.ts || 0);
+          const cur = perJob.get(k) || { first: ts, statusTs: 0, status: "", shotId: r.shotId || (r.payload && r.payload.shotId) || null };
+          cur.last = Math.max(cur.last || 0, ts);
+          if (ts >= cur.statusTs) { cur.status = String(r.status); cur.statusTs = ts; }
+          perJob.set(k, cur);
+        });
+        const perShot = new Map(); // 按镜取最新一版（重新开机后旧批次被覆盖）
+        perJob.forEach(j => { if (j.shotId) { const c = perShot.get(j.shotId); if (!c || j.last >= c.last) perShot.set(j.shotId, j); } });
+        const cur = Array.from(perShot.values());
+        const cnt = { done: 0, running: 0, queued: 0, failed: 0 };
+        cur.forEach(j => {
+          if (["done", "ok"].indexOf(j.status) >= 0) cnt.done++;
+          else if (j.status === "running") cnt.running++;
+          else if (j.status === "failed") cnt.failed++;
+          else cnt.queued++;
+        });
+        const durs = [];
+        perJob.forEach(j => { if (["done", "ok"].indexOf(j.status) >= 0 && j.first && j.last > j.first) durs.push((j.last - j.first) / 1000); });
+        const avg = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : 0;
+        const remain = cnt.queued + cnt.running;
+        const eta = avg && remain ? Math.max(1, Math.round((avg * remain) / 60)) : 0;
+        return {
+          total: cur.length, done: cnt.done, running: cnt.running, queued: cnt.queued, failed: cnt.failed,
+          eta, pct: cur.length ? Math.round((cnt.done / cur.length) * 100) : 0
+        };
+      });
 
       /* ---- 状态过滤（2026-11-21「点不住」修复）：toolbar 统计原是纯展示数字，用户当 tab 点
          点不动。现做成真过滤器：点状态 chip → 镜头墙与队列按状态过滤；再点一次取消。 ---- */
@@ -262,7 +313,7 @@
 
       return {
         store, opBusy, shots, loading, err, isEmpty, wallErr,
-        jobRows, queueJobs, queueJobsF, wallShots, filter, setFilter, failedN,
+        jobRows, queueJobs, queueJobsF, wallShots, filter, setFilter, failedN, batch,
         queuedN, runningN, totalN, doneN, reviewN,
         jobOf, jobFailed, cellCls, takeCost, jobLabel, jobId, stop, retry, reload, goFlow, clean,
         jobShotTag, jobStateCn, jobTakeArt, jobWaitMin, nextStep, queuePos, showPrompt,
@@ -271,6 +322,19 @@
     },
     template: `
       <div class="v-shoot">
+        <!-- 渲染批次进度带（2026-11-22「用户怎么知道」）：系统在干活必须可见 -->
+        <div class="card v-shoot-progress" v-if="batch.total">
+          <div class="row wrap">
+            <b>🎬 渲染批次</b>
+            <span class="badge badge-ok">完成 {{ batch.done }}/{{ batch.total }}</span>
+            <span class="badge" style="background:#E7EEF6;color:#2F6FB4" v-if="batch.running">渲染中 {{ batch.running }}</span>
+            <span class="badge">排队 {{ batch.queued }}</span>
+            <span class="badge badge-err" v-if="batch.failed">失败 {{ batch.failed }}（可重试）</span>
+            <span class="grow"></span>
+            <span class="weak">{{ batch.eta ? '预计还需约 ' + batch.eta + ' 分钟' : '每镜约 5–8 分钟（Spark 串行）' }}</span>
+          </div>
+          <div class="progress v-shoot-progress-bar"><div class="bar"><span :style="{ width: batch.pct + '%' }"></span></div></div>
+        </div>
         <div class="toolbar">
           <button class="btn btn-sm" :class="filter === '' ? 'btn-primary' : 'btn-ghost'" @click="setFilter('')">全部 <b class="num">{{ doneN }}</b><span class="muted">/</span><b class="num">{{ totalN }}</b></button>
           <span class="tb-sep"></span>

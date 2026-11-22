@@ -42,7 +42,7 @@ function cfgOf(cfg) {
     model: (cfg && cfg.llm && cfg.llm.model) || "default",
     bat: (cfg && cfg.llm && cfg.llm.bat) || "",
     enabled: !!base,
-    comfyBase: String((cfg && cfg.comfy && cfg.comfy.base) || "").replace(/\/+$/, "")
+    comfyBase: String((cfg && (cfg.llmHostComfy || (cfg.comfy && cfg.comfy.base))) || "").replace(/\/+$/, "") // LLM 承载机的 Comfy（显存互斥监视对象）
   };
 }
 

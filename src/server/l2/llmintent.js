@@ -83,6 +83,9 @@ function systemPrompt(ctx, session, chips) {
     '- library_stats {} 素材中心库存统计（各域计数＋候选池）',
     '- bind_asset {"domain":"music","asset_id":"mus_...","scene_no":N,"primary":true} 把素材绑定到场景（主曲/备选；不花钱）',
     '- generate_music {"mood":"中文情绪词","type":"bgm|theme|ambient|mv","sec":45} 素材中心生成配乐候选（不挂场进候选池；花钱，会出确认卡）',
+    '- assist_lyrics {"paste":"歌词素材或主题","type":"theme|bgm|ambient|mv","mood":"中文情绪词"} AI 把素材扩写为结构化歌词（结果直接回给你看）',
+    '- assist_image_prompt {"idea":"画面想法","type":"establishing|empty|prop|poster|mood|mv","mood":"中文情绪词"} AI 把想法扩写为专业画面描述（结果直接回给你看）',
+    '- generate_image {"desc":"画面描述","type":"mood|establishing|empty|prop|poster|mv","ratio":"9:16"} 素材中心生成图像候选（不挂集进候选池；花钱，会出确认卡）',
     "",
     "绑定纪律：你只服务上下文里的绑定剧集；对话历史若涉及其它剧集，一律以本次绑定为准，不要延续旧剧的语境、数字或进度。",
     "上下文：",
@@ -147,7 +150,11 @@ const TOOL_ARG_KEYS = {
   search_assets: ["domain", "q"],
   library_stats: [],
   bind_asset: ["domain", "asset_id", "scene_no", "scene_id", "primary"],
-  generate_music: ["mood", "type", "sec", "project_id"]
+  generate_music: ["mood", "type", "sec", "project_id"],
+  // AI 生成编排（2026-11-22 下午③）
+  assist_lyrics: ["paste", "type", "mood", "note"],
+  assist_image_prompt: ["idea", "type", "mood", "ratio"],
+  generate_image: ["desc", "type", "ratio", "project_id"]
 };
 const TEXT_KEYS = { title: 60, brief: 300, note: 300 };
 

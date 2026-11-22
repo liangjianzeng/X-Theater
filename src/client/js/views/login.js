@@ -13,6 +13,9 @@
             <span class="field-label">内测邀请码</span>
             <input class="input" v-model.trim="code" placeholder="向运营索取邀请码" autocomplete="off" />
           </label>
+          <div v-if="hint" class="weak login-hint" @click.prevent="fillHint" title="点击填入">
+            演示环境邀请码：<b>{{ hint }}</b>（点击填入）
+          </div>
           <err-state v-if="err" :err="err" :on-retry="() => { err = null; }" compact></err-state>
           <button class="btn btn-primary" type="submit" :disabled="busy || !code">
             {{ busy ? '进门中…' : '进门' }}
@@ -25,6 +28,10 @@
       const ref = global.Vue.ref("");
       const busy = global.Vue.ref(false);
       const err = global.Vue.ref(null);
+      // 演示邀请码提示：仅当服务端邀请码仍是出厂种子时返回（运营自定义后立即静默）
+      const hint = global.Vue.ref("");
+      T.api.get("/login/hint").then((r) => { hint.value = (r && r.code) || ""; }).catch(() => {});
+      function fillHint() { if (hint.value) ref.value = hint.value; }
       async function submit() {
         if (!ref.value || busy.value) return;
         busy.value = true; err.value = null;
@@ -34,7 +41,7 @@
         } catch (e) { err.value = e; }
         finally { busy.value = false; }
       }
-      return { code: ref, busy, err, submit };
+      return { code: ref, busy, err, submit, hint, fillHint };
     }
   };
 })(window);

@@ -64,6 +64,7 @@ function createL2(ctx) {
     const s = {
       id: util.uid("l2s"),
       uid: String(auth.id),
+      tenantId: auth.tid || null, // 域上下文（S3-4）：Phase 2 副驾域感知的挂点
       mode: m,
       msgs: [],
       tasks: [],

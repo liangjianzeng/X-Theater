@@ -115,21 +115,26 @@ function register(router, ctx) {
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const st = store.get();
+      // 域投影（S3-3 心脏）：唯一读取入口——只出本域数据（等价 RLS 会话上下文）
+      const scoped = ctx.tenants
+        ? ctx.tenants.scopedView(st, auth)
+        : { tid: null, view: st };
+      const v = scoped.view;
       const hits = [];
 
-      const episodes = Object.keys(st.episodes || {})
+      const episodes = Object.keys(v.episodes || {})
         .sort()
         .map((k) => {
-          const ep = st.episodes[k];
+          const ep = v.episodes[k];
           sanitizeBag(ctx, ep, DISPLAY_FIELDS.episodes, hits); // 就地替换＋持久
           return Object.assign({}, ep);
         });
 
       const shotsByEpisode = {};
-      Object.keys(st.shots || {})
+      Object.keys(v.shots || {})
         .sort()
         .forEach((k) => {
-          const sh = st.shots[k];
+          const sh = v.shots[k];
           sanitizeBag(ctx, sh, DISPLAY_FIELDS.shots, hits);
           (shotsByEpisode[sh.episodeId] = shotsByEpisode[sh.episodeId] || []).push(Object.assign({}, sh));
         });
@@ -138,8 +143,8 @@ function register(router, ctx) {
       );
 
       const scenesByEpisode = {};
-      Object.keys(st.scenes || {}).forEach((k) => {
-        const sc = st.scenes[k];
+      Object.keys(v.scenes || {}).forEach((k) => {
+        const sc = v.scenes[k];
         const clone = Object.assign({}, sc);
         sanitizeBag(ctx, clone, DISPLAY_FIELDS.scenes, hits);
         (scenesByEpisode[sc.episodeId] = scenesByEpisode[sc.episodeId] || []).push(clone);
@@ -148,18 +153,18 @@ function register(router, ctx) {
         scenesByEpisode[eid].sort((a, b) => (a.seq || 0) - (b.seq || 0))
       );
 
-      const cardsPending = Object.keys(st.cards || {})
+      const cardsPending = Object.keys(v.cards || {})
         .sort((a, b) => {
-          const ca = st.cards[a], cb = st.cards[b];
+          const ca = v.cards[a], cb = v.cards[b];
           return (ca.created_at || 0) - (cb.created_at || 0) || String(a).localeCompare(String(b));
         })
-        .map((k) => st.cards[k])
+        .map((k) => v.cards[k])
         .filter((c) => c.status === "pending")
         .filter((c) => {
           // music_enabled=false 的项目不出 C9
           if (c.type !== "C9") return true;
-          const ep = (st.episodes || {})[c.episodeId];
-          const pj = ep && (st.projects || {})[ep.projectId];
+          const ep = v.episodes[c.episodeId];
+          const pj = ep && v.projects[ep.projectId];
           return !(pj && pj.music_enabled === false);
         })
         .map((c) => {
@@ -178,7 +183,7 @@ function register(router, ctx) {
           };
         });
 
-      const reviewPending = (st.review_q || [])
+      const reviewPending = (v.review_q || [])
         .filter((r) => r.status === "pending")
         .map((r) => {
           const clone = Object.assign({}, r);
@@ -209,13 +214,15 @@ function register(router, ctx) {
 
       return router.json(res, 200, {
         server_time: util.now(),
-        projects: st.projects || {},
+        tenant_id: scoped.tid,
+        tenant_name: ((st.tenants || {})[scoped.tid] || {}).name || null,
+        projects: v.projects || {},
         episodes,
         scenes_by_episode: scenesByEpisode,
         shots_by_episode: shotsByEpisode,
         cards_pending: cardsPending,
         review_pending: reviewPending,
-        music_library: (st.music_lib || []).length,
+        music_library: (v.music_lib || []).length,
         alerts_unacked: (st.alerts || []).filter((a) => !a.acked).length,
         queue: queueSummary(ctx)
       });
