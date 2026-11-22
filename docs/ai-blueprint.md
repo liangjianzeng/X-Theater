@@ -206,7 +206,7 @@ ask 卡是长任务链的钩子。已通链路：
 | 链式语境 lastProject | ✅ | adapter 记录＋llmintent toIntent 三级兜底 | 「建完项目答梗概就建集」ask 链承接（selfcheck 覆盖） |
 | ID 机械剥除 | ✅ | llmintent llmReply/toIntent say | 真机发现模型不守「不露编号」纪律 → 清洗层兜底（selfcheck 覆盖） |
 | L2 建项/建集租户戳 | ✅ | tools.js create_project/create_episode | 真机发现漏 tenantId＝scopedView 全域隐形（集建成不可见）→ 与 api 路由同口径 |
-| 主动性 hint | ⬜ 未开工 | 规划 §3.6 | P2 |
+| 主动性 hint（新待拍板卡） | ✅ | copilot.js 本地横幅（cards_pending diff） | 绑定集限定；切集基线静默（不回灌旧卡）；按卡 ID 会话级去重；hint＝文本＋可点选项（send 走治理链/href 导航）＋✕ 收起；真机验证基线静默/弹出/点选发送/收起 |
 | C2-C8 节点感知深化 | ⬜ 未开工 | 规划 §2 矩阵「建议/交互」列 | P2 |
 | 会话记忆/项目事实摘要 | ⬜ 未开工 | 规划 §3.6 | P2 |
 | 意图回归集/双跑对比账 | ⬜ 未开工 | 规划 §6 P3 | P3 |

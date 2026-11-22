@@ -25,6 +25,20 @@
   const Vue = global.Vue;
   const views = (global.__VIEWS = global.__VIEWS || {});
 
+  /* P2 主动性 hint（蓝图 §3.6）：卡类型中文名＋下游影响——展示面与客户端 TYPE_META 同口径 */
+  const CARD_CN = {
+    C1: { name: "故事方向卡", next: "定妆、试镜、分镜全在等它" },
+    C2: { name: "演员定妆卡", next: "定妆定了分镜首帧才好落" },
+    C2S: { name: "试妆试镜卡", next: "确认后才进批量出图" },
+    C3: { name: "演员表锁定卡", next: "演员表锁定才能试拍" },
+    C4: { name: "分镜画面卡", next: "分镜定了才有样片" },
+    C5: { name: "样片审看卡", next: "样片过审就到开机报价" },
+    C6: { name: "开机报价卡", next: "报价拍板＝真金白银开跑" },
+    C7: { name: "灰区镜头批复卡", next: "批复完镜头才放行" },
+    C8: { name: "交付确认卡", next: "全镜放行即可导出成片" },
+    C9: { name: "配乐提案卡", next: "音轨就位后成片不返工" }
+  };
+
   const TOOL_CN = {
     reroll_shot: "重拍镜头",
     music_candidates: "配乐候选",
@@ -178,6 +192,50 @@
           newSession().then(() => store.toast("已切换到本集上下文，开了新会话"));
         }
       });
+
+      /* ---------- P2 主动性 hint（蓝图 §3.6）：新待拍板卡主动递可点的下一步 ----------
+         数据源＝/state cards_pending（卡流事件自动刷新）；只对绑定集推（无绑定不打扰）；
+         切集基线静默（已存在的卡不回灌提醒），会话生命周期内按卡 ID 去重；
+         hint 是组件内本地横幅（不进会话落账），点选项走既有通路（send 走治理链/href 导航）。 */
+      const hints = Vue.ref([]);
+      const seenCardIds = new Set();
+      const baselined = Vue.ref(false);
+      const boundPending = Vue.computed(() => {
+        const b = boundEp.value;
+        if (!b || !store.state) return [];
+        return (store.state.cards_pending || []).filter(c => c && c.episodeId === b.id);
+      });
+      Vue.watch(boundPending, (list) => {
+        const b = boundEp.value;
+        if (!b) return;
+        if (!baselined.value) { list.forEach(c => seenCardIds.add(c.id)); baselined.value = true; return; }
+        let fresh = 0;
+        list.forEach(c => {
+          if (seenCardIds.has(c.id)) return;
+          seenCardIds.add(c.id);
+          const meta = CARD_CN[c.type] || { name: c.type + "卡", next: "拍板后下游才好走" };
+          hints.value.push({
+            id: c.id,
+            text: "📌 新卡待拍板：" + meta.name + "——" + meta.next,
+            options: [
+              { label: "看看待拍板的卡", send: "看看待拍板的卡" },
+              { label: "去卡流页", href: "#/ep/" + encodeURIComponent(b.id) + "/flow" }
+            ]
+          });
+          fresh++;
+        });
+        while (hints.value.length > 2) hints.value.shift();
+        if (fresh) store.toast("有新卡等你拍板", "warn");
+      });
+      Vue.watch(() => (boundEp.value && boundEp.value.id) || "", () => { hints.value = []; baselined.value = false; });
+      function dismissHint(h) { hints.value = hints.value.filter(x => x !== h); }
+      function hintOpt(h, o) {
+        if (!h || !o) return;
+        dismissHint(h);
+        if (o.tab) { tab.value = String(o.tab); return; }
+        if (o.href) { global.location.hash = String(o.href); return; }
+        if (o.send) send(String(o.send));
+      }
 
       function ctxChips() {
         const b = boundEp.value;
@@ -457,7 +515,7 @@
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
-        canDecide, estCents, estTime, decide, pickOpt, isUsed,
+        canDecide, estCents, estTime, decide, pickOpt, isUsed, hints, dismissHint, hintOpt,
         fmtArgsStatic: fmtArgs,
         clean: T.sanitize, rel: T.relTime
       };
@@ -501,6 +559,18 @@
           <!-- 对话 -->
           <template v-if="tab === 'chat'">
             <div class="v-copilot-body" ref="bodyEl" v-if="L.sid">
+              <!-- P2 主动性 hint：新待拍板卡的本地横幅（一次性，点选项或 ✕ 收起） -->
+              <div class="v-copilot-hints" v-if="hints.length">
+                <div class="v-copilot-hint" v-for="h in hints" :key="h.id">
+                  <div class="row">
+                    <span class="grow v-copilot-hint-t">{{ h.text }}</span>
+                    <button class="v-copilot-hint-x" @click="dismissHint(h)" aria-label="收起提醒">✕</button>
+                  </div>
+                  <div class="row wrap">
+                    <button class="chip" v-for="(o, j) in h.options" :key="j" @click="hintOpt(h, o)">{{ o.label }}</button>
+                  </div>
+                </div>
+              </div>
               <div class="v-copilot-warn" v-if="srvBroken">这个会话已被预算护栏掐断，助手暂不代办动作。</div>
               <div class="loading" v-if="!L.msgs.length && L.sending"><i></i><i></i><i></i></div>
               <empty-state v-else-if="!L.msgs.length" icon="💬" text="跟制片助手说点什么"
