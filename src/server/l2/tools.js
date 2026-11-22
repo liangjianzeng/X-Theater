@@ -267,7 +267,6 @@ async function execute(tool, args, ctx, session, auth, opts) {
       });
       break;
     }
-      break;
     // ---- 全流程动作 ----
     case "create_project": {
       const p = {

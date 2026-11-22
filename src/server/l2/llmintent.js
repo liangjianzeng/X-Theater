@@ -85,7 +85,7 @@ function systemPrompt(ctx, session, chips) {
     "@芯片（用户明确指向的对象）：" + chipSummary(chips),
     "",
     "规则：",
-    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。",
+    "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。",
     "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
     "3. 与工具无关的一般问题（问剧情、要创作建议、闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内。",
     "4. 数据引用纪律（防幻觉）：镜头/任务状态必须逐字引用上下文里的标记——✓=已通过，⚠=待复审，无标记=还没拍；禁止把「未拍」说成「已就绪」，禁止编造成本/进度数字。所有 ID（card_id/project_id/shot_id 等）只能从上下文复制，绝不许编造——上下文没有就改用 card_type/project_name 等名称定位。",

@@ -119,7 +119,11 @@ function parseIntent(text, chips, ctx, session) {
   const wantPick = /择优|选(?:最|择)|最佳|挑一?条/.test(t);
   const wantCost = /成本|花了|花费|费用|预算|多少钱/.test(t);
   const wantProject = /项目/.test(t) && /(哪些|列表|列|几个|多少|查询|查)/.test(t);
-  const wantProgress = /进度|完成|怎么样|咋样|状态|拍得|进行/.test(t);
+  const wantProgress = /进度|完成|怎么样|咋样|状态|拍得|进行|到哪一步|走到哪|进展/.test(t);
+  // 卡流/GPU 查询（2026-11-22 芯片联动）：只读；拍板动作（批准/驳回/重出一版）不进规则表——拍板权在人
+  const wantCards = /待拍板|拍板|卡流|哪张卡|几张卡|卡片/.test(t);
+  const wantGpu = /被挡|挡了|开不了机|显存|GPU|gpu|显卡/.test(t);
+  const wantNewShow = /新建|建一部|开一部|新剧|创建/.test(t);
   const wantExport = /导出|成片|出片/.test(t);
 
   // —— 音乐类（先于 mood：出候选句里也可能带情绪词）——
@@ -173,6 +177,18 @@ function parseIntent(text, chips, ctx, session) {
   // —— 查询项目（5 类之一；单租户种子＝列出项目+进度）——
   if (wantProject) {
     return { tool: "query_progress", name: "query_projects", args: mkArgs({}) };
+  }
+  // —— 卡流查询（只读；LLM 在线时同样落 query_cards，两张脸一个语义）——
+  if (wantCards) {
+    return { tool: "query_cards", name: "query_cards", args: mkArgs({ episode_id: epId }) };
+  }
+  // —— GPU/节点闸解释（只读；「停止 LLM 让路」在运维台，助手不代停）——
+  if (wantGpu) {
+    return { tool: "query_gpu", name: "query_gpu", args: mkArgs({ episode_id: epId }) };
+  }
+  // —— 新建剧（规则模式保守引导：没剧名不能盲建；LLM 在线时由 LLM 追问剧名一步到位）——
+  if (wantNewShow) {
+    return { refusal: "新建一部剧得先有剧名，比如「帮我新建一部剧，就叫灯塔来信」。", name: "create_project" };
   }
   // —— 进度 ——
   if (wantProgress || /查/.test(t)) {

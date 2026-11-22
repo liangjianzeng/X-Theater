@@ -25,8 +25,6 @@
   const Vue = global.Vue;
   const views = (global.__VIEWS = global.__VIEWS || {});
 
-  const CHIPS = ["今天哪几个镜头没过", "最新预估", "重拍 #7", "给场2换段配乐"];
-
   const TOOL_CN = {
     reroll_shot: "重拍镜头",
     music_candidates: "配乐候选",
@@ -177,6 +175,47 @@
         const b = boundEp.value;
         return b ? [{ type: "episode", id: b.id }] : [];
       }
+
+      /* ---------- 快捷芯片：贴场景推导，不再写死句（2026-11-22） ----------
+         数据源全是现成状态面：/state 的 cards_pending（卡流事件自动刷新）、/api/gpu 的 5s 轮询、
+         剧集 driver。芯片只描述「此刻状态」——待拍板/进度/被挡/成本，不写死剧名镜号，
+         换任何剧都成立；每条都落在助手真有的工具上（只读优先）：
+         「重出一版」这类拍板动作绝不进芯片——拍板权在人，助手只引路。 */
+      const epObj = Vue.computed(() => {
+        const b = boundEp.value;
+        if (!b || !store.state) return null;
+        const eps = store.state.episodes || {};
+        return (Array.isArray(eps) ? eps.find(x => x.id === b.id) : eps[b.id]) || null;
+      });
+      const penCards = Vue.computed(() => {
+        const all = (store.state && store.state.cards_pending) || [];
+        const b = boundEp.value;
+        return b ? all.filter(c => c && c.episodeId === b.id) : all;
+      });
+      const gpuBlocked = Vue.computed(() => {
+        const e = epObj.value;
+        return !!((!e || e.driver !== "dgx") && store.gpu && store.gpu.data && store.gpu.data.gpu_busy);
+      });
+      const CHIPS = Vue.computed(() => {
+        const out = [];
+        const b = boundEp.value;
+        if (penCards.value.length) out.push("看看待拍板的卡");
+        if (b) {
+          out.push("本集现在到哪一步了");
+          if (gpuBlocked.value) out.push("为什么开机拍摄被挡了");
+          out.push("这集拍完要多久多少钱");
+        } else {
+          const pjs = (store.state && store.state.projects) || {};
+          if (Object.keys(pjs).length) {
+            out.push("看看有哪些项目");
+            out.push("最近的剧集进展怎么样");
+          } else {
+            out.push("帮我新建一部剧");
+          }
+        }
+        if (out.length < 4) out.push("成本花了多少");
+        return out.slice(0, 4);
+      });
 
       /* ---------- 会话管理：新会话 / 历史会话切换 ---------- */
       const menuOpen = Vue.ref(false);

@@ -263,6 +263,31 @@ function replyFor(tool, args, r, ctx, session) {
       const res = r.result || {};
       return "「" + (res.scene_name || args.scene_id) + "」的情绪基调已改为「" + res.mood + "」，后续镜头都照这个调子走。";
     }
+    case "query_cards": {
+      const res = r.result || {};
+      const all = res.cards || [];
+      const pen = all.filter(c => c.status === "pending");
+      if (!all.length) return "这集还没有卡进来——卡流会随创作流程自己长出来，我盯着。";
+      let s = "本集共 " + all.length + " 张卡";
+      if (pen.length) s += "，其中 " + pen.length + " 张待拍板（" + pen.map(c => c.type + "·" + String(c.id || "").slice(0, 10)).join("、") + "）。拍板我不代做——到卡流页核对后自己点，或告诉我看哪张卡。";
+      else s += "，都已在各自环节定案。有新卡进来我叫你。";
+      return s;
+    }
+    case "query_gpu": {
+      const res = r.result || {};
+      const llmOn = !!res.llmOnline;
+      if (res.episode_driver === "dgx") {
+        return "本集走 DGX 节点渲染，不吃本机显存；本机 LLM " + (llmOn ? "在线，两边互不打架。" : "当前离线/未启用。");
+      }
+      return "本集走本机渲染。本机 LLM " + (llmOn ? "在线——生图/拍摄要独占显存，所以开机拍摄暂时被挡着；要腾地方去运维台点「停止 LLM 让路」，我不代停。" : "离线/未启用，本机渲染畅通。");
+    }
+    case "query_projects": {
+      const res = r.result || {};
+      const ps = res.projects || [];
+      return ps.length
+        ? "现在有 " + ps.length + " 个项目：" + ps.map(p => "《" + (p.title || p.id) + "》").join("、") + "。想开新集或看某部剧的进度，直接说。"
+        : "还没有项目。说「帮我新建一部剧，就叫XX」，我给你从建项开始走。";
+    }
     default:
       void st; void session;
       return "办好了。";
