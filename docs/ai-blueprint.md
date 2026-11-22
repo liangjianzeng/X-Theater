@@ -231,3 +231,10 @@ ask 卡是长任务链的钩子。已通链路：
 - **视频线专属**：`src/server/dag/workers/*`、`src/server/api/prompts` 相关、`src/server/prompts/*`、`src/client/js/store.js`、`src/client/js/api.js`、`src/client/js/views/flow.js` 等流程/素材面
 - **共享错峰文件**：`src/server/l2/tools.js`、`src/server/l2/governance.js`、`src/server/api/cards.js`——双方都可能改；**动之前先声明，对方有未提交改动时等对方 commit 后再动**；提交前逐 hunk 隔离（只提交自己的）
 - **LLM 承载（用户裁决 2026-11-22）**：LLM 迁 DGX 缓行——LLM 最终只是节点档案里的一个配置（`state.llm_node` 热切换已就绪），运维台后续重构架构统一承载；本线不主动迁移
+
+### 8.2 交接视频线：默认渲染节点＋GPU_BUSY 降噪（2026-11-22 用户批语「dgx 的算力应该可以设置为默认，不要老提示这种垃圾消息」）
+
+- **需求**：①节点注册表支持「默认渲染节点」设置（新集默认继承，不再逐集手切）；②engine GPU_BUSY 闸命中时若存在可用远端节点→自动改道或一次性引导切换，而不是每次弹长 toast；③toast 文案降噪（现场抱怨样本：engine.js:415 的 14.4GB 长文案）。
+- **归属**：engine.js/nodes.js 均为视频线 in-flight 重构区（节点注册表数据驱动化进行中），助手线按 §8.1 协议不动其未提交区。
+- **助手线已做的即时止血**：现存走本机的集已全部切 DGX（运营动作，可逆）。
+- **助手线面（后续配合）**：copilot 的 gpuBlocked 芯片与 adapter 的 gpuNote 文案在注册表落地后同步改语义（driver=node id），避免两套「被挡」话术打架。
