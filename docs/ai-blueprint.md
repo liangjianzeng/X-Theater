@@ -238,3 +238,17 @@ ask 卡是长任务链的钩子。已通链路：
 - **归属**：engine.js/nodes.js 均为视频线 in-flight 重构区（节点注册表数据驱动化进行中），助手线按 §8.1 协议不动其未提交区。
 - **助手线已做的即时止血**：现存走本机的集已全部切 DGX（运营动作，可逆）。
 - **助手线面（后续配合）**：copilot 的 gpuBlocked 芯片与 adapter 的 gpuNote 文案在注册表落地后同步改语义（driver=node id），避免两套「被挡」话术打架。
+
+### 8.3 算力调度目标架构（2026-11-22 用户批语「车道泳道全是和 5060/DGX 捆绑写死」——硬规格）
+
+**原则：节点是数据，车道是能力，路由是策略——代码里不许出现任何硬件名。**
+
+1. **节点（Node）＝纯数据**：`st.nodes[id] = { id, label, caps: ["t2i","i2i","t2v","compose","music","tts","moderate","llm"], endpoint, gpu_gate: bool, is_default_render: bool, online }`。新增/更换硬件＝运维台填一条数据，零代码。
+2. **车道（Lane）＝能力名，不是硬件名**：现存 `img5060/vid5060/imgspark/...` 全部退役为「节点上的能力绑定」。job 只声明**能力需求**（如 `cap:"t2i"`），不再点名车道。
+3. **路由策略（唯一入队口 engine.enqueue 内聚）**：
+   - 有集任务：集 driver=node → 该节点有能力→走它；没能力→NODE_NO_LANE 引导绑引擎（现文案保留）。
+   - **无集任务（素材中心 img_free 等）：走 `is_default_render` 节点**；默认节点被 gpu_gate 挡→自动落到其它有同能力且未 gate 的节点；全都被挡→才提示（一次性、带一键改默认）。
+   - **不再允许**「无集任务焊死在本机」的现状（素材中心撞闸的直接根因）。
+4. **旧名兼容映射**（一次性迁移表，落库即删）：`img5060→cap:t2i@local`、`imgspark→cap:t2i@dgx`、`vid5060→cap:t2v@local`、`vidspark→cap:t2v@dgx`……worker 文件改名去硬件（img5060.js→worker.t2i.js 等）。
+5. **验收**：①新增一张虚拟节点（纯数据）跑通生图；②停本机 LLM 不再影响任何走 DGX/默认节点的任务；③素材中心无集生图零提示自动出图；④代码全局 grep `5060|spark` 零命中（worker 文件名与历史账本除外）。
+- **归属**：engine/workers 视频线 in-flight（节点注册表已建一半）；本规格＝其完成线。助手线只消费路由结果（GPU_BUSY 面文案与 hint 已按此同步语义）。
