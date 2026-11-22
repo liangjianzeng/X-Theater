@@ -104,6 +104,20 @@ function createL2(ctx) {
       });
   }
 
+  /* 会话删除（2026-11-22）：验收脚本自清账＋用户可清掉不要的会话。
+     纪律（蓝图 §8）：验收/测试脚本不得在用户可见面留下垃圾会话——谁建的谁删。 */
+  function deleteSession(id, auth) {
+    const s = sessionsMap()[id];
+    if (!s) return { code: "NOT_FOUND", message: "会话不存在" };
+    if (auth && String(s.uid) !== String(auth.id)) {
+      return { code: "FORBIDDEN", message: "跨租户访问：会话不属于你" };
+    }
+    runtimes.delete(id); // 内存 runtime 随之释放（无独立 stop 面；重启后本就不懒重建已删会话）
+    delete sessionsMap()[id];
+    store.commit();
+    return { ok: true, id: id };
+  }
+
   /* ---------- 对话 ---------- */
   async function postMessage(id, payload, auth) {
     const s = getSession(id);
@@ -354,6 +368,7 @@ function createL2(ctx) {
     getSession: getSession,
     listSessions: listSessions,
     getSessions: listSessions, // 契约 §5 别名
+    deleteSession: deleteSession,
     postMessage: postMessage,
     decideApproval: decideApproval
   };

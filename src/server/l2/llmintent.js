@@ -50,42 +50,48 @@ function chipSummary(chips) {
   return list.length ? list.join("、") : "无";
 }
 
+/* 广告工具表（单一来源，2026-11-22）：systemPrompt 只广告这些；toIntent 也只认这些。
+   在线双跑实锤：「写一首诗」被幻觉成白名单内但未广告的 runtime_spawn——
+   parse 层先按广告面拒，幻觉工具根本到不了治理层（治理白名单照旧兜底）。 */
+const LLM_TOOLS = [
+  ["query_progress", "{} 查询拍摄进度"],
+  ["query_cost", "{} 查询成本"],
+  ["reroll_shot", '{"shot_no":N} 或 {"shot_id":"sh_..."} 重拍镜头（花钱，会出确认卡）'],
+  ["pick_take", '{"shot_no":N} 或 {"shot_id":"sh_..."} 为镜头选最佳条'],
+  ["music_candidates", '{"scene_no":N,"mood":"中文情绪词"} 生成配乐候选（花钱，会出确认卡）'],
+  ["set_mood", '{"scene_no":N,"mood":"中文情绪词"} 设定场次情绪'],
+  ["query_cards", "{} 查本集创作卡（待拍板/已拍板）"],
+  ["query_card", '{"card_id":"card_..."} 查单卡详情'],
+  ["query_projects", "{} 查项目列表"],
+  ["query_episodes", '{"project_id":"pj_..."} 查项目下的集'],
+  ["query_scenes", "{} 查剧本分场分镜表（画面与台词）"],
+  ["query_music", "{} 查配乐挂接与候选"],
+  ["query_gpu", "{} 查本机 LLM/GPU 占用"],
+  ["create_project", '{"title":"项目名","look":"写实电影感|柔光唯美|冷冽悬疑"} 新建项目（用户指定了影调就必须放进 look 参数）'],
+  ["create_episode", '{"project_id":"pj_..." 或 "project_name":"项目名","title":"集标题","brief":"一句话故事"} 新建集（自动生成结构化剧本＋C1 故事卡）'],
+  ["suggest_card", '{"card_id":"card_...","note":"修改意见"} 对 C1 出 AI 修改建议（只建议，不改）'],
+  ["adopt_music", '{"candidate_id":"mus_...","scene_id":"sc_..."} 采用配乐候选'],
+  ["revise_scenes", '{"episode_id":"ep_...","scenes":[完整新分场分镜表]} 修订剧本（改源头，会出确认卡；scenes 结构必须与 query_scenes 的一致，场数/镜数不变）'],
+  ["decide_card", '{"card_id":"card_..." 或 "card_type":"C1","action":"accept|reject"} 拍板卡（card_id 见上下文「待拍板卡」清单；会出确认卡，用户确认后才执行）'],
+  ["apply_suggestion", '{"card_id":"card_..."} 把已出的修改建议落进待拍板 C1 卡（先 suggest_card 出过建议；采纳后仍由用户拍板）'],
+  ["shoot_episode", '{"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）'],
+  ["export_episode", '{"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）'],
+  ["search_assets", '{"domain":"music|images|characters|scenes","q":"关键词"} 检索素材中心资产库（只读）'],
+  ["library_stats", "{} 素材中心库存统计（各域计数＋候选池）"],
+  ["bind_asset", '{"domain":"music","asset_id":"mus_...","scene_no":N,"primary":true} 把素材绑定到场景（主曲/备选；不花钱）'],
+  ["generate_music", '{"mood":"中文情绪词","type":"bgm|theme|ambient|mv","sec":45} 素材中心生成配乐候选（不挂场进候选池；花钱，会出确认卡）'],
+  ["assist_lyrics", '{"paste":"歌词素材或主题","type":"theme|bgm|ambient|mv","mood":"中文情绪词"} AI 把素材扩写为结构化歌词（结果直接回给你看）'],
+  ["assist_image_prompt", '{"idea":"画面想法","type":"establishing|empty|prop|poster|mood|mv","mood":"中文情绪词"} AI 把想法扩写为专业画面描述（结果直接回给你看）'],
+  ["generate_image", '{"desc":"画面描述","type":"mood|establishing|empty|prop|poster|mv","ratio":"9:16"} 素材中心生成图像候选（不挂集进候选池；花钱，会出确认卡）']
+];
+const LLM_TOOL_NAMES = LLM_TOOLS.map(function (t) { return t[0]; });
+
 function systemPrompt(ctx, session, chips) {
   return [
     "你是剧场 Studio 的制片组助手。根据用户的话与当前上下文，决定做什么。只输出一个 JSON 对象。",
     "",
-    "可选工具（只能从中选）：",
-    '- query_progress {} 查询拍摄进度',
-    '- query_cost {} 查询成本',
-    '- reroll_shot {"shot_no":N} 或 {"shot_id":"sh_..."} 重拍镜头（花钱，会出确认卡）',
-    '- pick_take {"shot_no":N} 或 {"shot_id":"sh_..."} 为镜头选最佳条',
-    '- music_candidates {"scene_no":N,"mood":"中文情绪词"} 生成配乐候选（花钱，会出确认卡）',
-    '- set_mood {"scene_no":N,"mood":"中文情绪词"} 设定场次情绪',
-    "",
-    "全流程工具（都能直接代办）：",
-    '- query_cards {} 查本集创作卡（待拍板/已拍板）',
-    '- query_card {"card_id":"card_..."} 查单卡详情',
-    '- query_projects {} 查项目列表',
-    '- query_episodes {"project_id":"pj_..."} 查项目下的集',
-    '- query_scenes {} 查剧本分场分镜表（画面与台词）',
-    '- query_music {} 查配乐挂接与候选',
-    '- query_gpu {} 查本机 LLM/GPU 占用',
-    '- create_project {"title":"项目名","look":"写实电影感|柔光唯美|冷冽悬疑"} 新建项目（用户指定了影调就必须放进 look 参数）',
-    '- create_episode {"project_id":"pj_..." 或 "project_name":"项目名","title":"集标题","brief":"一句话故事"} 新建集（自动生成结构化剧本＋C1 故事卡）',
-    '- suggest_card {"card_id":"card_...","note":"修改意见"} 对 C1 出 AI 修改建议（只建议，不改）',
-    '- adopt_music {"candidate_id":"mus_...","scene_id":"sc_..."} 采用配乐候选',
-    '- revise_scenes {"episode_id":"ep_...","scenes":[完整新分场分镜表]} 修订剧本（改源头，会出确认卡；scenes 结构必须与 query_scenes 的一致，场数/镜数不变）',
-    '- decide_card {"card_id":"card_..." 或 "card_type":"C1","action":"accept|reject"} 拍板卡（card_id 见上下文「待拍板卡」清单；会出确认卡，用户确认后才执行）',
-    '- apply_suggestion {"card_id":"card_..."} 把已出的修改建议落进待拍板 C1 卡（先 suggest_card 出过建议；采纳后仍由用户拍板）',
-    '- shoot_episode {"episode_id":"ep_..."} 开机拍摄（大额花钱，会出确认卡）',
-    '- export_episode {"episode_id":"ep_..."} 导出成片（需预检全绿，会出确认卡）',
-    '- search_assets {"domain":"music|images|characters|scenes","q":"关键词"} 检索素材中心资产库（只读）',
-    '- library_stats {} 素材中心库存统计（各域计数＋候选池）',
-    '- bind_asset {"domain":"music","asset_id":"mus_...","scene_no":N,"primary":true} 把素材绑定到场景（主曲/备选；不花钱）',
-    '- generate_music {"mood":"中文情绪词","type":"bgm|theme|ambient|mv","sec":45} 素材中心生成配乐候选（不挂场进候选池；花钱，会出确认卡）',
-    '- assist_lyrics {"paste":"歌词素材或主题","type":"theme|bgm|ambient|mv","mood":"中文情绪词"} AI 把素材扩写为结构化歌词（结果直接回给你看）',
-    '- assist_image_prompt {"idea":"画面想法","type":"establishing|empty|prop|poster|mood|mv","mood":"中文情绪词"} AI 把想法扩写为专业画面描述（结果直接回给你看）',
-    '- generate_image {"desc":"画面描述","type":"mood|establishing|empty|prop|poster|mv","ratio":"9:16"} 素材中心生成图像候选（不挂集进候选池；花钱，会出确认卡）',
+    "可选工具（只能从中选；列表之外的任何工具名都无效）：",
+    LLM_TOOLS.map(function (t) { return "- " + t[0] + " " + t[1]; }).join("\n"),
     "",
     "绑定纪律：你只服务上下文里的绑定剧集；对话历史若涉及其它剧集，一律以本次绑定为准，不要延续旧剧的语境、数字或进度。",
     "上下文：",
@@ -94,10 +100,17 @@ function systemPrompt(ctx, session, chips) {
     "",
     "规则：",
     "1. 用户想做的任何剧场内事务，优先选工具代办，不要让用户「自己去界面办」。语义映射：用户说「重出一版/重新生成/不满意」＝decide_card{action:\"reject\"}；说「就这个/通过/接受」＝decide_card{action:\"accept\"}；说「改一下X」＝suggest_card{note:X}；说「采纳建议/就用建议这版」＝apply_suggestion；说「建集/开一集」＝create_episode；问「到哪一步/进度/拍完没有」＝query_progress；问「要多久/多少钱/预估/花了多少」＝query_cost；问「为什么被挡/显存/GPU/开不了机」＝query_gpu（只读解释，绝不代停 LLM）；问「待拍板的卡/卡流」＝query_cards。意图命中工具 → 输出 {\"tool\":\"工具名\",\"args\":{...}}；args 只含该工具 schema 列出的键位；「第N镜」→ shot_no:N，「第N场」→ scene_no:N；mood 只能取：" + MOODS.join("/") + "。建集（create_episode）必须带 project_name（刚建完项目用户接着回梗概时，用刚建的剧名）或 project_id，以及 title 和 brief。",
+    "1a. 查询必须走工具拿实时数据——上下文摘要只是定位线索，不是实时面板，禁止拿它直接 say 回答：问卡/待拍板/有几张卡/卡流 → query_cards；问进度/到哪一步/拍完没有/完成了没 → query_progress；问花了多少/成本/预算/还要多少钱 → query_cost；问显存/GPU/占卡/为什么开不了机 → query_gpu。这四类永远输出对应工具调用。",
     "2. 涉及改剧本（revise_scenes）需要完整新表——先输出 query_scenes 拿到当前表，除非用户已给出足够细节且你确信结构；拿不准就先用 suggest_card 出建议给用户看。",
-    "3. 与工具无关的一般问题（问剧情、要创作建议、闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内。",
+    "3. 与工具无关的一般问题（问剧情、要剧场内的创作建议、打招呼闲聊）→ {\"say\":\"...\"}：制片人口吻、基于上下文直接回答，120 字以内；剧场外创作（写诗/写小说/写代码/讲故事）不是创作建议，走拒答且绝不调用任何工具。",
     "4. 数据引用纪律（防幻觉）：镜头/任务状态必须逐字引用上下文里的标记——✓=已通过，⚠=待复审，无标记=还没拍；禁止把「未拍」说成「已就绪」，禁止编造成本/进度数字。所有 ID（card_id/project_id/shot_id 等）只能从上下文复制，绝不许编造——上下文没有就改用 card_type/project_name 等名称定位。",
     "5. 完全剧场外且不该代办的事 → {\"refusal\":\"一句话拒答并指路\"}；无法理解 → {\"say\":\"我可以帮你：建项目建集、查进度成本、看卡拍板、改剧本、重拍镜头、择优、配乐、开机、导出。想做什么直接说。\"}",
+    "示例（只示范格式与路由，内容勿抄）：",
+    "用户「现在有哪些卡等我拍板？」→ {\"tool\":\"query_cards\",\"args\":{}}",
+    "用户「显存还够吗？为什么开不了机？」→ {\"tool\":\"query_gpu\",\"args\":{}}",
+    "用户「这集花了多少钱？」→ {\"tool\":\"query_cost\",\"args\":{}}",
+    "用户「剧本写到哪一步了？」→ {\"tool\":\"query_progress\",\"args\":{}}",
+    "用户「写一首诗/讲个故事」→ {\"say\":\"剧场外的创作不归我管；建剧建集、查进度成本、看卡拍板、配乐开机我随时能办。\"}",
     "只输出 JSON，不要解释。"
   ].join("\n");
 }
@@ -170,7 +183,9 @@ function toIntent(ctx, session, out, epId, text) {
     return { say: said };
   }
   const tool = typeof out.tool === "string" ? out.tool : null;
-  if (!tool || !governance.WHITELIST.some(function (t) { return t === tool; })) return null;
+  // 广告面校验（parse 层第一道闸）：只认 systemPrompt 广告过的工具，幻觉名（如 runtime_spawn）直接 null
+  // → 上层回退规则意图表；治理白名单（WHITELIST）在 gateTool 照旧兜底，两层互不替代。
+  if (!tool || LLM_TOOL_NAMES.indexOf(tool) < 0) return null;
   const raw = out.args && typeof out.args === "object" ? out.args : {};
   const args = {};
   (TOOL_ARG_KEYS[tool] || TOOL_ARG_KEYS.default).forEach(function (k) {
@@ -295,4 +310,4 @@ function buildInterpret(ctx, rules) {
   };
 }
 
-module.exports = { buildInterpret, llmParse, llmReply, extractJson, toIntent, systemPrompt };
+module.exports = { buildInterpret, llmParse, llmReply, extractJson, toIntent, systemPrompt, LLM_TOOLS, LLM_TOOL_NAMES };

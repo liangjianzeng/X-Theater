@@ -55,6 +55,14 @@ module.exports.register = (router, ctx) => {
     router.json(res, 200, { session: r });
   }, { auth: true });
 
+  // DELETE 会话（2026-11-22）：验收脚本自清账（谁建的谁删）＋用户清理不要的会话；仅本人可删
+  router.add("DELETE", "/api/l2/sessions/:id", (req, res, body, params, auth) => {
+    if (!ready()) return router.json(res, 503, { error: { code: "L2_UNAVAILABLE", message: "L2 runtime 未装配" } });
+    const r = ctx.l2.deleteSession(params.id, normAuth(auth));
+    if (r && r.code) return router.json(res, httpOf(r), { error: { code: r.code, message: r.message } });
+    router.json(res, 200, { deleted: true, id: params.id });
+  }, { auth: true });
+
   // 访问控制/会话级错误才上 HTTP 码；工具级失败（NO_TAKES 等）＝对话内容，回合已执行 → 202
   const MSG_ERR_CODES = { FORBIDDEN: 403, NOT_FOUND: 404, STALE: 409, INVALID_MODE: 400, RUNTIME: 503, L2_UNAVAILABLE: 503 };
   router.add("POST", "/api/l2/sessions/:id/messages", async (req, res, body, params, auth) => {

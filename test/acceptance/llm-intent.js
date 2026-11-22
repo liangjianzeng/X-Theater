@@ -1,9 +1,12 @@
 "use strict";
 /* 意图回归·在线双跑（蓝图 §6 P3，验收脚本非门禁）：
    node test/acceptance/llm-intent.js [--base http://127.0.0.1:8767] [--code INV-DEMO-1]
+                                     [--wants query_cards,query_gpu] [--max 20]
    复用 test/selfcheck/intent-corpus.js 语料，只跑【只读面】（query_progress/cost/cards/gpu/projects＋
    闲聊 say）——新建/拍板/重拍/导出/配乐类话术在线会真实执行（建项/出票/派单），验收一律不自动发。
-   断言：LLM 脸路由结果 ∈ 允许集合；输出每类正确率与错误明细。LLM 离线自动跳过（提示先起 :8090）。 */
+   断言：LLM 脸路由结果 ∈ 允许集合；输出每类正确率与错误明细。LLM 离线自动跳过（提示先起 :8090）。
+   自清账（2026-11-22 纪律）：跑完自动 DELETE 自建验收会话——谁建的谁删，不再污染用户可见会话
+   （此前 5 发双跑留了 6 个测试会话，客户端 l2Resume 自动恢复最近会话，用户看到「助手自动消息」。） */
 const fs = require("fs");
 const path = require("path");
 
@@ -14,6 +17,8 @@ function argOf(name, dflt) {
 }
 const BASE = argOf("--base", "http://127.0.0.1:8767") + "/api";
 const CODE = argOf("--code", "INV-DEMO-1");
+const WANTS = String(argOf("--wants", "") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean); // 定向：只跑这些期望类
+const MAX = Number(argOf("--max", "0")) || 0; // 限条数（0=不限）
 const corpus = require(path.join(__dirname, "..", "selfcheck", "intent-corpus.js"));
 
 /* 在线安全面：只读工具白名单＋闲聊（期望 say/refusal/null 均算“未执行动作”） */
@@ -42,8 +47,13 @@ async function call(method, p, body, tok) {
     .filter(Boolean)
     .filter((r) => String(r.sessionId || "") === String(sid));
 
-  /* 语料筛选：只读面（期望 tool ∈ READ_TOOLS）＋兜底口语（期望 null→say，不落任何工具） */
-  const cases = corpus.rules.filter(([, want]) => want === "null" || READ_TOOLS.indexOf(want) >= 0);
+  /* 语料筛选：只读面（期望 tool ∈ READ_TOOLS）＋兜底口语（期望 null→say，不落任何工具）；
+     --wants/--max 定向复验（如只复跑 query_cards/query_gpu 类） */
+  let cases = corpus.rules.filter(([, want]) => want === "null" || READ_TOOLS.indexOf(want) >= 0);
+  if (WANTS.length) {
+    cases = cases.filter(([, want]) => WANTS.indexOf(want === "null" ? "none" : want) >= 0);
+  }
+  if (MAX > 0) cases = cases.slice(0, MAX);
   const results = [];
   for (const [text, want] of cases) {
     const before = ledger().length;
@@ -76,5 +86,8 @@ async function call(method, p, body, tok) {
   const gotDist = {};
   results.forEach((r) => { gotDist[r.tool] = (gotDist[r.tool] || 0) + 1; });
   console.log("  实际路由分布: " + JSON.stringify(gotDist));
-  console.log("(验收会话 " + sid + " 请在运维台或下次清账时移除；本脚本不自动删会话)");
+  const del = await call("DELETE", "/l2/sessions/" + sid, null, tok);
+  console.log(del.status === 200
+    ? "  自清账 ✓ 验收会话 " + sid + " 已删除（谁建的谁删）"
+    : "  自清账 ✗ HTTP " + del.status + " —— 会话 " + sid + " 删除失败，请手工清理");
 })();
