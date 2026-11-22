@@ -13,7 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 const util = require("../core/util");
-const { DEFAULT_LANE_NODE } = require("../core/store");
+const { DEFAULT_LANE_NODE, llmHostNode } = require("../core/store");
 const llmMod = require("../llm/llm");
 // 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
 const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free"];
@@ -157,7 +157,7 @@ function createEngine({ store, bus, cfg }) {
       const laneT = laneBoundTo(family, id);
       if (!laneT) return null;
       const n = nodes[id];
-      if (busyGate && n.gpu_gate && st.llm_node === id && LOCAL_GPU_TYPES.indexOf(type) >= 0) return null;
+      if (busyGate && n.gpu_gate && llmHostNode(st) === id && LOCAL_GPU_TYPES.indexOf(type) >= 0) return null; // 大脑宿主机＝档案注册表（云端大脑不挡任何机器）
       return laneT;
     };
     const cand = [];
@@ -186,6 +186,15 @@ function createEngine({ store, bus, cfg }) {
     return !!(ep && ep.paused);
   }
 
+  /* 实际执行模式判定（账本诚实）：该类型所在车道真引擎通道已启用 → self-host-comfy；否则 stub。
+     精确到「该类型真分支是否存在」由 worker 内部决定，此处按通道+类型宽判（产物 meta 有细粒度 kind）。 */
+  function workerTypeOf(job) {
+    const gpuReal = (cfg.comfy && cfg.comfy.enabled) || (cfg.comfySpark && cfg.comfySpark.enabled);
+    const GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "cast_init", "screen_test"];
+    if (GPU_TYPES.indexOf(job.type) >= 0) return gpuReal ? "self-host-comfy" : "self-host-stub";
+    return "self-host";
+  }
+
   /* ---------- 账本与事件 ---------- */
   function logJob(job, status, extra) {
     return store.log(
@@ -193,7 +202,7 @@ function createEngine({ store, bus, cfg }) {
       Object.assign(
         {
           job_id: job.id,
-          worker_type: "self-host-stub", // V1：链路零外部生成 API，账本可证
+          worker_type: workerTypeOf(job), // 实际执行模式：真引擎（注册表通道启用且该类型有真分支）标注 self-host-comfy，验收 stub 标注 self-host-stub——账本不许撒谎
           type: job.type,
           lane: job.lane,
           status,
@@ -446,7 +455,7 @@ function createEngine({ store, bus, cfg }) {
       const laneNode0 = laneBoundNode(lane);
       if (
         laneNode0 &&
-        st.llm_node === laneNode0 &&
+        llmHostNode(st) === laneNode0 &&
         ((st.nodes || {})[laneNode0] || {}).gpu_gate &&
         LOCAL_GPU_TYPES.indexOf(type) >= 0 &&
         llmBlocked(cfg)

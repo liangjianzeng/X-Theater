@@ -585,6 +585,56 @@
       "notes": "画质版：无 turbo LoRA、25 步基础模型——治油光（turbo 4 步皮肤高光糊化）；渲染约为 turbo 版 2 倍",
       "verified": null,
       "evidence": "runtime/spark-evidence/EVIDENCE.md"
+    },
+    "h3-image-free": {
+      "tmpl_sha16": "69a3662cf4ef6384",
+      "comfy_commit": "1e719279f56558b2c6d5d2f2aa590b197559f1f6",
+      "cn_commits": {},
+      "family": "h3image",
+      "endpoint": "spark",
+      "weights": [
+        {
+          "file": "minimax_h3_image_pruned_int8_convrot.safetensors",
+          "sha16": "83eb140f1ff95c06",
+          "role": "diffusion_model",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 20979314802
+        },
+        {
+          "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "sha16": "35a88d51044231fe",
+          "role": "text_encoder",
+          "source": "modelscope:Comfy-Org/MiniMax-H3",
+          "bytes": 15687142551
+        },
+        {
+          "file": "minimax_h3_image_vae_fp16.safetensors",
+          "sha16": "d80e9c2e5cfc9844",
+          "role": "vae",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 1168505312
+        },
+        {
+          "file": "qwen3.5_9b_w4a8_gptq.safetensors",
+          "sha16": "4cc6a1543ad20618",
+          "role": "text_encoder_llm",
+          "source": "modelscope:Comfy-Org/MiniMax-H3-Image",
+          "bytes": 7343591088
+        }
+      ],
+      "vram_profile": "121G 统一内存：DiT int8 20G + TE nvfp4_awq 15G staged + image VAE 1.1G；实测 14.9s/张（1024²）动态分页无 OOM",
+      "params": {
+        "PROMPT": "自由生图四层拼装（风格锚→景别机位→描述→光线）",
+        "WIDTH": "864(9:16)/1536(16:9)/1152(1:1)",
+        "HEIGHT": "1536(9:16)/864(16:9)/1152(1:1)",
+        "SEED": "int"
+      },
+      "notes": "素材中心自由生图（img_free）零参考纯 t2i 变体：MiniMaxH3ImageConditioning images 可选省略（官方语义：无参考图按显式宽高，2048² 调优）。",
+      "verified": {
+        "prompt_id": "399be88c-c27a-4877-aeda-206655e840e7",
+        "output": "runtime/spark-evidence/smoke/image_free_result.png"
+      },
+      "evidence": "runtime/spark-evidence/EVIDENCE.md"
     }
   }
 }

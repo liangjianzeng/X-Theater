@@ -21,6 +21,7 @@ const COST_CENTS = 20;
 const TMPL_CAST = "h3-image-cast";
 const TMPL_EDIT = "h3-image-edit";
 const TMPL_FL2VA = "h3-fl2va-video";
+const TMPL_FREE = "h3-image-free"; // 素材中心自由生图（img_free）零参考纯 t2i 变体（2026-11-22 用户裁决：DGX 真承接，stub 冒充退役）
 // 试妆试镜视频规格：与原图 720×1280 等比例最近的 32 倍数画幅（736×1312，比例误差 0.27%）；
 // 10 秒档＝243 帧（17k+5 网格：243/24≈10.1s，训练范围 124-362 内），turbo 4 步。
 const ST_W = 736, ST_H = 1312, ST_LEN = 243, ST_STEPS = 4, ST_SEC = 10.13;
@@ -688,6 +689,57 @@ async function runSparkComfy(ctx, job, p, seed, cents) {
   return res;
 }
 
+async function runSparkImgFree(ctx, job, p, seed, cents) {
+  const j = job || {};
+  const base = String(ctx.cfg.comfySpark.base || "").replace(/\/+$/, "");
+  const pkg = prompts.style.resolve(ctx, p.episodeId || "");
+  const lookPkg = (p.styleLook && prompts.style.BUILTIN_LOOKS[p.styleLook]) || null;
+  const suffix = (lookPkg && lookPkg.t2i_suffix) || pkg.t2i_suffix;
+  // 四层拼装（与 img5060 img_free 同构）：风格锚→景别机位→描述→光线；DGX 侧零参考纯 t2i
+  const prompt = prompts.buildFreeImagePrompt({
+    desc: p.desc,
+    styleSuffix: suffix,
+    size: p.size,
+    light: p.light,
+    refNote: "",
+    negative: [prompts.negativeFor("t2i_empty"), p.negativeExtra].filter(Boolean).join("，")
+  });
+
+  await comfy.ensureFree(base, 8);
+  const w = p.ratio === "16:9" ? 1536 : p.ratio === "1:1" ? 1152 : 864;
+  const h = p.ratio === "16:9" ? 864 : p.ratio === "1:1" ? 1152 : 1536;
+  const r = await comfy.runTemplate(ctx, j, {
+    base,
+    tmplId: TMPL_FREE,
+    params: {
+      SEED: numFrom(seed) % 18446744073709551615,
+      PROMPT: prompt,
+      WIDTH: w,
+      HEIGHT: h
+    },
+    pollMs: 1500,
+    timeoutMs: 600000
+  });
+
+  const idSeg = safeSeg(j.id || "imgspk_" + seed.slice(0, 8));
+  const fileName = idSeg + "_free.png";
+  const meta = {
+    kind: "image-comfy-spark-free", lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    tmpl_id: TMPL_FREE, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits,
+    weights: r.meta.weights, prompt_id: r.promptId, bytes: r.bytes.length,
+    desc: String(p.desc || "").slice(0, 200), ratio: p.ratio || "9:16", seed: String(numFrom(seed) % 18446744073709551615), cents,
+    ai_label: "AI 生成内容（MiniMax H3-Image）" // Community License：UI 显著标注
+  };
+  const art = "var/out/" + fileName;
+  const abs = writeOut(ctx, fileName, r.bytes);
+  writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  meta.art_abs = abs;
+  const take = { id: idSeg, engine: ENGINE_USER, cost_cents: cents, art, license: { model: "MiniMax-H3-Image Community", usage: "attribution" } };
+  const bag = { ok: true, cents, art, path: art, meta, take, engine: ENGINE_USER, cost_cents: cents, license: take.license };
+  j.result = bag; j.art = bag;
+  return { ok: true, cents, art, meta };
+}
+
 async function run(job, ctx) {
   const j = job || {};
   const p = j.payload || {};
@@ -702,6 +754,7 @@ async function run(job, ctx) {
   if (comfyOn && j.type === "c1plan") return runSparkC1Plan(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "cast_init") return runSparkCastInit(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "screen_test") return runSparkScreenTest(ctx, j, p, seed, cents);
+  if (comfyOn && j.type === "img_free") return runSparkImgFree(ctx, j, p, seed, cents);
   if (comfyOn && j.type === "storyboard") {
     // H3 线：场景级 5060 t2i 分镜退役——C2 由剧本＋初始定妆直采构成，分镜首帧由
     // storyboard_char 在试妆（C2S）拍板后按 viewRefs 产出（背景只换壳）。本任务只承载卡流推进。
