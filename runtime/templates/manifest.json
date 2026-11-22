@@ -731,7 +731,7 @@
    "weights": [
     {
      "file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
-     "sha16": "__SPARK_INT8_SHA__",
+     "sha16": "c4279eeff115cbea",
      "role": "diffusion_model",
      "source": "modelscope:Lightricks/LTX-2.5"
     },
@@ -824,7 +824,7 @@
    "weights": [
     {
      "file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
-     "sha16": "__SPARK_INT8_SHA__",
+     "sha16": "c4279eeff115cbea",
      "role": "diffusion_model",
      "source": "modelscope:Lightricks/LTX-2.5"
     },
@@ -861,6 +861,52 @@
    "params": {
     "IMAGE": "A 镜尾帧",
     "REF": "B 镜首帧"
+   }
+  },
+  "ltx25-i2v-spark": {
+   "tmpl_sha16": "c817cb195d624114",
+   "comfy_commit": "a20552b5efd844ddf4da9dce4f55e313333a9ef9",
+   "cn_commits": {},
+   "weights": [
+    {
+     "file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+     "sha16": "c4279eeff115cbea",
+     "role": "diffusion_model",
+     "source": "modelscope:Lightricks/LTX-2.5"
+    },
+    {
+     "file": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+     "sha16": "6ce688a0aa98a5fa",
+     "role": "text_encoder",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 15372969374
+    },
+    {
+     "file": "ltx-2.5-video-vae-bf16.safetensors",
+     "sha16": "847e14ca7f3355de",
+     "role": "vae",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 1472223346
+    },
+    {
+     "file": "ltx-2.5-audio-vae-bf16.safetensors",
+     "sha16": "c52733d37f6a7fb7",
+     "role": "vae_audio",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 364866540
+    },
+    {
+     "file": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+     "sha16": "eb5a71fe4068ee87",
+     "role": "latent_upscale_model",
+     "source": "modelscope:Lightricks/LTX-2.5",
+     "bytes": 995778752
+    }
+   ],
+   "vram_profile": "DGX Spark 128G：LTX-2.5 int8_convrot 单镜 i2v（速度优先档·2026-11-22 生成档位运营化）；两段蒸馏同 ltx25-multishot-spark，LENGTH=8n+1",
+   "params": {
+    "IMAGE": "该镜分镜首帧（uploadAsset 上传）",
+    "PROMPT": "时间码单镜描述＋台词（原生声画）"
    }
   }
  }

@@ -29,11 +29,51 @@ const ESTIMATE_PLAN = {
   ]
 };
 
+/* ---------------- 生成档位（2026-11-22 运营化：LTX 速度优势 → 用户开机前可选） ----------------
+ * pref: "auto"（缺省·按镜头分级：标准镜走本机标准档/高价值镜走远程高价值档，现状行为）
+ *       "speed"（速度优先：全部视频任务走远程快速档——同族引擎里最快，跨切一致＋声画直出）
+ *       "quality"（质量优先：全部视频任务走远程高价值档——身份/口型最稳）
+ * 映射到任务 tier：speed→"fast"、quality→"high"（laneFor 据此路由车道，worker 据此选引擎模板）。
+ * 适用于所有视频生成类任务：video / video_ms（多镜串拍）/ transition（转场衔接镜）/ 重拍。 */
+const VIDEO_PREFS = ["auto", "speed", "quality"];
+function normalizeVideoPref(x) {
+  return VIDEO_PREFS.indexOf(String(x || "")) >= 0 ? String(x) : "auto";
+}
+function effectiveVideoTier(pref, shotTier) {
+  const p = normalizeVideoPref(pref);
+  if (p === "quality") return "high";
+  if (p === "speed") return "fast";
+  return shotTier === "high" ? "high" : undefined;
+}
+/* 档位→影子单价（分/5s）与每镜耗时（分钟，实测口径：快速档≈130s、高价值档≈270s、本机标准档≈420s） */
+const VIDEO_PREF_PRICE = {
+  fast: { unit: 100, min_per_shot: 3, label: "快速档" },
+  high: { unit: 150, min_per_shot: 5, label: "高价值档" },
+  std: { unit: 80, min_per_shot: 7, label: "标准档" }
+};
+
 function estimateBreakdown(ctx, episode, project) {
   const shots = Object.keys(ctx.store.get().shots || {})
     .map((k) => ctx.store.get().shots[k])
     .filter((s) => s.episodeId === episode.id);
-  const breakdown = ESTIMATE_PLAN.lines.map((l) => Object.assign({}, l));
+  const pref = normalizeVideoPref(episode.video_pref);
+  // 按有效档位聚合镜头计数（动态报价，替代静态 12/3/1 假设——档位选择即时反映到 C6 报价）
+  const counts = { std: 0, fast: 0, high: 0 };
+  shots.forEach((s) => {
+    const t = effectiveVideoTier(pref, s.tier);
+    counts[t === "high" ? "high" : t === "fast" ? "fast" : "std"] += 1;
+  });
+  const breakdown = [];
+  ["std", "fast", "high"].forEach((k) => {
+    if (!counts[k]) return;
+    const p = VIDEO_PREF_PRICE[k];
+    breakdown.push({ item: p.label + "镜头（" + counts[k] + " 镜 × " + p.unit + " 分）", unit: p.unit, qty: counts[k], cents: p.unit * counts[k], tier: k });
+  });
+  if (!shots.length) breakdown.push({ item: "标准镜头（12 镜 × 80 分）", unit: 80, qty: 12, cents: 960, tier: "std" });
+  const totalMin = shots.reduce((a, s) => {
+    const t = effectiveVideoTier(pref, s.tier);
+    return a + VIDEO_PREF_PRICE[t === "high" ? "high" : t === "fast" ? "fast" : "std"].min_per_shot;
+  }, 0);
   const musicEnabled = !(project && project.music_enabled === false);
   if (musicEnabled) {
     breakdown.push({
@@ -49,9 +89,15 @@ function estimateBreakdown(ctx, episode, project) {
   return {
     episodeId: episode.id,
     shots: shots.length || 16,
-    time_min: ESTIMATE_PLAN.time_min,
+    time_min: shots.length ? Math.max(1, Math.round(totalMin + 2)) : ESTIMATE_PLAN.time_min,
     cents,
     breakdown,
+    video_pref: pref,
+    engine_note: pref === "speed"
+      ? "速度优先：全部镜头走快速档（节点上登记的最快视频引擎，先看节奏，逐镜可临时改质量优先重拍）"
+      : pref === "quality"
+        ? "质量优先：全部镜头走质量档（节点上登记的质量最优引擎，身份/口型最稳，耗时约为快速档 2 倍）"
+        : "自动档：标准镜走标准档、高价值镜走高价值档（按剧本分级）；实际引擎随本集驱动节点上登记的引擎类与节点档位配置解析",
     ver: episode.estimate_ver || null
   };
 }
@@ -291,6 +337,8 @@ function register(router, ctx) {
       let dedupedN = 0;
       const only = Array.isArray(body && body.shotIds) ? body.shotIds.map(String) : null; // 局部重拍（复审 stale 镜）
       const groupMode = !!(body && body.mode === "group") && !only; // 多镜串拍（梯队①）：同场相邻镜一次前向生成
+      const pref = normalizeVideoPref(ep.video_pref); // 生成档位（2026-11-22 运营化）：speed/quality/auto，拍摄前可选
+      const tierFor = (sh) => effectiveVideoTier(pref, sh.tier);
       if (groupMode) {
         // 按场聚合（seq 升序）→ 连续累积分组（组内 Σsec ≤10s，LTX 帧长 8n+1）；≥2 镜成组串拍，单镜照旧单镜派单
         const byScene = {};
@@ -306,16 +354,17 @@ function register(router, ctx) {
             if (!run.length) return;
             if (run.length >= 2) {
               const groupId = "msg_" + util.hash12({ episodeId: ep.id, shotIds: run.map((x) => x.id) }).slice(0, 10);
+              const gTier = tierFor(run[0]);
               const r = engine.enqueueOnce
                 ? engine.enqueueOnce(
                     "video_ms",
                     { episodeId: ep.id, shotIds: run.map((x) => x.id), groupId, takeId: groupId },
-                    { episodeId: ep.id, initiated_by: "user" }
+                    { episodeId: ep.id, initiated_by: "user", tier: gTier }
                   )
                 : { deduped: false, job: engine.enqueue(
                     "video_ms",
                     { episodeId: ep.id, shotIds: run.map((x) => x.id), groupId, takeId: groupId },
-                    { episodeId: ep.id, initiated_by: "user" }
+                    { episodeId: ep.id, initiated_by: "user", tier: gTier }
                   ) };
               if (r.job) jobs.push(r.job);
               if (r.deduped) dedupedN++;
@@ -325,12 +374,12 @@ function register(router, ctx) {
                 ? engine.enqueueOnce(
                     "video",
                     { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
-                    { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+                    { episodeId: ep.id, initiated_by: "user", tier: tierFor(sh) }
                   )
                 : { deduped: false, job: engine.enqueue(
                     "video",
                     { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
-                    { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+                    { episodeId: ep.id, initiated_by: "user", tier: tierFor(sh) }
                   ) };
               if (r.job) jobs.push(r.job);
               if (r.deduped) dedupedN++;
@@ -354,12 +403,12 @@ function register(router, ctx) {
           ? engine.enqueueOnce(
               "video",
               { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
-              { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+              { episodeId: ep.id, initiated_by: "user", tier: tierFor(sh) }
             )
           : { deduped: false, job: engine.enqueue(
               "video",
               { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height },
-              { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }
+              { episodeId: ep.id, initiated_by: "user", tier: tierFor(sh) }
             ) };
         if (r.job) jobs.push(r.job);
         if (r.deduped) dedupedN++;
@@ -388,7 +437,11 @@ function register(router, ctx) {
       const pairs = Array.isArray(body && body.pairs) ? body.pairs : [];
       if (!pairs.length) throw { code: "BAD_REQUEST", message: "缺少 pairs（[{fromShotId,toShotId}]）" };
       const sec = Number(body && body.sec) > 0 ? Number(body.sec) : 2;
-      const tier = body && body.tier === "high" ? "high" : undefined;
+      // 转场衔接镜档位：显式 body.tier 优先；缺省随本集生成档位（speed→fast/quality→high）
+      const epPref = normalizeVideoPref(requireEpisode(ctx, params.id).video_pref);
+      const tier = body && (body.tier === "high" || body.tier === "fast")
+        ? body.tier
+        : effectiveVideoTier(epPref, undefined);
       const jobs = [];
       let dedupedN = 0;
       pairs.forEach((pr) => {
@@ -424,6 +477,31 @@ function register(router, ctx) {
         .filter((t) => t && t.episodeId === ep.id)
         .sort((a, b) => String(a.created || "").localeCompare(String(b.created || "")));
       return router.json(res, 200, { episodeId: ep.id, transitions: list });
+    },
+    { auth: true }
+  );
+
+  // POST /api/episodes/:id/video-pref {pref:"auto|speed|quality"} — 生成档位（2026-11-22 运营化）
+  // 拍摄前可选：speed=速度优先（全部视频任务走远程快速档）/quality=质量优先（走远程高价值档）/
+  // auto=按镜头分级（缺省）。生效范围：video/video_ms/transition/重拍——预估报价即时联动。
+  router.add(
+    "POST",
+    "/api/episodes/:id/video-pref",
+    (req, res, body, params, auth) => {
+      if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
+      const st = store.get();
+      const ep = requireEpisode(ctx, params.id);
+      Tenants.guardWrite(st, auth, ep.tenantId || Tenants.defaultTid(st));
+      const pref = normalizeVideoPref(body && body.pref);
+      if (body && body.pref && normalizeVideoPref(body.pref) !== String(body.pref)) {
+        throw { code: "BAD_REQUEST", message: "pref 只能是 auto/speed/quality" };
+      }
+      ep.video_pref = pref;
+      store.commit();
+      audit(auth, "video_pref", ep.id, { pref });
+      try { bus.publish("cards", { event: "video_pref", episodeId: ep.id, pref }); } catch (e) {}
+      const est = estimateBreakdown(ctx, ep, (st.projects || {})[ep.projectId]);
+      return router.json(res, 200, { episodeId: ep.id, video_pref: pref, engine_note: est.engine_note });
     },
     { auth: true }
   );
@@ -889,3 +967,5 @@ function register(router, ctx) {
 
 module.exports.register = register;
 module.exports.estimateBreakdown = estimateBreakdown;
+module.exports.normalizeVideoPref = normalizeVideoPref;
+module.exports.effectiveVideoTier = effectiveVideoTier;

@@ -21,6 +21,56 @@ const ENGINE = "MiniMax-H3 int8_convrot turbo4";
 const ENGINE_USER = "自部署·高价值档";
 const TIER = "h3-int8";
 const COST_CENTS = 150;
+// 生成档位（2026-11-22 运营化·节点配置＋注册表解析，不绑死模型）：
+//   任务 tier fast/high 是「类」约束；落到哪个节点由算力池按类过滤；在节点上用哪个引擎由
+//   注册表（settings.registry，带 class+tmpl 字段）解析——自动档缺省用节点 gen_pref。
+//   加新引擎＝「引擎段位」登记一行（engine 名含 LTX/H3 决定代码路径族，tmpl 可覆盖固化模板）。
+//   影子单价：LTX 类 100 分/5s、H3 类 150 分/5s。
+const TMPL_LTX_I2V = "ltx25-i2v-spark";
+const ENGINE_LTX = "LTX-2.5 int8_convrot";
+const ENGINE_LTX_USER = "自部署·快速档";
+const TIER_LTX = "ltx-int8";
+const COST_LTX_CENTS = 100;
+
+/** 本车道绑定的节点 id（注册表 lane→node 唯一事实源） */
+function laneNodeId(ctx) {
+  try {
+    const st = ctx.store.get();
+    const reg = (st.settings && st.settings.registry) || {};
+    const hit = Object.keys(reg).map((k) => reg[k]).find((e) => e && e.lane === NAME && e.node);
+    return hit ? hit.node : null;
+  } catch (e) { return null; }
+}
+
+/** 任务档位 → 引擎类：显式 tier 优先；自动档用节点 gen_pref（速度优先/质量优先的节点配置） */
+function wantClassOfJob(ctx, job) {
+  if (job && job.tier === "fast") return "fast";
+  if (job && job.tier === "high") return "quality";
+  try {
+    const st = ctx.store.get();
+    const n = (st.nodes || {})[laneNodeId(ctx) || ""] || {};
+    return n.gen_pref === "speed" ? "fast" : "quality";
+  } catch (e) { return "quality"; }
+}
+
+/** 节点视频族引擎登记解析：按类优先，缺类回退第一条（meta 记 fallback，诚实标注） */
+function videoEntryFor(ctx, wantClass) {
+  const st = ctx.store.get();
+  const reg = (st.settings && st.settings.registry) || {};
+  const nodeId = laneNodeId(ctx);
+  const entries = Object.keys(reg)
+    .map((k) => Object.assign({ id: k }, reg[k]))
+    .filter((e) => e && e.node === nodeId && String(e.lane || "") === NAME);
+  if (!entries.length) return null;
+  const hit = entries.find((e) => (e.class || "quality") === wantClass);
+  if (hit) return { id: hit.id, entry: hit, fallback: false };
+  return { id: entries[0].id, entry: entries[0], fallback: true };
+}
+
+/** 该登记是否 LTX 族（LTX→时间码提示词/两段蒸馏模板族；H3→IR 提示词族） */
+function isLtxEntry(entry) {
+  return /LTX/i.test(String((entry && entry.engine) || ""));
+}
 const TMPL_FL2VA = "h3-fl2va-video";
 const TMPL_REF2VA = "h3-ref2va-video";
 // LTX-2.5 Spark 档（2026-11-22 对标调研梯队①＋转场）：多镜串拍/转场衔接镜走远端 int8_convrot
@@ -213,6 +263,71 @@ function castRefArts(ctx, episodeId, castDefs) {
   return arts.slice(0, 3);
 }
 
+/** LTX 快速档单镜 i2v（档位解析出的 LTX 类登记）：分镜首帧＋时间码单镜描述 → 原生声画直出。
+ *  与 multishot 同模板族（两段蒸馏），仅 LENGTH/描述为单镜；影子计费 100 分/5s。
+ *  ventry＝注册表登记（可带 tmpl.i2v 覆盖固化模板）。 */
+async function runLtxFastComfy(ctx, job, p, seed, ventry) {
+  const tmplId = (ventry && ventry.entry && ventry.entry.tmpl && ventry.entry.tmpl.i2v) || TMPL_LTX_I2V;
+  const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, "");
+  const shotId = p.shotId || null;
+  const episodeId = p.episodeId || job.episodeId || null;
+  const st = ctx.store.get();
+  const shot = (st.shots || {})[shotId] || {};
+  const scr = shotScript(ctx, episodeId, shot);
+  const pkg = prompts.style.resolve(ctx, episodeId);
+  const sb = sbArtForShot(ctx, episodeId, shotId);
+  if (!sb) throw (() => { const e = new Error("该镜没有可用的分镜首帧（快速档也依赖分镜图）: " + shotId); e.code = "NO_REMOTE_INPUT_ART"; return e; })();
+  const sec = Number(p.sec) > 0 ? Number(p.sec) : 5;
+  const width = Number(p.width) > 0 ? Number(p.width) : 768;
+  const height = Number(p.height) > 0 ? Number(p.height) : 1344;
+  const LENGTH = frames8n1(sec);
+  const cost = Math.max(COST_LTX_CENTS, Math.round(COST_LTX_CENTS * (LENGTH / 121)));
+  const dlg = scr.dialogue ? "，台词：「" + scr.dialogue + "」" : "";
+  const PROMPT = "0.0s-" + sec.toFixed(1) + "s：" + (scr.desc || shot.name || "") + dlg + "\n" + prompts.style.irStyleEn(pkg);
+  await comfy.ensureFree(base, 8);
+  const fitBytes = await fitFrame(sb.bytes, width, height, safeSeg(shotId).slice(0, 24));
+  const ffName = await comfy.uploadAsset(base, fitBytes, "t2vr_ltx_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
+  const r = await comfy.runTemplate(ctx, job, {
+    base,
+    tmplId: TMPL_LTX_I2V,
+    params: {
+      SEED: parseInt(String(seed).slice(0, 8), 16) % 18446744073709551615,
+      PROMPT, WIDTH: width, HEIGHT: height, LENGTH,
+      FPS: 24,
+      STAGE1_W: Math.round(width / 2), STAGE1_H: Math.round(height / 2),
+      CFG: 1,
+      SIGMAS1: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+      SIGMAS2: "0.85, 0.7250, 0.4219, 0.0",
+      IMAGE: ffName
+    },
+    pollMs: 3000,
+    timeoutMs: 1200000
+  });
+  const takeId = safeSeg(p.takeId || "tk_" + seed.slice(0, 8));
+  const fileName = takeId + ".mp4";
+  const art = "var/out/" + fileName;
+  const meta = {
+    kind: "video-comfy-remote", lane: NAME, engine: ENGINE_LTX, engine_user: ENGINE_LTX_USER, tier: TIER_LTX,
+    engine_id: ventry ? ventry.id : null, class_fallback: ventry ? !!ventry.fallback : false,
+    tmpl_id: tmplId, video_pref: "speed",
+    sec: Number((LENGTH / 24).toFixed(2)), length: LENGTH, shotId, episodeId,
+    prompt: PROMPT.slice(0, 400), first_frame: sb.art,
+    prompt_id: r.meta.promptId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
+    bytes: r.bytes.length, seed: String(parseInt(String(seed).slice(0, 8), 16)), cents: cost,
+    ai_label: "AI 生成内容"
+  };
+  const abs = writeOut(ctx, fileName, r.bytes);
+  writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
+  meta.art_abs = abs;
+  const dlgText = String(scr.dialogue || "").trim();
+  const nativeSpeech = dlgText ? await probeHasAudio(abs) : false;
+  if (nativeSpeech) { meta.native_speech = true; meta.speech_text = dlgText; }
+  const take = { id: takeId, engine: ENGINE_LTX_USER, cost_cents: cost, art, license: { model: "MIT", usage: "ok" }, best: true, native_speech: nativeSpeech, speech_text: nativeSpeech ? dlgText : undefined };
+  const bag = { ok: true, cents: cost, art, path: art, meta, take, engine: ENGINE_LTX_USER, cost_cents: cost, license: take.license, sec: meta.sec, tier: TIER_LTX };
+  job.result = bag; job.art = bag;
+  return { ok: true, cents: cost, art, meta };
+}
+
 async function runRemoteComfy(ctx, job, p, seed, cents, settings) {
   const j = job || {};
   const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, ""); // 本 lane 绑定节点的 Comfy 端点（注册表 lane→node），旧部署回退 comfyRemote 通道
@@ -389,8 +504,14 @@ function frames8n1(sec) {
   return f;
 }
 
-/** 多镜串拍（远端）：同场相邻镜一次前向 → 按时间码分段落 take */
-async function runMultishotRemote(ctx, j, p, seed) {
+/** 多镜串拍（远端）：同场相邻镜一次前向 → 按时间码分段落 take。fast=true＝速度优先（LTX 快速档计价/标签） */
+async function runMultishotRemote(ctx, j, p, seed, fast) {
+  const ENG = fast ? ENGINE_LTX : ENGINE;
+  const ENG_USER = fast ? ENGINE_LTX_USER : ENGINE_USER;
+  const TIERX = fast ? TIER_LTX : TIER;
+  const BASE5 = fast ? COST_LTX_CENTS : COST_CENTS;
+  const LICENSE = fast ? { model: "MIT", usage: "ok" } : { model: "MiniMax-H3 Community", usage: "attribution" };
+  const AI_LABEL = fast ? "AI 生成内容" : "AI 生成内容（MiniMax H3）";
   const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, "");
   const episodeId = p.episodeId || j.episodeId || null;
   const st = ctx.store.get();
@@ -422,7 +543,7 @@ async function runMultishotRemote(ctx, j, p, seed) {
   await comfy.ensureFree(base, 8);
   const ffName = await comfy.uploadAsset(base, sb0.bytes, "t2vr_ms_" + safeSeg(shots[0].id) + "_" + seed.slice(0, 6) + ".png");
   const LENGTH = frames8n1(totalSec);
-  const cost = Math.max(COST_CENTS, Math.round(COST_CENTS * (LENGTH / 121)));
+  const cost = Math.max(BASE5, Math.round(BASE5 * (LENGTH / 121)));
   const r = await comfy.runTemplate(ctx, j, {
     base,
     tmplId: TMPL_MS,
@@ -462,26 +583,32 @@ async function runMultishotRemote(ctx, j, p, seed) {
     id: takeId + "_s" + i, shotId: sh.id, sec: secs[i],
     art: "var/out/" + path.basename(segs[i]),
     cost_cents: Math.round(cost * secs[i] / totalSec),
-    engine: "自部署·高价值档", license: { model: "MiniMax-H3 Community", usage: "attribution" },
+    engine: ENG_USER, license: LICENSE,
     best: true,
     native_speech: !!((shotScript(ctx, episodeId, sh) || {}).dialogue),
     multishot_group: { groupId, master: "var/out/" + masterName, seg_index: i, frames: LENGTH }
   }));
   const meta = {
-    kind: "video-comfy-multishot", lane: NAME, engine: ENGINE + " LTX multishot", engine_user: "自部署·高价值档", tier: TIER,
+    kind: "video-comfy-multishot", lane: NAME, engine: ENG + " LTX multishot", engine_user: ENG_USER, tier: TIERX,
     tmpl_id: TMPL_MS, group: { groupId, shotIds: shots.map((s) => s.id), secs, frames: LENGTH, master: "var/out/" + masterName },
     prompt_id: r.meta.promptId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
     sec: Number(actualSec.toFixed(2)), episodeId, prompt: PROMPT.slice(0, 400),
     seed: String(parseInt(String(seed).slice(0, 8), 16)), cents: cost,
-    ai_label: "AI 生成内容（MiniMax H3 节点）"
+    ai_label: AI_LABEL
   };
-  const bag = { ok: true, cents: cost, art: takes[0].art, path: takes[0].art, meta, takes, engine: "自部署·高价值档", cost_cents: cost, license: takes[0].license, sec: meta.sec, tier: TIER, group: meta.group };
+  const bag = { ok: true, cents: cost, art: takes[0].art, path: takes[0].art, meta, takes, engine: ENG_USER, cost_cents: cost, license: takes[0].license, sec: meta.sec, tier: TIERX, group: meta.group };
   j.result = bag; j.art = bag;
   return { ok: true, cents: cost, art: takes[0].art, meta };
 }
 
 /** 转场衔接镜（远端）：A 尾帧（服务端抽取后上传）＋B 首帧 → 桥接段 */
-async function runTransitionRemote(ctx, j, p, seed) {
+async function runTransitionRemote(ctx, j, p, seed, fast) {
+  const ENG = fast ? ENGINE_LTX : ENGINE;
+  const ENG_USER = fast ? ENGINE_LTX_USER : ENGINE_USER;
+  const TIERX = fast ? TIER_LTX : TIER;
+  const BASE5 = fast ? COST_LTX_CENTS : COST_CENTS;
+  const LICENSE = fast ? { model: "MIT", usage: "ok" } : { model: "MiniMax-H3 Community", usage: "attribution" };
+  const AI_LABEL = fast ? "AI 生成内容" : "AI 生成内容（MiniMax H3）";
   const base = String((typeof ctx.cfg.laneBase === "function" ? ctx.cfg.laneBase(NAME) : (ctx.cfg.comfyRemote && ctx.cfg.comfyRemote.base) || "") || "").replace(/\/+$/, "");
   const episodeId = p.episodeId || j.episodeId || null;
   const st = ctx.store.get();
@@ -516,7 +643,7 @@ async function runTransitionRemote(ctx, j, p, seed) {
     "Smooth motion transition, no hard cut, no fade."
   ].join(" ") + " " + prompts.style.irStyleEn(pkg);
   const LENGTH = frames8n1(Number(p.sec) > 0 ? Number(p.sec) : 2);
-  const cost = Math.max(20, Math.round(COST_CENTS * (LENGTH / 121)));
+  const cost = Math.max(20, Math.round(BASE5 * (LENGTH / 121)));
   await comfy.ensureFree(base, 8);
   const r = await comfy.runTemplate(ctx, j, {
     base,
@@ -539,18 +666,18 @@ async function runTransitionRemote(ctx, j, p, seed) {
   const fileName = takeId + ".mp4";
   const art = "var/out/" + fileName;
   const meta = {
-    kind: "video-comfy-transition", lane: NAME, engine: ENGINE + " LTX FLF", engine_user: "自部署·高价值档", tier: TIER,
+    kind: "video-comfy-transition", lane: NAME, engine: ENG + " LTX FLF", engine_user: ENG_USER, tier: TIERX,
     tmpl_id: TMPL_FLF, transitionId: p.transitionId || null, fromShotId: shotA.id, toShotId: shotB.id, from_take: bestA.id,
     prompt_id: r.meta.promptId, tmpl_sha16: r.meta.tmpl_sha16, comfy_commit: r.meta.comfy_commit, cn_commits: r.meta.cn_commits, weights: r.meta.weights,
     sec: Number((LENGTH / 24).toFixed(2)), episodeId, prompt: PROMPT.slice(0, 400),
     seed: String(parseInt(String(seed).slice(0, 8), 16)), cents: cost,
-    ai_label: "AI 生成内容（MiniMax H3 节点）"
+    ai_label: AI_LABEL
   };
   const abs = writeOut(ctx, fileName, r.bytes);
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   meta.art_abs = abs;
-  const take = { id: takeId, engine: "自部署·高价值档", cost_cents: cost, art, license: { model: "MiniMax-H3 Community", usage: "attribution" }, best: true, transition: true };
-  const bag = { ok: true, cents: cost, art, path: art, meta, take, engine: "自部署·高价值档", cost_cents: cost, license: take.license, sec: meta.sec, tier: TIER };
+  const take = { id: takeId, engine: ENG_USER, cost_cents: cost, art, license: LICENSE, best: true, transition: true };
+  const bag = { ok: true, cents: cost, art, path: art, meta, take, engine: ENG_USER, cost_cents: cost, license: take.license, sec: meta.sec, tier: TIERX };
   j.result = bag; j.art = bag;
   return { ok: true, cents: cost, art, meta };
 }
@@ -610,8 +737,21 @@ async function run(job, ctx) {
 
   if (comfyOn) {
     if (peakValley) await sleep(150); // 夜间闲时排队慢档（确定性固定延迟）
-    if (j.type === "video_ms") return runMultishotRemote(ctx, j, p, seed);
-    if (j.type === "transition") return runTransitionRemote(ctx, j, p, seed);
+    // 生成档位→引擎类→注册表登记解析（不绑死模型）：显式 tier 优先，自动档随节点 gen_pref
+    const wantClass = wantClassOfJob(ctx, j);
+    if (j.type === "video") {
+      const ventry = videoEntryFor(ctx, wantClass);
+      if (!ventry) throw (() => { const e = new Error("本节点没有登记视频引擎——去运维台「引擎段位」登记（带 class: fast/quality）"); e.code = "NODE_NO_ENGINE"; return e; })();
+      if (isLtxEntry(ventry.entry)) return runLtxFastComfy(ctx, j, p, seed, ventry);
+      return runRemoteComfy(ctx, j, p, seed, COST_CENTS, settings);
+    }
+    // 多镜串拍/转场衔接镜目前只有 LTX 族实现（H3 无 multishot/FLF 模板）——固定取快速档登记
+    const ltxEntry = videoEntryFor(ctx, "fast");
+    if (!ltxEntry || !isLtxEntry(ltxEntry.entry)) {
+      throw (() => { const e = new Error("本节点没有登记 LTX 族（快速档）视频引擎——多镜串拍/转场衔接镜依赖它"); e.code = "NODE_NO_ENGINE"; return e; })();
+    }
+    if (j.type === "video_ms") return runMultishotRemote(ctx, j, p, seed, wantClass === "fast");
+    if (j.type === "transition") return runTransitionRemote(ctx, j, p, seed, wantClass === "fast");
     return runRemoteComfy(ctx, j, p, seed, COST_CENTS, settings);
   }
   if (j.type === "video_ms" || j.type === "transition") {

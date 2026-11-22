@@ -64,6 +64,26 @@
       const adopted = reactive({});
       const est = reactive({ data: null, loading: false, err: null });
       const shooting = ref(false);
+      /* 生成档位（2026-11-22 运营化）：拍摄前选速度优先/质量优先/自动，报价即时联动 */
+      const videoPref = ref("auto");
+      const videoPrefNote = ref("");
+      const prefBusy = ref(false);
+      const videoPrefOpts = [
+        { v: "auto", label: "自动" },
+        { v: "speed", label: "速度优先 ⚡" },
+        { v: "quality", label: "质量优先 ✦" }
+      ];
+      async function pickVideoPref(v) {
+        if (prefBusy.value || videoPref.value === v) return;
+        prefBusy.value = true;
+        try {
+          const r = await store.setVideoPref(props.epId, v);
+          videoPref.value = (r && r.video_pref) || v;
+          videoPrefNote.value = (r && r.engine_note) || "";
+          await loadEstimate(); // 档位变了 → 报价/耗时即时刷新
+        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+        finally { prefBusy.value = false; }
+      }
       const playingId = ref("");
       const playingSrc = ref("");
       const audioErr = ref("");
@@ -428,7 +448,11 @@
       /* ---- C6：服务端报价 + 开机 ---- */
       async function loadEstimate() {
         est.loading = true; est.err = null;
-        try { est.data = await store.estimate(props.epId); }
+        try {
+          est.data = await store.estimate(props.epId);
+          if (est.data && est.data.video_pref) videoPref.value = est.data.video_pref;
+          if (est.data && est.data.engine_note) videoPrefNote.value = est.data.engine_note;
+        }
         catch (e) { est.err = e; }
         finally { est.loading = false; }
       }
@@ -712,10 +736,12 @@
 
       return {
         store, busyId, editing, noteText, adopted, est, shooting,
+        videoPref, videoPrefNote, prefBusy, videoPrefOpts, pickVideoPref,
         playingId, playingSrc, audioErr, audioEl,
         list, loading, err, isEmpty, pendingCount, decidedCount, ordered, c6Decided,
         typeLabel, cardTitle, summary, c7Items, cands,
         clean, fmtMin: T.fmtMin, p: c => c.payload || {}, aiVerdictLabel, firstArt, altArts, lightbox, openLb, lbItem, lbPrev, lbNext, closeLb,
+        srcOf,
         accept, reject, openNote, editSubmit,
         gpuBusy, epDriver, loadEstimate, startShoot, play, useTrack, regen, collectTrack, extractToLibrary, reload, pauseAudio,
         uploaded, genPrompt, castKey, uploadedFile, pickCastFile, onCastFile,
@@ -1019,6 +1045,14 @@
                 <span class="weak">首帧 = {{ f.angle ? (angleCn(f.angle) + ' @' + f.t + 's') : '初始定妆' }}</span>
               </div>
             </div>
+            <!-- 生成档位（2026-11-22 运营化）：拍摄前选速度优先/质量优先，报价即时联动 -->
+            <div class="row wrap v-flow-acts" v-if="card.type === 'C6' && card.status === 'pending'" style="margin-top:6px">
+              <span class="weak">生成档位：</span>
+              <button v-for="pf in videoPrefOpts" :key="pf.v" class="btn btn-sm"
+                :class="videoPref === pf.v ? 'btn-primary' : 'btn-ghost'"
+                :disabled="prefBusy || !est.data" @click="pickVideoPref(pf.v)">{{ pf.label }}</button>
+            </div>
+            <div class="weak" v-if="card.type === 'C6' && videoPrefNote" style="margin-top:4px">{{ videoPrefNote }}</div>
             <div class="row wrap v-flow-cta" v-if="card.type === 'C6'">
               <button class="btn btn-primary" :disabled="!est.data || est.loading || !c6Decided || shooting || gpuBusy"
                 :aria-busy="shooting ? 'true' : null" @click="startShoot">开机 🎬</button>

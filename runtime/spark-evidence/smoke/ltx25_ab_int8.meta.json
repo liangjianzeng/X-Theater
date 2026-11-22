@@ -1,0 +1,10 @@
+{
+  "kind": "spark-ab",
+  "tag": "int8",
+  "unet": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+  "prompt_id": "78e1700c-883e-477a-b0cd-86932ca3d054",
+  "seconds": 221,
+  "bytes": 988992,
+  "seed": 20261122,
+  "at": "2026-11-22T16:38:42.082Z"
+}

@@ -200,6 +200,12 @@
     const r = await T.api.get("/episodes/" + encodeURIComponent(epId) + "/estimate");
     return T.sanitizeDeep(r);
   };
+  /* 生成档位（2026-11-22 运营化）：拍摄前选速度优先/质量优先/自动，报价即时联动 */
+  store.setVideoPref = async function (epId, pref) {
+    const r = await T.api.post("/episodes/" + encodeURIComponent(epId) + "/video-pref", { pref });
+    store.toast(r && r.engine_note ? r.engine_note : "生成档位已更新");
+    return r;
+  };
   store.shoot = async function (epId, est) {
     const e = (est && (est.estimate || est.est)) || est || {};
     const ok = await store.confirm({

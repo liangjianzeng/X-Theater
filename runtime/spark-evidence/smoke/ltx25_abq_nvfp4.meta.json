@@ -1,0 +1,13 @@
+{
+  "kind": "spark-abq",
+  "tag": "nvfp4",
+  "round": 2,
+  "unet": "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
+  "prompt_id": "49e66cbd-991a-4b8a-b859-3a3c8bbb5044",
+  "seconds": 246,
+  "bytes": 2946734,
+  "seed": 20261123,
+  "guide": "var/assets/cast/upload_____1795281600572.png",
+  "dialogue": "这座城市，每一盏灯都像一封信。",
+  "at": "2026-11-22T16:53:03.315Z"
+}

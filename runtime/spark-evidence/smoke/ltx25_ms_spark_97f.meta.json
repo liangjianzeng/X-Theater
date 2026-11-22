@@ -1,0 +1,21 @@
+{
+  "kind": "spark-smoke-multishot",
+  "prompt_id": "d1c0fd73-2c05-43f9-b6a1-d4bb9369d67a",
+  "seconds": 105,
+  "bytes": 988992,
+  "output": {
+    "filename": "theater_ltx25_ms_00001_.mp4",
+    "subfolder": "",
+    "type": "output",
+    "metadata": {
+      "kind": "video",
+      "width": 720,
+      "height": 1280,
+      "duration": 4.041666666666667,
+      "fps": 24,
+      "frame_count": 97
+    }
+  },
+  "seed": 20261122,
+  "at": "2026-11-22T15:03:40.330Z"
+}

@@ -1,0 +1,21 @@
+{
+  "kind": "spark-smoke-flf",
+  "prompt_id": "d44883f3-b72f-446a-b3bb-fc74ded0e70b",
+  "seconds": 35,
+  "bytes": 633230,
+  "output": {
+    "filename": "theater_ltx25_flf_00001_.mp4",
+    "subfolder": "",
+    "type": "output",
+    "metadata": {
+      "kind": "video",
+      "width": 720,
+      "height": 1280,
+      "duration": 2.0416666666666665,
+      "fps": 24,
+      "frame_count": 49
+    }
+  },
+  "seed": 20261122,
+  "at": "2026-11-22T15:04:42.320Z"
+}

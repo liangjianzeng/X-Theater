@@ -21,6 +21,7 @@ function util2uid(ctx) { try { return ctx.util.uid("AUD"); } catch (e) { return 
 
 const cardsMod = require("../api/cards.js"); // 拍板原语/建议/刷新（与路由同一实现）
 const musicMod = require("../api/music.js"); // adoptCandidate（C9 采用）
+const episodesMod = require("../api/episodes.js"); // 生成档位助手（2026-11-22 运营化：speed/quality/auto）
 
 function fail(ctx, session, tool, code, message, trace, extra) {
   governance.ledger(ctx, session, Object.assign(
@@ -143,7 +144,8 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const shot = st.shots[args.shot_id];
       const job = ctx.engine.enqueue("video", { shotId: args.shot_id }, {
         episodeId: args.episode_id,
-        initiated_by: "user"
+        initiated_by: "user",
+        tier: episodesMod.effectiveVideoTier((st.episodes[args.episode_id] || {}).video_pref, shot.tier)
       });
       shot.rerolls = (shot.rerolls || 0) + 1;
       shot.status = "generating";
@@ -166,7 +168,8 @@ async function execute(tool, args, ctx, session, auth, opts) {
         const shot = st.shots[id];
         const job = ctx.engine.enqueue("video", { shotId: id }, {
           episodeId: args.episode_id,
-          initiated_by: "user"
+          initiated_by: "user",
+          tier: episodesMod.effectiveVideoTier((st.episodes[args.episode_id] || {}).video_pref, shot.tier)
         });
         shot.rerolls = (shot.rerolls || 0) + 1;
         shot.status = "generating";
@@ -623,7 +626,7 @@ async function execute(tool, args, ctx, session, auth, opts) {
       if (!shots.length) return fail(ctx, session, tool, "NOT_READY", "镜头未生成", trace);
       const jobs = [];
       shots.forEach((sh) => {
-        jobs.push(ctx.engine.enqueue("video", { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height }, { episodeId: ep.id, initiated_by: "user", tier: sh.tier === "high" ? "high" : undefined }));
+        jobs.push(ctx.engine.enqueue("video", { episodeId: ep.id, shotId: sh.id, sec: sh.sec || 5, width: sh.width, height: sh.height }, { episodeId: ep.id, initiated_by: "user", tier: episodesMod.effectiveVideoTier(ep.video_pref, sh.tier) }));
       });
       ep.shoot_confirmed_ver = ep.estimate_ver;
       ep.stage = Math.max(ep.stage || 1, 7);

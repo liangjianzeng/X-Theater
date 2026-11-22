@@ -50,6 +50,9 @@ function ensureNodes(st) {
     if (!n.llm || typeof n.llm !== "object") n.llm = { base: "", model: "", bat: "" };
     ["base", "model", "bat"].forEach((k) => { if (typeof n.llm[k] !== "string") n.llm[k] = ""; });
     if (typeof n.gpu_gate !== "boolean") n.gpu_gate = id === "local"; // 存量档案补默认：本机互斥
+    // 生成档位（2026-11-22 运营化）：节点默认引擎类——speed=快档（同族最快）/quality=质量档（同族最好）。
+    // 自动档任务落在该节点时按此选引擎；用户显式档位（任务 tier fast/high）优先于节点默认。
+    if (n.gen_pref !== "speed" && n.gen_pref !== "quality") n.gen_pref = id === "dgx" ? "quality" : "fast";
     // 云 API 档案（kind:"cloud" 时生效）：endpoint/key/model/price_cents（key 不回显）
     if (!n.api || typeof n.api !== "object") n.api = { endpoint: "", key: "", model: "", price_cents: 0 };
     ["endpoint", "key", "model"].forEach((k) => { if (typeof n.api[k] !== "string") n.api[k] = ""; });
@@ -109,6 +112,7 @@ function register(router, ctx) {
           label: nodes[id].label,
           kind: nodes[id].kind || "comfy",
           gpu_gate: !!nodes[id].gpu_gate,
+          gen_pref: nodes[id].gen_pref || "fast",
           comfy: nodes[id].comfy,
           // 云 API 档案（key 只回显「已配置/未配置」，不回显明文）
           api: nodes[id].kind === "cloud"
@@ -275,6 +279,14 @@ function register(router, ctx) {
       if (b.gpu_gate != null) {
         node.gpu_gate = b.gpu_gate === true;
       }
+      // 生成档位（2026-11-22 运营化）：节点默认引擎类。自动档任务按它选引擎；显式任务档位优先。
+      if (b.gen_pref != null) {
+        const gp = String(b.gen_pref);
+        if (["speed", "quality"].indexOf(gp) < 0) {
+          throw { code: "BAD_REQUEST", message: "gen_pref 只能是 speed（速度优先）或 quality（质量优先）" };
+        }
+        node.gen_pref = gp;
+      }
       // 云 API 档案编辑（kind:"cloud"；key 传空串＝不改，显式 null＝清除）
       if (b.api && typeof b.api === "object") {
         node.api = node.api || { endpoint: "", key: "", model: "", price_cents: 0 };
@@ -288,7 +300,7 @@ function register(router, ctx) {
         if (b.api.price_cents != null) node.api.price_cents = Math.max(0, Math.round(Number(b.api.price_cents) || 0));
       }
       store.commit();
-      audit(auth, "node_update", node.id, { label: node.label, gpu_gate: node.gpu_gate });
+      audit(auth, "node_update", node.id, { label: node.label, gpu_gate: node.gpu_gate, gen_pref: node.gen_pref });
       return router.json(res, 200, { node: Object.assign({}, node, { api: node.api ? Object.assign({}, node.api, { key: undefined, has_key: !!node.api.key }) : null }) });
     },
     { auth: true }

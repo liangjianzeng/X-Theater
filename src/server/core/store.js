@@ -35,13 +35,32 @@ function ensureRegistryNodes(state) {
   return n;
 }
 
-/** 幂等迁移（2026-11-22 对标调研梯队落实）：转场衔接镜台账＋后期设置默认值 */
+/** 幂等迁移（2026-11-22 对标调研梯队落实＋生成档位运营化）：转场台账＋后期设置＋引擎类/节点档位 */
 function ensurePostprodFields(state) {
   const st = state || {};
   if (!st.transitions) st.transitions = {}; // {trId:{id,episodeId,fromShotId,toShotId,take,created}}
   st.settings = st.settings || {};
   if (st.settings.subtitles == null) st.settings.subtitles = "on"; // compose 真模式字幕烧录默认开
   if (st.settings.interp_fps == null) st.settings.interp_fps = 0; // 升帧默认关（minterpolate 慢）
+  // 引擎注册表补 class（2026-11-22 档位运营化：fast=同族最快/quality=同族最好；未知引擎默认 quality 保旧行为）
+  const reg = (st.settings.registry = st.settings.registry || {});
+  const classOf = (name) => /H3/i.test(String(name)) ? "quality" : /LTX|qwen|Z-Image/i.test(String(name)) ? "fast" : "quality";
+  Object.keys(reg).forEach((id) => {
+    const e = reg[id];
+    if (e && !e.class) e.class = classOf(e.engine || id);
+  });
+  // LTX-2.5-Spark 自动登记（dgx 节点存在且未登记时补齐——远程快速档引擎，模板/权重已在 Spark 实测）
+  if (st.nodes && st.nodes.dgx && !reg["LTX-2.5-Spark"]) {
+    reg["LTX-2.5-Spark"] = {
+      lane: "t2v.remote", node: "dgx", engine: "LTX-2.5", quant: "int8_convrot",
+      endpoint: "远端 ComfyUI :8188", published: ["int8"], unavail: [], class: "fast"
+    };
+  }
+  // 节点 gen_pref 默认（quality/fast；ensureNodes 同规则，此处兜底让引擎池启动即可读）
+  Object.keys(st.nodes || {}).forEach((id) => {
+    const n = st.nodes[id];
+    if (n && n.gen_pref !== "speed" && n.gen_pref !== "quality") n.gen_pref = id === "dgx" ? "quality" : "fast";
+  });
   return true;
 }
 
@@ -234,11 +253,21 @@ function seedState() {
         },
         "LTX-2.5": {
           lane: "t2v.local", node: "local", engine: "LTX-2.5 UD", quant: "UD-Q4_K_XL",
-          endpoint: "W-B ComfyUI :8188", published: ["UD-Q4_K_XL"], unavail: []
+          endpoint: "W-B ComfyUI :8188", published: ["UD-Q4_K_XL"], unavail: [],
+          class: "fast",
+          tmpl: { i2v: "ltx25-i2v", ref: "ltx25-i2v-ref", multishot: "ltx25-multishot", flf: "ltx25-flf" }
         },
         "FastH3": {
           lane: "t2v.remote", node: "dgx", engine: "MiniMax-H3", quant: "int8_convrot",
-          endpoint: "远端 ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: []
+          endpoint: "远端 ComfyUI :8188", published: ["nvfp4", "int8", "MXFP8+FP8"], unavail: [],
+          class: "quality",
+          tmpl: { i2v: "h3-fl2va-video", ref: "h3-ref2va-video" }
+        },
+        "LTX-2.5-Spark": {
+          lane: "t2v.remote", node: "dgx", engine: "LTX-2.5", quant: "int8_convrot",
+          endpoint: "远端 ComfyUI :8188", published: ["int8"], unavail: [],
+          class: "fast",
+          tmpl: { i2v: "ltx25-i2v-spark", multishot: "ltx25-multishot-spark", flf: "ltx25-flf-spark" }
         },
         "ACE-Step 1.5": {
           lane: "music", node: null, engine: "ACE-Step 1.5", quant: "fp16",

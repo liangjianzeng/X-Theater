@@ -50,15 +50,15 @@ L0 基础设施  llm-gw（llama-server :8090 Huihui35B:vision＋watchdog）· �
 
 | 节点 | 产物 | AI 打样 | AI 审查 | AI 建议/交互 | 人拍板 | 兜底（LLM 断时） |
 |---|---|---|---|---|---|---|
-| C1 故事方向 | 策划案（梗概/人物/分场分镜） | scriptgen（LLM 剧本；quickstart/一句话成片入口） | aireview：编剧/导演/剪辑/合规人格＋语速校验 | 修改建议（suggest_card→revise_scenes 确认票）；重出一版（decide reject 确认票） | ✓ | 规则机检仍跑；模板节拍可拍 |
+| C1 故事方向 | 策划案（梗概/人物/分场分镜） | scriptgen（LLM 剧本；quickstart/一句话成片入口） | aireview：编剧/导演/剪辑/合规人格＋语速校验＋**网感编辑（集尾钩子/爽点密度/前3镜进戏，2026-11-22 梯队③）** | 修改建议（suggest_card→revise_scenes 确认票）；重出一版（decide reject 确认票） | ✓ | 规则机检仍跑；模板节拍可拍 |
 | C2 演员定妆 | 角色定妆图 | 生图线（ComfyUI/Spark，上传/AI 生成） | aireview（C2 在审查类型表） | 定妆入口引导；重拍某角色 | ✓ | 产物线不受 LLM 影响 |
 | C2S 试妆试镜 | 试妆试镜片 | 生图线 screen_test | aireview | 按角色重出；确认后进批量出图 | ✓ | 同上 |
 | C3 演员表锁定 | 锁定表 | storyboard_char 派单（生图线） | — | 拍板引导；锁定后才能试拍 | ✓ | — |
 | C4 分镜画面 | 每镜首帧/分镜图 | img 出图（按 episode.driver 路由 local/dgx） | aireview | 重拍第 N 镜（确认票）；择优 pick_take | ✓ | 产物线不受影响 |
-| C5 样片审看 | 预览成片 | compose 预览（视频线） | aireview：节奏/时长/语速 | 样片问题清单导读 | ✓ | 规则校验仍跑 |
+| C5 样片审看 | 预览成片 | compose 预览（视频线）＋**转场衔接镜织入/多镜串拍分段（2026-11-22 梯队①＋FR-506）** | aireview：节奏/时长/语速 | 样片问题清单导读 | ✓ | 规则校验仍跑 |
 | C6 开机报价 | 报价单 | estimate（shots×单价，动态） | — | 开机引导＋GPU 互斥知情提示（gpuNote） | ✓（确认票，最大额） | 静态单价 |
 | C7 复审批复 | 灰区镜头 pass/fail | — | AI 给 pass/fail **建议**（规则机检先走） | 复审台队列导读 | ✓（决策留人） | 规则机检 |
-| C8 交付确认 | 成片文件 | export 合成（确认票＋预检全绿前置） | 交付预检（precheck 规则） | 看片 checklist（规划中 §6 P2） | ✓ | 预检不依赖 LLM |
+| C8 交付确认 | 成片文件 | export 合成（确认票＋预检全绿前置）＋**字幕烧录（cue 5字/秒估时，settings.subtitles）＋可选升帧（settings.interp_fps）＋超分档（2026-11-22 梯队②④⑥）** | 交付预检（precheck 规则） | 看片 checklist（规划中 §6 P2） | ✓ | 预检不依赖 LLM |
 | C9 配乐提案 | 每场候选曲 | music_candidates（确认票→生成） | — | 采纳 adopt_music；regen 重出 | ✓（采纳） | — |
 
 矩阵的使用规则：

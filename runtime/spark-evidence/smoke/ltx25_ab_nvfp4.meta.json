@@ -1,0 +1,10 @@
+{
+  "kind": "spark-ab",
+  "tag": "nvfp4",
+  "unet": "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
+  "prompt_id": "f3e19d22-5c35-479e-b904-4ecbc53b1330",
+  "seconds": 70,
+  "bytes": 1000719,
+  "seed": 20261122,
+  "at": "2026-11-22T16:39:52.276Z"
+}

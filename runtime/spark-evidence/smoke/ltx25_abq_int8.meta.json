@@ -1,0 +1,13 @@
+{
+  "kind": "spark-abq",
+  "tag": "int8",
+  "round": 2,
+  "unet": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+  "prompt_id": "376f63d7-7aa2-4589-b63e-f6a3f98c118f",
+  "seconds": 100,
+  "bytes": 2699688,
+  "seed": 20261123,
+  "guide": "var/assets/cast/upload_____1795281600572.png",
+  "dialogue": "这座城市，每一盏灯都像一封信。",
+  "at": "2026-11-22T16:48:57.521Z"
+}

@@ -57,10 +57,12 @@ const TYPE_LANE = {
 const DRIVER_ROUTABLE = ["c1plan", "casting", "storyboard", "storyboard_char", "img_free", "video", "video_ms", "transition"];
 
 function laneFor(type, opts) {
-  if (type === "video") return opts && opts.tier === "high" ? "t2v.remote" : "t2v.local";
+  // 生成档位（2026-11-22 运营化）：tier "high"＝质量优先、"fast"＝速度优先 → 都走远程车道；
+  // worker 按档位选引擎模板（fast=LTX 快速档 / high=H3 高价值档）；缺省（auto 标准镜）走本机 LTX。
+  if (type === "video") return opts && (opts.tier === "high" || opts.tier === "fast") ? "t2v.remote" : "t2v.local";
   // 多镜串拍（同场相邻镜一次前向生成后按时间码分段落 take）与转场衔接镜（A 尾帧+B 首帧桥接）：
-  // 同 video 的档位路由——高价值档走远端（Spark int8），标准档走本机（LTX GGUF）
-  if (type === "video_ms" || type === "transition") return opts && opts.tier === "high" ? "t2v.remote" : "t2v.local";
+  // 同 video 的档位路由
+  if (type === "video_ms" || type === "transition") return opts && (opts.tier === "high" || opts.tier === "fast") ? "t2v.remote" : "t2v.local";
   // H3 线（2026-11-21）：tier:"high" → 生图全族走远端 t2i 车道，本机不再接 H3 任务
   if (opts && opts.tier === "high" && ["casting", "storyboard_char", "c1plan", "storyboard"].indexOf(type) >= 0) return "t2i.remote";
   const l = TYPE_LANE[type];
@@ -152,18 +154,36 @@ function createEngine({ store, bus, cfg }) {
     return null;
   }
 
+  /** 生成档位（2026-11-22 运营化）→ 引擎类：fast=同族最快 / high=质量优先（quality 类）/ null=节点默认。
+   *  视频族引擎在注册表里带 class 字段——节点上有什么类，池就按什么类过滤（不绑死模型）。 */
+  function wantClassOf(opts) {
+    const t = opts && opts.tier;
+    if (t === "high") return "quality";
+    if (t === "fast") return "fast";
+    return null; // 自动档：节点 gen_pref 决定默认类（worker 侧解析）
+  }
+  /** 该节点的视频族登记里是否有指定类引擎（class 缺失按 quality 兜底＝存量 H3 行为） */
+  function nodeHasVideoClass(st, id, wantClass) {
+    if (!wantClass) return true;
+    const nodesV = registryEntries().filter((e) => e && familyOf(e.lane || "") === "video" && e.node === id);
+    if (!nodesV.length) return false;
+    return nodesV.some((e) => (e.class || "quality") === wantClass);
+  }
+
   /** 算力池解析（2026-11-22 用户裁决）：按族找第一个可用节点的车道。
    *  候选序：集指定 → 发起人默认算力（users[uid].driver）→ 云 API 节点（endpoint 已配）→ 远端 comfy → 本机 → 其余登记节点。
-   *  可用＝在册＋同族车道有绑定＋gpu_gate 不挡（LLM 占卡的本机自动跳过）。找不到＝null（调用方收口）。 */
+   *  可用＝在册＋同族车道有绑定＋档位类有引擎（wantClass 时过滤）＋gpu_gate 不挡（LLM 占卡的本机自动跳过）。找不到＝null（调用方收口）。 */
   function poolPick(type, opts, st) {
     const family = familyOf(laneFor(type, opts));
     if (!family) return null;
+    const wantClass = family === "video" ? wantClassOf(opts) : null;
     const busyGate = llmBlocked(cfg);
     const nodes = st.nodes || {};
     const usable = function (id) {
       if (!id || !nodes[id]) return null;
       const laneT = laneBoundTo(family, id);
       if (!laneT) return null;
+      if (!nodeHasVideoClass(st, id, wantClass)) return null; // 档位类过滤（2026-11-22 运营化）
       const n = nodes[id];
       if (busyGate && n.gpu_gate && llmHostNode(st) === id && LOCAL_GPU_TYPES.indexOf(type) >= 0) return null; // 大脑宿主机＝档案注册表（云端大脑不挡任何机器）
       return laneT;
@@ -219,6 +239,7 @@ function createEngine({ store, bus, cfg }) {
           worker_type: workerTypeOf(job), // 实际执行模式：真引擎（注册表通道启用且该类型有真分支）标注 self-host-comfy，验收 stub 标注 self-host-stub——账本不许撒谎
           type: job.type,
           lane: job.lane,
+          tier: job.tier || null, // 生成档位（2026-11-22 运营化）：fast/high/null
           status,
           episodeId: job.episodeId,
           tid: job.tid || null, // 域维度（S3-6）：按域聚合计费/审计
@@ -449,20 +470,27 @@ function createEngine({ store, bus, cfg }) {
          可用＝节点在册＋该族车道有绑定＋gpu_gate 不挡（LLM 占卡的本机被跳过，自动找下一个激活可用的）。
          tier:high（H3 专用引擎工作流）保持固定车道不漂移。全空才收口一句（不点名硬件、不教绕路）。 */
       let lane = laneFor(type, opts);
-      if (DRIVER_ROUTABLE.indexOf(type) >= 0 && !(opts && opts.tier === "high")) {
+      // 档位类过滤进池（2026-11-22 运营化）：fast/high 不再固定车道——池按「节点上有没有该类视频引擎」
+      // 过滤（如 dgx 同时登记 H3=quality 与 LTX=fast）；候选序不变（集驱动 → 用户默认 → 云 → 远端 → 本机）。
+      if (DRIVER_ROUTABLE.indexOf(type) >= 0) {
         const pick = poolPick(type, opts, st);
         if (pick) {
           lane = pick.lane;
         } else {
+          const wc = wantClassOf(opts);
           const epDrv = epOf(opts.episodeId) || (payload && payload.episodeId ? epOf(payload.episodeId) : null);
           const explicit = epDrv && (st.nodes || {})[epDrv.driver] ? epDrv.driver : null;
           if (explicit && !laneBoundTo(familyOf(laneFor(type, opts)), explicit)) {
             throw { code: "NODE_NO_LANE", message: "节点「" + ((st.nodes || {})[explicit] || {}).label + "」还没绑定这类引擎——去运维台「引擎段位」改绑，或把本集驱动切到有引擎的节点。" };
           }
           const busy = llmBlocked(cfg);
-          throw { code: "POOL_EMPTY", message: busy
-            ? "算力池暂时没有可用的渲染资源（本机 LLM 占卡中，其它节点未激活或未绑定引擎）。可在左下角 GPU 徽章「让路」后重试，或去运维台激活别的节点。"
-            : "算力池暂时没有可用的渲染资源——去运维台「引擎段位」给节点绑定引擎车道。" };
+          throw { code: "POOL_EMPTY", message: wc === "quality"
+            ? "算力池没有「质量优先」档的节点——去运维台「引擎段位」给某节点登记质量档视频引擎（如 H3 全家桶），或把本集生成档位改回自动/速度优先。"
+            : wc === "fast"
+              ? "算力池没有「速度优先」档的节点——去运维台「引擎段位」给某节点登记快速档视频引擎（如 LTX 系），或把本集生成档位改回自动。"
+              : busy
+                ? "算力池暂时没有可用的渲染资源（本机 LLM 占卡中，其它节点未激活或未绑定引擎）。可在左下角 GPU 徽章「让路」后重试，或去运维台激活别的节点。"
+                : "算力池暂时没有可用的渲染资源——去运维台「引擎段位」给节点绑定引擎车道。" };
         }
       }
       // 防御闸（池外路径兜底）：车道归属节点开 gpu_gate 且 LLM 承载同节点 → 拒绝
@@ -488,6 +516,9 @@ function createEngine({ store, bus, cfg }) {
         lane,
         status: "queued",
         episodeId: opts.episodeId || null,
+        // 生成档位（2026-11-22 运营化）：fast=速度优先 / high=质量优先 / null=自动档——worker 据此
+        // 在节点引擎注册表里解析该类引擎（不绑死模型）；账本同带 tier 便于审计。
+        tier: opts.tier || null,
         // 域归属（S3-6）：经 episode 反查（账本/事件/SSE 域过滤的租户维度；episodeId 是全任务公共键）
         tid: (epOf(opts.episodeId || (payload && payload.episodeId) || null) || {}).tenantId || null,
         payload: payload || {},
