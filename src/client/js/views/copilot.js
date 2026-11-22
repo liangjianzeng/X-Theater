@@ -191,6 +191,8 @@
         if (nv && ov && nv !== ov && store.l2.status === "ready") {
           newSession().then(() => store.toast("已切换到本集上下文，开了新会话"));
         }
+        /* 任务 hint 数据源：绑定集的 jobs 拉一次，此后 SSE jobs 事件自动保持新鲜 */
+        if (nv) store.loadJobs(nv).catch(() => {});
       });
 
       /* ---------- P2 主动性 hint（蓝图 §3.6）：新待拍板卡主动递可点的下一步 ----------
@@ -257,6 +259,52 @@
         });
         while (hints.value.length > 2) hints.value.shift();
         store.toast("有镜头待复审", "warn");
+      });
+      /* 任务完成/失败 hint（蓝图 §3.6 最后一格）：绑定集 jobs 状态面（SSE 自动保鲜）——
+         失败→去拍摄页处理；全部拍完→导出成片。签名去重＋首次基线静默，单槽位替换。 */
+      const seenJobSig = Vue.ref("");
+      const boundJobs = Vue.computed(() => {
+        const b = boundEp.value;
+        if (!b || store.jobs.epId !== b.id || !Array.isArray(store.jobs.list)) return null;
+        const l = store.jobs.list;
+        return {
+          total: l.length,
+          failed: l.filter(j => j.status === "failed").length,
+          done: l.filter(j => j.status === "done").length,
+          active: l.filter(j => j.status === "queued" || j.status === "running").length
+        };
+      });
+      Vue.watch(boundJobs, (q) => {
+        const b = boundEp.value;
+        if (!q || !b || q.total === 0) return;
+        const sig = q.total + "/" + q.done + "/" + q.failed;
+        const prev = seenJobSig.value;
+        if (sig === prev) return;
+        seenJobSig.value = sig;
+        if (prev === "") return; // 首次基线静默
+        if (q.failed > 0) {
+          hints.value = hints.value.filter(h => h.id !== "jobs");
+          hints.value.push({
+            id: "jobs",
+            text: "📌 " + q.failed + " 个任务失败——多半在渲染侧，先去拍摄页看失败原因",
+            options: [
+              { label: "去拍摄页处理", href: "#/ep/" + encodeURIComponent(b.id) + "/shoot" },
+              { label: "查本集现在到哪一步了", send: "本集现在到哪一步了" }
+            ]
+          });
+          store.toast("有任务失败", "warn");
+        } else if (q.done >= q.total && q.active === 0) {
+          hints.value = hints.value.filter(h => h.id !== "jobs");
+          hints.value.push({
+            id: "jobs",
+            text: "📌 本集镜头全部拍完——下一步是导出成片（会出确认票）",
+            options: [
+              { label: "导出成片", send: "导出成片" },
+              { label: "去复审台看看", href: "#/review" }
+            ]
+          });
+          store.toast("本集镜头拍完了", "warn");
+        }
       });
       function dismissHint(h) { hints.value = hints.value.filter(x => x !== h); }
       function hintOpt(h, o) {
