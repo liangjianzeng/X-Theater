@@ -1092,11 +1092,11 @@
           <div class="panel-title">场景库 <span class="weak">场景卡＝定场图＋光线预设＋环境音＋变体</span></div>
           <div class="v-studio-gen">
             <label class="field"><span class="field-label">场景名</span>
-              <input class="input" v-model.trim="gScene.name" maxlength="40" placeholder="例：灯塔平台" /></label>
+              <input class="input" v-model.trim="gScene.name" maxlength="40" placeholder="例：天台边缘" /></label>
             <label class="field"><span class="field-label">氛围</span>
               <select class="select" v-model="gScene.mood"><option v-for="m in MOODS" :key="m" :value="m">{{ m }}</option></select></label>
             <label class="field"><span class="field-label">光线预设（可空）</span>
-              <input class="input" v-model.trim="gScene.lightPreset" maxlength="120" placeholder="例：冷蓝夜雨，灯塔扫光" /></label>
+              <input class="input" v-model.trim="gScene.lightPreset" maxlength="120" placeholder="例：冷蓝夜雨，探照灯扫光" /></label>
             <label class="field" style="grid-column:1/3"><span class="field-label">环境描述</span>
               <input class="input" v-model.trim="gScene.envDesc" maxlength="300" placeholder="例：礁石平台，风大浪急，远处海面" /></label>
             <div class="v-studio-acts"><button class="btn btn-primary" :disabled="!gScene.name.trim()" @click="createScene">建场景卡</button></div>

@@ -24,12 +24,18 @@ function cardTid(st, card) {
   return (ep || {}).tenantId || Tenants.defaultTid(st);
 }
 
+/* 无剧本集的 C1 兜底分场：通用三幕结构名，不带任何叙事内容
+ *（2026-11-23 修复：旧占位「重逢/离别/对峙/灯塔」是一部戏的具体剧情，
+ *  会泄漏进每一部没跑出剧本的剧，策划 AI 审查因此对所有剧都"审灯塔"）。
+ *  mood 全取 MOOD_LIGHT 词表（dicts.js），兜底分场的光线映射仍然可用。 */
 const DEFAULT_SCENES = [
-  { name: "场1·重逢", mood: "释然" },
-  { name: "场2·离别", mood: "离别" },
-  { name: "场3·对峙", mood: "压抑" },
-  { name: "场4·灯塔", mood: "释然" }
+  { name: "场1·开场", mood: "温馨" },
+  { name: "场2·推进", mood: "紧张" },
+  { name: "场3·转折", mood: "压抑" },
+  { name: "场4·收束", mood: "释然" }
 ];
+/* C1 落到占位分场时的如实标注（summary 尾缀）——占位不是策划，卡片上要说真话 */
+const FALLBACK_NOTE = "（剧本未生成：以下为通用占位分场，请重跑剧本生成后以真稿为准）";
 const SHOTS_PER_SCENE = 4;
 
 function parseQuery(req) {
@@ -654,9 +660,13 @@ function onPlanDone(ctx, job, episodeId) {
       cast: (script.cast || []).map((c) => ({ role: c.role, name: c.name, desc: c.desc || "" }))
     };
   } else {
-    payload = plan && typeof plan === "object"
-      ? Object.assign({}, plan, { summary: ep.brief || plan.summary || "故事策划已就位", scenes: Array.isArray(plan.scenes) && plan.scenes.length ? plan.scenes : DEFAULT_SCENES.map((s) => Object.assign({}, s)) })
-      : { summary: ep.brief || "故事策划已就位", scenes: DEFAULT_SCENES.map((s) => Object.assign({}, s)) };
+    /* 无剧本且 plan 缺场景 → 占位分场，summary 如实标注（策划审查看到的是占位，不是真稿） */
+    const hasScenes = plan && typeof plan === "object" && Array.isArray(plan.scenes) && plan.scenes.length;
+    const base = plan && typeof plan === "object" ? plan : {};
+    payload = Object.assign({}, base, {
+      summary: (ep.brief || base.summary || "故事策划已就位") + (hasScenes ? "" : FALLBACK_NOTE),
+      scenes: hasScenes ? base.scenes : DEFAULT_SCENES.map((s) => Object.assign({}, s))
+    });
   }
   const r = upsertCard(ctx, { episodeId, type: "C1", payload, skipIfDecided: true });
   if (r.created) publishCard(ctx, "created", r.card);

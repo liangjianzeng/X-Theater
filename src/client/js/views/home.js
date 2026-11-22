@@ -455,12 +455,12 @@
                 </label>
                 <label class="field">
                   <span class="field-label">集标题</span>
-                  <input class="input" v-model.trim="form.title" placeholder="例：第 2 集 · 灯塔之约" />
+                  <input class="input" v-model.trim="form.title" placeholder="例：第 2 集 · 订婚夜变局" />
                 </label>
                 <label class="field v-home-brief">
                   <span class="field-label">一句话故事（必填）</span>
                   <textarea class="textarea" rows="3" v-model.trim="form.brief"
-                    placeholder="例：雨夜，她在灯塔下和十年前出走的母亲和解。"></textarea>
+                    placeholder="例：订婚宴上，新娘认出伴娘是十年前失踪的妹妹。"></textarea>
                 </label>
                 <div class="v-home-acts">
                   <button class="btn btn-primary" type="submit" :disabled="busy" :aria-busy="busy">
