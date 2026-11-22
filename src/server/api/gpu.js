@@ -8,6 +8,7 @@
  */
 
 const fs = require("fs");
+const { llmHostNode } = require("../core/store");
 
 function register(router, ctx) {
   const { store, util, cfg } = ctx;
@@ -18,17 +19,21 @@ function register(router, ctx) {
     (req, res, body, params, auth) => {
       if (!auth) throw { code: "FORBIDDEN", message: "需要登录" };
       const llm = ctx.llm && ctx.llm.enabled() ? ctx.llm.cached() : { configured: false, llmOnline: false };
+      // 大脑宿主机（Agent LLM 档案的运行位置）：null＝云端/远程大脑，不占任何渲染机显存
+      const hostNode = llmHostNode(store.get());
       return router.json(res, 200, {
         ts: util.now(),
         llm: {
           configured: !!llm.configured,
           online: !!llm.llmOnline,
           model: llm.llmModel || null,
+          node: hostNode, // 大脑物理落在哪台渲染机（null＝云端/远程）
           age_s: llm.age_s != null ? llm.age_s : null
         },
         comfy: llm.comfy || { online: false },
-        gpu_busy: !!(llm.configured && llm.llmOnline), // LLM 在线＝本机 Comfy 生图/拍摄被闸
-        restart_hint: (cfg.llm && cfg.llm.bat) || "" // 拉起脚本跟随当前 LLM 节点档案，不硬编码
+        // LLM 在线且物理落在本工作区某台渲染机＝那台机显存被占、渲染被闸；云端大脑在线不算占卡
+        gpu_busy: !!(llm.configured && llm.llmOnline && hostNode),
+        restart_hint: (cfg.llm && cfg.llm.bat) || "" // 拉起脚本跟随当前大脑档案，不硬编码
       });
     },
     { auth: true }

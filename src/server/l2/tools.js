@@ -16,6 +16,7 @@ function scenesOfEpisode(st, epId) {
 }
 
 const governance = require("./governance.js");
+const { llmHostNode } = require("../core/store"); // Agent 大脑宿主机（LLM 档案运行位置）
 function util2uid(ctx) { try { return ctx.util.uid("AUD"); } catch (e) { return "AUD"; } }
 
 const cardsMod = require("../api/cards.js"); // 拍板原语/建议/刷新（与路由同一实现）
@@ -263,15 +264,16 @@ async function execute(tool, args, ctx, session, auth, opts) {
       const cachedGpu = (ctx.llm && ctx.llm.enabled()) ? (ctx.llm.cached() || {}) : { configured: false, llmOnline: false };
       const epIdGpu = args.episode_id || governance.defaultEpisodeId(ctx, session);
       const epG = st.episodes[epIdGpu] || {};
-      // driver＝节点注册表任意节点 id（2026-11-22）；渲染是否落在 LLM 承载机由节点表判定，不再写死 dgx/local
+      // driver＝节点注册表任意节点 id（2026-11-22）；大脑宿主机＝Agent LLM 档案运行位置（云端大脑＝null，不与渲染机冲突）
       const driverId = epG.driver || "local";
       const driverNode = (st.nodes || {})[driverId] || null;
+      const hostNode = llmHostNode(st);
       result = Object.assign({}, cachedGpu, {
         episode_driver: driverId,
         episode_node_label: driverNode ? driverNode.label : driverId,
-        render_on_llm_host: !!(driverNode && (st.llm_node || "local") === driverId),
-        nodes: Object.keys(st.nodes || {}).map(function (id) { return { id: id, label: st.nodes[id].label, is_llm_host: (st.llm_node || "local") === id }; }),
-        llm_node: st.llm_node || "local"
+        render_on_llm_host: !!(hostNode && hostNode === driverId),
+        nodes: Object.keys(st.nodes || {}).map(function (id) { return { id: id, label: st.nodes[id].label, is_llm_host: hostNode === id }; }),
+        llm_host_node: hostNode
       });
       break;
     }

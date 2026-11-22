@@ -97,19 +97,30 @@ const cfg = {
     llmUrl: process.env.THEATER_H3IR_LLM_URL || "",   // 可选：Spark llama-server /v1 全英文 IR 重写；空＝规则拼装
     llmModel: process.env.THEATER_H3IR_LLM_MODEL || "default"
   },
-  // LLM 承载机器的 Comfy 端点（显存互斥监视/卸载用——与 LLM 同机才有显存冲突）
+  // Agent 大脑宿主机的 Comfy 端点（显存互斥监视/卸载用——与大脑同机才有显存冲突）。
+  // 大脑＝llm_profiles[llm_active]：运行位置指向渲染机 → 盯那台的 Comfy；云端/远程 → 不盯任何本机 Comfy。
   get llmHostComfy() {
     try {
       const st = store.get();
+      if (st.llm_active != null && st.llm_profiles && st.llm_profiles[st.llm_active]) {
+        const nid = st.llm_profiles[st.llm_active].node;
+        const nd = nid && st.nodes && st.nodes[nid];
+        return (nd && nd.comfy && nd.comfy.base) || "";
+      }
       const nd = st.nodes && (st.nodes[st.llm_node || "local"] || st.nodes.local);
       if (nd && nd.comfy && nd.comfy.base) return nd.comfy.base;
     } catch (e) { /* store 未就绪走 env */ }
     return process.env.THEATER_COMFY_URL || "";
   },
-  // llm-gw：LLM 档案挂节点（state.nodes[state.llm_node].llm，运维设置热切换）；env 作首启种子
+  // llm-gw 大脑：Agent LLM 档案（state.llm_profiles[state.llm_active]，api/llmprofiles.js 增删切换，热生效）；
+  // 存量库未迁移时回退旧节点档案路径，env 作最终兜底
   get llm() {
     try {
       const st = store.get();
+      if (st.llm_active != null && st.llm_profiles && st.llm_profiles[st.llm_active]) {
+        const p = st.llm_profiles[st.llm_active];
+        return { base: p.base || "", model: p.model || "default", bat: p.bat || process.env.THEATER_LLM_BAT || "" };
+      }
       const node = st && st.nodes && st.nodes[st.llm_node || "local"];
       if (node && node.llm && node.llm.base) return { base: node.llm.base, model: node.llm.model || "default", bat: node.llm.bat || process.env.THEATER_LLM_BAT || "" };
     } catch (e) { /* store 未就绪走 env */ }

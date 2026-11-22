@@ -192,7 +192,13 @@ function createEngine({ store, bus, cfg }) {
     const gpuReal = (cfg.comfy && cfg.comfy.enabled) || (cfg.comfySpark && cfg.comfySpark.enabled);
     const GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free", "cast_init", "screen_test"];
     if (GPU_TYPES.indexOf(job.type) >= 0) return gpuReal ? "self-host-comfy" : "self-host-stub";
-    return "self-host";
+    // 云 API 车道真跑＝外部付费生成，账本必须如实标注 cloud-api（验收桩模式仍是 stub）
+    if (job.lane === "img_cloud") {
+      const nid = laneBoundNode("img_cloud");
+      const cloudReal = !!(nid && ((store.get().nodes || {})[nid] || {}).api && ((store.get().nodes || {})[nid].api || {}).endpoint);
+      return cloudReal ? "cloud-api" : "self-host-stub";
+    }
+    return "self-host"; // 进程内真实现（FFmpeg/规则码）：无外部生成 API
   }
 
   /* ---------- 账本与事件 ---------- */
@@ -458,6 +464,7 @@ function createEngine({ store, bus, cfg }) {
         llmHostNode(st) === laneNode0 &&
         ((st.nodes || {})[laneNode0] || {}).gpu_gate &&
         LOCAL_GPU_TYPES.indexOf(type) >= 0 &&
+        type !== "img_free" && // 素材生图写死本机兜底（2026-11-22 用户裁决）
         llmBlocked(cfg)
       ) {
         throw { code: "GPU_BUSY", message: "本机渲染资源被 LLM 占用中，算力池暂无其它可用节点——可在左下角 GPU 徽章「让路」后重试。" };

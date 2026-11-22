@@ -6,7 +6,7 @@
  *  - 引擎注册表 CRUD：登记新引擎（lane 枚举校验/未知节点校验）→ 201；改绑归属节点 428→confirmed→200；
  *  - 删节点护栏：有引擎绑定 → 409 NODE_HAS_ENGINES；有剧集指向 → 409 NODE_HAS_EPISODES；解绑后可删。
  *  - 注销引擎：无 confirmed → 428；confirmed → 200 且 GET 不再出现。
- *  - LLM 承载切换：任意已登记节点可承载；审计留痕 node_add/node_remove/registry_add 等。
+ *  - Agent 大脑档案（大脑层解耦）：节点 llm 迁移成档案；增删改/切换/启用中删除护栏/宿主机派生。
  * 依赖 ops 角色（种子决定）；拿不到 ops → SKIP。
  */
 const lib = require('../lib');
@@ -124,19 +124,42 @@ async function fn(ctx) {
   const rEngGet = await ctx.api('GET', REG + '/' + encodeURIComponent(ENGINE_ID), null, opsToken);
   expect.status(rEngGet, 404, '注销后 GET → 404');
 
-  // ⑪ LLM 承载切换：任意已登记节点可承载（切 dgx 再切回 local）
-  const rLlmDgx = await ctx.api('PUT', NODES + '/llm-node', { node: 'dgx' }, opsToken);
-  expect.status(rLlmDgx, 200, 'LLM 承载切到 dgx');
-  const rLlmBack = await ctx.api('PUT', NODES + '/llm-node', { node: 'local' }, opsToken);
-  expect.status(rLlmBack, 200, 'LLM 承载切回 local');
-  const rLlmBad = await ctx.api('PUT', NODES + '/llm-node', { node: '幽灵节点' }, opsToken);
-  expect.status(rLlmBad, 400, '未知节点承载 LLM → 400');
+  // ⑪ Agent 大脑档案（2026-11-22 大脑层解耦）：节点 llm 迁移成档案 → 增删改/切换/护栏
+  const LP = '/api/llm-profiles';
+  const rLp0 = await ctx.api('GET', LP, null, opsToken);
+  expect.status(rLp0, 200, 'GET /api/llm-profiles');
+  expect.ok(((rLp0.body.profiles || []).filter((p) => p.id === 'llm_local')).length === 1, '节点 llm 已迁移为大脑档案（llm_local）');
+  expect.eq(rLp0.body.active, 'llm_local', '首启默认启用本机大脑档案');
+  const rLpAdd = await ctx.api('POST', LP,
+    { label: 'V12 云大脑', base: 'https://api.v12test.com/v1', model: 'test-1', key: 'sk-v12' }, opsToken);
+  expect.status(rLpAdd, 201, '新增云 LLM 档案（node=null＝云端，不占渲染机）');
+  const lpId = (rLpAdd.body.profile || {}).id;
+  expect.ok(lpId, '新档案带 id');
+  const rLpUpd = await ctx.api('PUT', LP + '/' + lpId, { label: 'V12 云大脑（改）' }, opsToken);
+  expect.status(rLpUpd, 200, '编辑档案');
+  expect.eq((rLpUpd.body.profile || {}).label, 'V12 云大脑（改）', '档案改名生效');
+  const rLpBad = await ctx.api('POST', LP, { label: 'x', base: 'https://x.com/v1', node: '幽灵节点' }, opsToken);
+  expect.status(rLpBad, 400, '运行位置未知节点 → 400');
+  const rLpAct = await ctx.api('POST', LP + '/activate', { id: lpId }, opsToken);
+  expect.status(rLpAct, 200, '切换大脑档案（热生效）');
+  expect.eq(rLpAct.body.active, lpId, 'active 已切到新档案');
+  const rLpDel0 = await ctx.api('POST', LP + '/' + lpId + '/remove', {}, opsToken);
+  expect.status(rLpDel0, 409, '删除启用中档案 → 409');
+  expect.code(rLpDel0, 'PROFILE_ACTIVE', '护栏错误码 PROFILE_ACTIVE');
+  const rLpBack = await ctx.api('POST', LP + '/activate', { id: 'llm_local' }, opsToken);
+  expect.status(rLpBack, 200, '切回本机大脑档案');
+  const rLpDel = await ctx.api('POST', LP + '/' + lpId + '/remove', {}, opsToken);
+  expect.status(rLpDel, 200, '切回后可删');
+  const rLpGet = await ctx.api('GET', LP, null, opsToken);
+  expect.ok(((rLpGet.body.profiles || []).filter((p) => p.id === lpId)).length === 0, 'GET 不再出现已删档案');
+  expect.eq(rLpGet.body.llm_host_node, 'local', '大脑宿主机＝本机（档案运行位置派生）');
 
   // ⑫ 审计留痕：节点/引擎全生命周期动作都在 audit 账本
   const rows = (ctx.ledger('audit').rows || []).slice(audit0);
   const actions = rows.map((r) => r.action);
   ['node_add', 'node_update', 'node_remove', 'episode_driver_switch', 'registry_add',
-    'registry_node_rebind', 'registry_remove', 'llm_node_switch', 'user_driver_switch'].forEach((a) =>
+    'registry_node_rebind', 'registry_remove', 'user_driver_switch',
+    'llm_profile_add', 'llm_profile_update', 'llm_profile_activate', 'llm_profile_remove'].forEach((a) =>
     expect.ok(actions.indexOf(a) >= 0, '审计留痕含 ' + a));
 
   // ⑬ 复原（幂等收尾）：确认种子拓扑未被本用例破坏。

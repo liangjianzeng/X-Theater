@@ -338,8 +338,11 @@
       });
       const gpuBlocked = Vue.computed(() => {
         const e = epObj.value;
-        // driver＝节点注册表节点 id：仅「local」（或未设）渲染吃本机独显，其余节点不吃
-        return !!((!e || !e.driver || e.driver === "local") && store.gpu && store.gpu.data && store.gpu.data.gpu_busy);
+        const g = store.gpu && store.gpu.data;
+        // 冲突＝本集渲染节点＝大脑宿主机且大脑在线（driver＝节点注册表节点 id；云端大脑不占渲染机）
+        if (!g || !g.llm || !g.llm.online) return false;
+        const driver = (e && e.driver) || "local";
+        return driver === (g.llm.node || "local");
       });
       const CHIPS = Vue.computed(() => {
         const out = [];

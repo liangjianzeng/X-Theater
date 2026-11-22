@@ -34,6 +34,59 @@ function ensureRegistryNodes(state) {
   return n;
 }
 
+/* ---------------- Agent 助手 LLM 档案注册表（2026-11-22 大脑层解耦） ----------------
+ * LLM API 档案与算力节点解耦：state.llm_profiles 可增删改（api/llmprofiles.js），
+ * state.llm_active 指定当前用哪套；profile.node＝这台 LLM 物理跑在哪台渲染机上
+ * （null＝云端/远程，不占渲染机显存，显存互斥闸不生效）。nodes[id].llm 降级为迁移源。 */
+
+/** 幂等迁移：从节点档案 llm 子对象生成初始 LLM 档案（只补缺失 id；已有任何档案则绝不重建） */
+function ensureLlmProfiles(state) {
+  const st = state || {};
+  if (st.llm_profiles && typeof st.llm_profiles === "object" && Object.keys(st.llm_profiles).length) {
+    // 已有档案：只修正失效的 llm_active 指向
+    if (!st.llm_profiles[st.llm_active]) {
+      st.llm_active = Object.keys(st.llm_profiles)[0] || "";
+    }
+    return false;
+  }
+  st.llm_profiles = st.llm_profiles && typeof st.llm_profiles === "object" ? st.llm_profiles : {};
+  Object.keys(st.nodes || {}).forEach((nid) => {
+    const nd = st.nodes[nid];
+    if (nd && nd.llm && nd.llm.base && !st.llm_profiles["llm_" + nid]) {
+      st.llm_profiles["llm_" + nid] = {
+        id: "llm_" + nid,
+        label: (nd.label || nid) + " 的 LLM",
+        base: nd.llm.base,
+        model: nd.llm.model || "",
+        bat: nd.llm.bat || "",
+        key: "",
+        node: nid
+      };
+    }
+  });
+  st.llm_active = st.nodes && st.nodes[st.llm_node] && st.llm_profiles["llm_" + st.llm_node]
+    ? "llm_" + st.llm_node
+    : (Object.keys(st.llm_profiles)[0] || "");
+  return true;
+}
+
+/** 当前启用的 LLM 档案（未配置返回 null——llm-gw 按 base 为空自然禁用） */
+function llmActiveProfile(state) {
+  const st = state || {};
+  return (st.llm_profiles || {})[st.llm_active] || null;
+}
+
+/** 当前大脑物理落在哪台渲染机（null＝云端/远程或未配置——显存互斥闸不生效） */
+function llmHostNode(state) {
+  const st = state || {};
+  if (st.llm_active != null && st.llm_profiles && st.llm_profiles[st.llm_active]) {
+    const p = st.llm_profiles[st.llm_active];
+    return p.node && (st.nodes || {})[p.node] ? p.node : null;
+  }
+  // 存量库尚未迁移到档案注册表时退回旧 llm_node 语义
+  return st.llm_node && (st.nodes || {})[st.llm_node] ? st.llm_node : null;
+}
+
 /* ---------------- 种子数据（契约 §8 附录 A） ---------------- */
 
 const SHOT_TYPES = ["特写", "中景", "全景", "空镜"];
@@ -446,4 +499,4 @@ function openStore(varDir, opts) {
   return store;
 }
 
-module.exports = { openStore, seedState, ensureAssetLib, pruneDrafts, ASSET_DRAFT_TTL_MS, DEFAULT_LANE_NODE, ensureRegistryNodes };
+module.exports = { openStore, seedState, ensureAssetLib, pruneDrafts, ASSET_DRAFT_TTL_MS, DEFAULT_LANE_NODE, ensureRegistryNodes, ensureLlmProfiles, llmActiveProfile, llmHostNode };

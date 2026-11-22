@@ -38,7 +38,8 @@ const CODE_STATUS = {
   NODE_IS_LLM_HOST: 409,
   LAST_NODE: 409,
   NODE_HAS_USERS: 409,
-  NODE_NO_LANE: 400
+  NODE_NO_LANE: 400,
+  PROFILE_ACTIVE: 409
 };
 
 function statusOf(err) {

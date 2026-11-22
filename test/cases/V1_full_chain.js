@@ -114,8 +114,11 @@ async function fn(ctx) {
   expect.ok(rows, `job 账本不可读（尝试路径：${(tried || []).join(', ')}）`);
   const mine = rows.filter((r) => r.episodeId === epId || JSON.stringify(r).includes(epId));
   expect.gte(mine.length, H.EXPECTED_SHOTS, `本集 job 账本行数应 ≥${H.EXPECTED_SHOTS}，实际 ${mine.length}`);
-  const badWorker = rows.filter((r) => String(r.worker_type || '') !== 'self-host-stub');
-  expect.eq(badWorker.length, 0, `job 账本存在非 self-host-stub 行（V1 判据：零外部生成 API）：${lib.trunc(badWorker.slice(0, 3).map((r) => `${r.id}:${r.worker_type}`))}`);
+  // worker_type 词表（2026-11-22 账本诚实化）：self-host-stub（验收桩）· self-host-comfy（真 ComfyUI）·
+  // self-host（进程内 FFmpeg/规则）· cloud-api（真付费云 API＝外部生成，验收桩模式不允许出现）。
+  // V1 判据＝零外部生成 API：凡非 self-host 前缀（如 cloud-api）即违规。
+  const badWorker = rows.filter((r) => String(r.worker_type || '').indexOf('self-host') !== 0);
+  expect.eq(badWorker.length, 0, `job 账本存在外部生成行（V1 判据：worker_type 必须以 self-host 开头）：${lib.trunc(badWorker.slice(0, 3).map((r) => `${r.id}:${r.worker_type}`))}`);
   const noInit = rows.filter((r) => !['user', 'system'].includes(String(r.initiated_by || '')));
   expect.eq(noInit.length, 0, `job 账本缺 initiated_by：${lib.trunc(noInit.slice(0, 3).map((r) => r.id))}`);
   ctx.note(`ledger job rows=${rows.length} (本集 ${mine.length})`);

@@ -115,6 +115,19 @@ function archiveArt(ctx, art, domain) {
 
 /* ---------------- 审计与校验 ---------------- */
 
+/** 车道 → 执行节点标签（引擎注册表 lane→node 反查；查不到＝本机） */
+function nodeLabelForLane(st, lane) {
+  try {
+    const reg = (st.settings && st.settings.registry) || {};
+    const nodes = st.nodes || {};
+    for (const k of Object.keys(reg)) {
+      const r = reg[k];
+      if (r && String(r.lane || "") === String(lane) && nodes[r.node]) return String(nodes[r.node].label || r.node);
+    }
+  } catch (e) { /* 注册表缺失不阻断 */ }
+  return "本机";
+}
+
 function audit(ctx, auth, action, target, extra) {
   ctx.store.log("audit", Object.assign({
     operator: (auth && (auth.uid || auth.id)) || null,
@@ -186,6 +199,9 @@ function register(router, ctx) {
             mood: c.mood || p.mood || "中性",
             sec: c.sec || 45,
             tags: c.tags || p.tags || "",
+            gen: p.gen || null,
+            caption: p.caption || "",
+            lyrics_head: String(p.lyrics || "").replace(/s+/g, " ").slice(0, 60),
             engine: c.engine || "",
             license: c.license || { model: "MIT", usage: "missing" },
             shadow_cents: c.shadow_cents || 0,
@@ -218,6 +234,7 @@ function register(router, ctx) {
               style_look: p.styleLook || "",
               ref_image: p.refImage || null,
               ratio: p.ratio || "9:16",
+              gen: p.gen || null,
               engine: (job.result && job.result.engine) || "",
               shadow_cents: (job.result && (job.result.cents || job.result.cost_cents)) || 0,
               art,
@@ -468,6 +485,7 @@ function register(router, ctx) {
       jobs.push(engine.enqueue("music", {
         type, mood, tags: finalTags, lyrics, instrumental, bpm: Number(b.bpm) || undefined,
         caption: caption || undefined, sec, projectId,
+        gen: { mode: String(b.mode || "quick"), genres, instruments, bpm: Number(b.bpm) || null, vocal: instrumental ? "" : String(b.vocal || ""), instrumental },
         gen_mode: String(b.mode || "quick").slice(0, 12)
       }, { initiated_by: "user" }));
     }
@@ -497,6 +515,7 @@ function register(router, ctx) {
         size: String(b.size || "").slice(0, 12) || undefined,          // 景别（dicts.SHOT_SIZE 键）
         light: String(b.light || "").slice(0, 120) || undefined,        // 光线一句话
         negativeExtra: String(b.negativeExtra || "").slice(0, 200) || undefined,
+        gen: { mode: String(b.mode || "standard"), size: String(b.size || ""), light: String(b.light || ""), negativeExtra: String(b.negativeExtra || "") },
         projectId
       }, { initiated_by: "user" }));
     }

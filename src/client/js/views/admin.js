@@ -36,6 +36,8 @@
     alerts_simulate: "告警巡检触发",
     music_adopt: "配乐挂接", music_candidates: "配乐候选生成", music_regenerate: "配乐重出",
     episode_driver_switch: "剧集驱动切换", llm_config_update: "LLM 档案更新", llm_node_switch: "LLM 承载节点切换", l2_gpu_yield: "助手 GPU 让路", llm_stop: "停止 LLM 让路",
+    llm_profile_add: "Agent LLM 档案登记", llm_profile_update: "Agent LLM 档案更新", llm_profile_remove: "Agent LLM 档案删除",
+    llm_profile_activate: "Agent 大脑切换", llm_profile_probe: "Agent LLM 探测",
     node_comfy_update: "节点渲染端点更新", node_probe: "节点探测",
     node_add: "登记节点", node_update: "节点信息更新", node_remove: "撤除节点",
     user_driver_switch: "用户默认算力切换",
@@ -65,6 +67,7 @@
     template: `
       <div class="v-admin">
         <div class="admin-tabs">
+          <button :class="{ on: tab === 'brain' }" @click="tab = 'brain'">🤖 Agent 助手 LLM</button>
           <button :class="{ on: tab === 'nodes' }" @click="tab = 'nodes'">🖥 算力节点</button>
           <button :class="{ on: tab === 'registry' }" @click="tab = 'registry'">⚙️ 引擎段位</button>
           <button :class="{ on: tab === 'templates' }" @click="tab = 'templates'">🧩 模板</button>
@@ -74,38 +77,79 @@
           <button :class="{ on: tab === 'public' }" @click="tab = 'public'; loadPubLedger()">🏛 公共科目</button>
         </div>
 
-        <!-- ═══ Tab 1 算力节点：机器卡片＋显存闸＋剧集渲染分配 ═══ -->
-        <template v-if="tab === 'nodes'">
-          <div class="hint">💡 节点＝一台干活的机器：既能跑「渲染」（ComfyUI 出图/出片／付费云 API），也能跑「LLM 大脑」（剧本理解 / 复审 / 助手）。大脑同一时刻只落在一台机器上；每部剧的渲染活可在下方单独指派。机器卡上的「承载引擎」即这台机实际在跑的渲染引擎。</div>
+        <!-- ═══ Tab 1 🤖 Agent 助手 LLM：大脑档案注册表（与渲染机器解耦，可增删配置） ═══ -->
+        <template v-if="tab === 'brain'">
+          <div class="hint">💡 Agent 助手的大脑＝一份可增删配置的 LLM 档案表：制片助手、AI 剧本、AI 审查、建议片都用「当前启用」的这套。加档案、删档案、换大脑都在这里，与渲染机器完全解耦；每份档案声明「运行位置」——指向某台渲染机＝占那台的显存（互斥闸生效），选云端/远程＝不占任何渲染机。</div>
 
-          <!-- 🧠 LLM 大脑（2026-11-22 统一配置面）：剧场 AI 能力＋制片助手共用 -->
           <div class="panel">
-            <div class="panel-title">🧠 LLM 大脑
-              <span class="weak">剧场 AI 能力（AI 剧本 / AI 审查 / 建议片）＋制片助手——同一份配置，配什么用什么</span>
-              <span class="badge badge-ok" v-if="nodesState.data && nodesState.data.llm.online">在线 · {{ nodesState.data.llm.model }}</span>
-              <span class="badge badge-warn" v-else-if="nodesState.data && nodesState.data.llm.base">离线（守护自动拉起中）</span>
-              <span class="badge badge-err" v-else-if="nodesState.data">未配置</span>
+            <div class="panel-title">🤖 LLM 档案注册表
+              <span class="badge badge-ok" v-if="brainState.data && brainState.data.llm.online">🟢 在线 · {{ brainState.data.llm.model || "已连接" }}</span>
+              <span class="badge badge-warn" v-else-if="brainState.data && (brainState.data.profiles || []).some(p => p.is_active)">🟡 离线</span>
+              <span class="badge badge-err" v-else-if="brainState.data">未配置（AI 能力走规则兜底）</span>
+              <button class="btn btn-ghost btn-sm" @click="brainState.showAdd = !brainState.showAdd">
+                {{ brainState.showAdd ? "收起" : "➕ 新增 LLM 档案" }}</button>
+              <button class="btn btn-ghost btn-sm" @click="loadBrain()" :aria-busy="brainState.loading">刷新</button>
             </div>
-            <div class="gate-warn" v-if="nodesState.data && !nodesState.data.llm.base">
-              ⚠️ LLM 未配置＝AI 能力全部规则兜底：AI 剧本落占位结构、AI 审查只走规则、助手无人话增强、建议片不可用。填下面端点保存即可启用。
-            </div>
-            <div class="row wrap" style="align-items:flex-end;gap:8px" v-if="nodesState.data">
-              <label class="weak">承载节点<br />
-                <select class="select" style="max-width:180px" :value="nodesState.data.llm_node" @change="switchLlmHost($event.target.value)">
-                  <option v-for="n in nodesState.data.nodes" :key="n.id" :value="n.id">{{ n.label }}</option>
+
+            <div class="row wrap" v-if="brainState.showAdd" style="align-items:flex-end;gap:8px">
+              <label class="weak">档案名称<br /><input class="input" v-model.trim="brainForm.label" placeholder="如 本机 Huihui35B / DeepSeek 云" style="max-width:210px" /></label>
+              <label class="weak">端点（OpenAI 兼容 /v1）<br /><input class="input" v-model.trim="brainForm.base" placeholder="http://127.0.0.1:8090 或 https://api.xxx.com/v1" style="max-width:300px" /></label>
+              <label class="weak">模型别名<br /><input class="input" v-model.trim="brainForm.model" placeholder="如 Huihui35B:vision / deepseek-chat" style="max-width:190px" /></label>
+              <label class="weak">密钥（云 API 才填）<br /><input class="input" type="password" v-model.trim="brainForm.key" placeholder="sk-…（可空）" style="max-width:160px" /></label>
+              <label class="weak">运行位置<br />
+                <select class="select" v-model="brainForm.node" style="max-width:200px">
+                  <option value="">☁️ 云端 / 远程（不占渲染机显存）</option>
+                  <option v-for="n in (nodesList || [])" :key="n.id" :value="n.id">🖥 {{ n.label }}（占该机显存）</option>
                 </select></label>
-              <label class="weak">端点（OpenAI 兼容 /v1）<br />
-                <input class="input" v-model.trim="llmHostForm.base" placeholder="http://127.0.0.1:8090" style="max-width:260px" /></label>
-              <label class="weak">模型别名<br />
-                <input class="input" v-model.trim="llmHostForm.model" placeholder="如 Huihui35B:vision" style="max-width:180px" /></label>
-              <label class="weak">自动拉起脚本<br />
-                <input class="input" v-model.trim="llmHostForm.bat" placeholder="E:\\MyLLM\\xxx.bat（可空＝不守护）" style="max-width:240px" /></label>
-              <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlmHost" @click="saveLlmHost">保存（热生效）</button>
+              <label class="weak">自动拉起脚本（本机才用）<br /><input class="input" v-model.trim="brainForm.bat" placeholder="E:\\MyLLM\\xxx.bat（可空＝不守护）" style="max-width:230px" /></label>
+              <button class="btn btn-sm btn-primary" :disabled="brainState.saving === 'add'" @click="addBrainProfile">登记</button>
             </div>
-            <div class="weak" style="margin-top:6px">
-              守护：掉线自动拉起脚本（45s 冷却，10 分钟内 ≤3 次，超限转人工告警）。档案跟节点走——各节点独立 LLM 档案，切换承载即用那台的配置；本面板改的是当前承载节点的档案。
+
+            <loading v-if="brainState.loading && !brainState.data"></loading>
+            <err-state v-else-if="brainState.err && !brainState.data" :err="brainState.err" :on-retry="loadBrain" compact></err-state>
+            <empty-state v-else-if="brainState.data && !(brainState.data.profiles || []).length" icon="🤖"
+              text="还没有 LLM 档案" sub="登记一份端点即可点亮 AI 能力（AI 剧本 / 复审 / 助手）"></empty-state>
+            <div class="list" v-else-if="brainState.data">
+              <div class="list-item" v-for="p in (brainState.data.profiles || [])" :key="p.id"
+                :style="p.is_active ? 'border-color:var(--ok,#2e7d32)' : ''">
+                <div class="row wrap">
+                  <button class="btn btn-sm" :class="p.is_active ? '' : 'btn-primary'" :disabled="p.is_active || brainState.saving === p.id"
+                    @click="activateBrainProfile(p)" :title="p.is_active ? '当前启用中' : '把 Agent 大脑切到这套档案'">
+                    {{ p.is_active ? "✓ 启用中" : "启用" }}</button>
+                  <input class="input" v-model.trim="p.label" style="max-width:190px" title="改名后点「保存」生效" />
+                  <span class="badge" :class="p.node ? 'badge-warn' : ''" :title="p.node ? 'LLM 物理跑在这台渲染机上，在线时占它的显存' : '不占任何渲染机显存'">
+                    {{ brainHostOf(p) }}</span>
+                  <span class="badge badge-ok" v-if="p.has_key">🔑 密钥已配置</span>
+                  <button class="btn btn-sm btn-danger" style="margin-left:auto" @click="removeBrainProfile(p)">删除</button>
+                </div>
+                <div class="row wrap" style="margin-top:6px;align-items:center">
+                  <span class="weak">端点</span>
+                  <input class="input" v-model.trim="p.base" style="max-width:300px" placeholder="http://127.0.0.1:8090" />
+                  <span class="weak">模型</span>
+                  <input class="input" v-model.trim="p.model" style="max-width:170px" placeholder="模型别名" />
+                  <span class="weak">拉起脚本</span>
+                  <input class="input" v-model.trim="p.bat" style="max-width:210px" placeholder="E:\\MyLLM\\xxx.bat（可空）" />
+                  <button class="btn btn-sm btn-primary" :disabled="brainState.saving === p.id" @click="saveBrainProfile(p)">保存</button>
+                  <button class="btn btn-ghost btn-sm" :disabled="brainState.probe[p.id] && brainState.probe[p.id].busy" @click="probeBrainProfile(p)">
+                    {{ brainState.probe[p.id] && brainState.probe[p.id].busy ? "探测中…" : "探测" }}</button>
+                </div>
+                <div class="card-sub weak" style="margin-top:4px">
+                  <span class="v-admin-dot stat st-ok" v-if="brainState.probe[p.id] && brainState.probe[p.id].done && brainState.probe[p.id].ok"><i></i>可达 · {{ brainState.probe[p.id].ms }}ms</span>
+                  <span class="v-admin-dot stat st-err" v-else-if="brainState.probe[p.id] && brainState.probe[p.id].done && !brainState.probe[p.id].ok"><i></i>不通 · {{ brainState.probe[p.id].detail }}</span>
+                  <span v-else>点「探测」测 /v1/models 连通；{{ p.node ? "该档案占用「" + brainHostOf(p) + "」的显存——那台机若开互斥闸，大脑在线时它的渲染会被挡" : "云端大脑不占渲染机显存，显存互斥闸对它不生效" }}。</span>
+                </div>
+              </div>
+            </div>
+            <div class="weak" style="margin-top:6px" v-if="brainState.data">
+              守护：本机档案掉线自动拉起脚本（45s 冷却，10 分钟内 ≤3 次，超限转人工告警）；云端档案不做进程守护。
+              未配置档案＝AI 能力全部规则兜底（AI 剧本落占位结构、AI 审查只走规则、助手无人话增强、建议片不可用）。
             </div>
           </div>
+        </template>
+
+        <!-- ═══ Tab 2 🖥 算力节点：渲染机器注册表＋分派（大脑档案在「Agent 助手 LLM」tab） ═══ -->
+        <template v-else-if="tab === 'nodes'">
+          <div class="hint">💡 节点＝一台干活的渲染机器：ComfyUI 出图/出片，或付费云 API。每台机器的「承载引擎」、谁用哪台（用户默认＋每部剧的分派）都在这一页；Agent 大脑的 LLM 档案不在这里——去「🤖 Agent 助手 LLM」页增删配置。</div>
 
           <div class="panel">
             <div class="panel-title">🖥 节点注册表
@@ -143,7 +187,7 @@
                 <span class="badge" :class="nd.kind === 'cloud' ? '' : 'badge-ok'">{{ nd.kind === 'cloud' ? '☁️ 付费云 API' : '🖥 渲染机' }}</span>
                 <label class="weak" v-if="nd.kind !== 'cloud'" style="white-space:nowrap" title="开启后：LLM 在线时该机的生图/拍摄任务被显存闸挡（16G 单卡机器才开）">
                   <input type="checkbox" v-model="nd.gpu_gate" @change="saveNodeInfo(nd)" /> 显存互斥闸</label>
-                <span class="badge badge-ok" v-if="nd.is_llm_host">🧠 LLM 承载中</span>
+                <span class="badge badge-ok" v-if="nd.is_llm_host" title="Agent 大脑的运行位置指向这台机器（在「Agent 助手 LLM」页配置）">🤖 大脑宿主</span>
                 <button class="btn btn-sm btn-danger" style="margin-left:auto" @click="removeNodeCard(nd)">撤节点</button>
               </div>
 
@@ -193,21 +237,7 @@
                   <span class="weak" v-else>点「探测」测连通；端点改动保存后即时生效（workers 下个任务读取）</span>
                 </div>
 
-                <div class="node-card-row">
-                  <span class="node-label">LLM 端点</span>
-                  <input class="input node-input" v-model.trim="nd.llm.base" placeholder="http://127.0.0.1:8090" />
-                </div>
-                <div class="node-card-row">
-                  <span class="node-label">模型别名</span>
-                  <input class="input node-input" v-model.trim="nd.llm.model" placeholder="模型别名" />
-                  <button class="btn btn-sm btn-primary" :disabled="nodesState.savingLlm === nd.id" @click="saveLlm(nd)">保存档案</button>
-                </div>
-
-                <div class="node-card-actions">
-                  <button class="btn btn-sm" v-if="!nd.is_llm_host && nd.llm && nd.llm.base" @click="switchLlmNode(nd)">让 LLM 大脑落在这台机器</button>
-                  <span class="weak" v-if="nd.is_llm_host">剧本理解 / 复审 / 助手都调用这台机器上的 LLM</span>
-                  <span class="weak" v-else-if="!(nd.llm && nd.llm.base)">这台机器还没配 LLM 档案，填好并保存后才能承接大脑</span>
-                </div>
+                <!-- LLM 档案已解耦到「Agent 助手 LLM」页：机器卡只管渲染拓扑 -->
 
                 <div class="node-card-row" v-if="enginesOf(nd.id)">
                   <span class="node-label">承载引擎</span>
@@ -215,10 +245,10 @@
                 </div>
 
                 <div class="gate-warn" v-if="nd.gpu_gate && nd.is_llm_host && gpuData && gpuData.llm && gpuData.llm.online">
-                  <div>⚠️ LLM 正跑在这台机器：独显被占用，本机生图/拍摄已被挡。</div>
+                  <div>⚠️ Agent 大脑正跑在这台机器：独显被占用，本机生图/拍摄已被挡。</div>
                   <div class="row wrap" style="margin-top:6px">
                     <button class="btn btn-sm btn-danger" @click="yieldGpu">停止 LLM 让路</button>
-                    <span class="weak">或把剧的渲染分配切到其它节点，绕开本机显存。</span>
+                    <span class="weak">或把大脑换到云端档案 / 把剧的渲染分配切到其它节点。</span>
                   </div>
                 </div>
               </template>
@@ -548,7 +578,7 @@
       </div>`,
     setup() {
       /* ---- Tab 状态 ---- */
-      const tab = Vue.ref("nodes");
+      const tab = Vue.ref("brain");
 
       /* ---- 引擎段位（tab 2） ---- */
       const probing = Vue.ref(false);
@@ -740,16 +770,7 @@
         } catch (e) { store.toast(T.humanErr(e).text, "err"); }
         finally { nodesState.savingEp = ""; }
       }
-      /* 保存指定节点的 LLM 档案（node 显式带上，避免误改当前承载节点的档案） */
-      async function saveLlm(nd) {
-        nodesState.savingLlm = nd.id;
-        try {
-          const r = await T.api.put("/nodes/llm", { node: nd.id, base: nd.llm.base, model: nd.llm.model });
-          store.toast(r && r.note ? r.note : "LLM 档案已保存");
-          await loadNodes();
-        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
-        finally { nodesState.savingLlm = ""; }
-      }
+      /* LLM 档案编辑已迁出（2026-11-22 大脑层解耦）→「🤖 Agent 助手 LLM」tab 的档案注册表 */
       async function saveComfy(nd) {
         nodesState.savingComfy = nd.id;
         try {
@@ -759,13 +780,6 @@
           await loadNodes();
         } catch (e) { store.toast(T.humanErr(e).text, "err"); }
         finally { nodesState.savingComfy = ""; }
-      }
-      async function switchLlmNode(nd) {
-        try {
-          await T.api.put("/nodes/llm-node", { node: nd.id });
-          store.toast("LLM 大脑已切到「" + nd.label + "」");
-          await loadNodes();
-        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
       }
       async function probeNode(nd) {
         const p = nodeProbe[nd.id] || (nodeProbe[nd.id] = { busy: false, done: false, ok: false, ms: 0, detail: "" });
@@ -780,6 +794,7 @@
       async function yieldGpu() {
         try { await store.stopLlm(); } catch (e) { /* store 已 toast 人话 */ }
         loadNodes().catch(() => {});
+        loadBrain().catch(() => {});
       }
 
       /* ---- 节点注册表 CRUD（2026-11-22 运维台化：加机器/撤机器/改信息不再改代码） ---- */
@@ -829,36 +844,68 @@
         finally { nodesState.savingUser = ""; }
       }
 
-      /* ---- 🧠 LLM 大脑（统一配置面）：改当前承载节点的档案＋切承载 ---- */
-      nodesState.savingLlmHost = false;
-      const llmHostForm = Vue.reactive({ base: "", model: "", bat: "" });
-      Vue.watch(() => nodesState.data, (d) => {
-        if (!d) return;
-        llmHostForm.base = (d.llm && d.llm.base) || "";
-        const host = (d.nodes || []).find(n => n.id === d.llm_node) || {};
-        llmHostForm.model = (host.llm && host.llm.model) || "";
-        llmHostForm.bat = (host.llm && host.llm.bat) || "";
-      });
-      async function saveLlmHost() {
-        if (!nodesState.data) return;
-        nodesState.savingLlmHost = true;
+      /* ---- 🤖 Agent 助手 LLM（2026-11-22 大脑层解耦）：档案注册表可增删配置，与渲染机器解耦 ---- */
+      const brainState = Vue.reactive({ data: null, loading: false, err: null, saving: "", showAdd: false, probe: {} });
+      const brainForm = Vue.reactive({ label: "", base: "", model: "", key: "", bat: "", node: "" });
+      async function loadBrain() {
+        brainState.loading = true; brainState.err = null;
+        try { brainState.data = await store.loadLlmProfiles(); }
+        catch (e) { brainState.err = e; }
+        finally { brainState.loading = false; }
+        return brainState.data;
+      }
+      /* 运行位置显示名：指向渲染机 → 节点名；null → 云端/远程 */
+      function brainHostOf(p) {
+        return p.node ? (p.node_label || p.node) : "云端 / 远程（不占渲染机显存）";
+      }
+      async function addBrainProfile() {
+        const f = brainForm;
+        if (!String(f.label || "").trim()) { store.toast("给档案起个名（如「本机 Huihui35B」「DeepSeek 云」）", "warn"); return; }
+        brainState.saving = "add";
         try {
-          const r = await T.api.put("/nodes/llm", {
-            node: nodesState.data.llm_node,
-            base: llmHostForm.base, model: llmHostForm.model, bat: llmHostForm.bat
+          await store.addLlmProfile({
+            label: f.label, base: f.base, model: f.model, key: f.key, bat: f.bat,
+            node: f.node || null
           });
-          store.toast((r && r.note) || "LLM 档案已保存（热生效）");
-          await loadNodes();
-        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
-        finally { nodesState.savingLlmHost = false; }
+          Object.assign(f, { label: "", base: "", model: "", key: "", bat: "", node: "" });
+          brainState.showAdd = false;
+          await loadBrain();
+        } catch (e) { /* store 已 toast 人话 */ }
+        finally { brainState.saving = ""; }
       }
-      async function switchLlmHost(node) {
+      async function saveBrainProfile(p) {
+        brainState.saving = p.id;
         try {
-          await T.api.put("/nodes/llm-node", { node });
-          store.toast("LLM 大脑已切到「" + nodeLabelOf(node) + "」");
-          await loadNodes();
-        } catch (e) { store.toast(T.humanErr(e).text, "err"); }
+          await store.updateLlmProfile(p.id, { label: p.label, base: p.base, model: p.model, bat: p.bat, node: p.node || null });
+          await loadBrain();
+          loadNodes().catch(() => {}); // 运行位置变了 → 节点卡徽章跟着刷
+        } catch (e) { /* store 已 toast；失败回读还原 */ loadBrain().catch(() => {}); }
+        finally { brainState.saving = ""; }
       }
+      async function removeBrainProfile(p) {
+        try {
+          const r = await store.removeLlmProfile(p.id, p.label, false);
+          if (r) await loadBrain();
+        } catch (e) { /* store 已 toast（含确认取消） */ }
+      }
+      async function activateBrainProfile(p) {
+        try {
+          await store.activateLlmProfile(p.id);
+          await loadBrain();
+          loadNodes().catch(() => {}); // 节点卡「大脑宿主」徽章跟随宿主机变化
+        } catch (e) { /* store 已 toast */ }
+      }
+      async function probeBrainProfile(p) {
+        const pr = brainState.probe[p.id] || (brainState.probe[p.id] = { busy: false, done: false, ok: false, ms: 0, detail: "" });
+        if (pr.busy) return;
+        pr.busy = true; pr.done = false;
+        try {
+          const r = await store.probeLlmProfile(p.id);
+          pr.ok = !!r.ok; pr.ms = r.ms || 0; pr.detail = r.detail || ""; pr.done = true;
+        } finally { pr.busy = false; }
+      }
+      function clearBrainProbe(p) { delete brainState.probe[p.id]; }
+
       async function saveNodeInfo(nd) {
         nodesState.savingInfo = nd.id;
         try {
@@ -990,6 +1037,7 @@
       /* ---- Tab 懒加载＋告警页 10s 轮询 ---- */
       let alertsTimer = null;
       Vue.watch(tab, (t) => {
+        if (t === "brain" && !brainState.data) loadBrain().catch(() => {});
         if (t === "registry" && !store.registry.data) reload();
         if (t === "templates" && !templates.value) loadTemplates();
         if (t === "audit" && !store.registry.audit) loadAuditRows();
@@ -1000,7 +1048,7 @@
         } else if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
       }, { immediate: true });
 
-      Vue.onMounted(() => { loadNodes().catch(() => {}); });
+      Vue.onMounted(() => { loadNodes().catch(() => {}); loadBrain().catch(() => {}); });
       Vue.onUnmounted(() => { if (alertsTimer) clearInterval(alertsTimer); });
 
       return {
@@ -1019,10 +1067,9 @@
         pubLedger, pubLoading, loadPubLedger,
         templates, templatesLoading, loadTemplates, tplEdit, tplSaving, editTemplate, saveTemplate, toggleTemplate, deleteTemplate,
         invites, invitesLoading, loadInvites, invForm, newInvite, revokeInvite, copyCode,
-        nodesState, nodeProbe, gpuData, loadNodes, switchDriver, saveLlm, saveComfy, switchLlmNode, probeNode, yieldGpu, nodeLabelOf, enginesOf,
+        nodesState, nodeProbe, gpuData, loadNodes, switchDriver, saveComfy, probeNode, yieldGpu, nodeLabelOf, enginesOf,
         nodeForm, addNode, saveNodeInfo, saveNodeApi, saveUserDriver, removeNodeCard, nodeGateOf,
-        llmHostForm, saveLlmHost, switchLlmHost,
-        nodeForm, addNode, saveNodeInfo, removeNodeCard, nodeGateOf,
+        brainState, brainForm, loadBrain, brainHostOf, addBrainProfile, saveBrainProfile, removeBrainProfile, activateBrainProfile, probeBrainProfile, clearBrainProbe,
         showAddEngine, addingEngine, engineForm, lanesList, nodesList, addEngineRow, removeEngineRow, rebindEngineRow,
         tierOptions, tierLabel, actionCn,
         hs: s => T.sanitize(s),

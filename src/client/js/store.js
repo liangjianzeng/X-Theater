@@ -351,6 +351,50 @@
       return r;
     } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
   };
+  /* ---- Agent 助手 LLM 档案（2026-11-22 大脑层解耦：档案可增删配置，与渲染机器解耦） ---- */
+  store.loadLlmProfiles = async function () {
+    try { return await T.api.get("/llm-profiles"); }
+    catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.addLlmProfile = async function (payload) {
+    try {
+      const r = await T.api.post("/llm-profiles", payload);
+      store.toast((r && r.note) || "LLM 档案已登记");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.updateLlmProfile = async function (id, payload) {
+    try {
+      const r = await T.api.put("/llm-profiles/" + encodeURIComponent(id), payload);
+      store.toast((r && r.note) || "LLM 档案已保存");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.removeLlmProfile = async function (id, label, confirmed) {
+    if (!confirmed) {
+      const ok = await store.confirm({
+        title: "删除 LLM 档案「" + (label || id) + "」？",
+        body: "正在被 Agent 助手使用的档案会被拦下；删除后随时可以重新登记。"
+      });
+      if (!ok) return null;
+    }
+    try {
+      const r = await T.api.post("/llm-profiles/" + encodeURIComponent(id) + "/remove", {});
+      store.toast((r && r.note) || "LLM 档案已删除");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.activateLlmProfile = async function (id) {
+    try {
+      const r = await T.api.post("/llm-profiles/activate", { id });
+      store.toast((r && r.note) || "Agent 大脑已切换");
+      return r;
+    } catch (e) { store.toast(T.humanErr(e).text, "err"); throw e; }
+  };
+  store.probeLlmProfile = async function (id) {
+    try { return await T.api.post("/llm-profiles/" + encodeURIComponent(id) + "/probe", {}); }
+    catch (e) { return { ok: false, detail: T.humanErr(e).text }; }
+  };
   store.probeRegistry = async function () {
     try {
       const r = await T.api.post("/admin/registry/endpoint", {});

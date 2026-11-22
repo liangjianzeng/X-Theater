@@ -264,7 +264,12 @@
         const ep = eps.find(e => e.id === props.epId);
         return (ep && ep.driver) || "local";
       });
-      const gpuBusy = computed(() => epDriver.value === "local" && !!(store.gpu && store.gpu.data && store.gpu.data.gpu_busy));
+      /* GPU 冲突提示：本集渲染节点＝大脑宿主机且大脑在线（云端大脑不占任何渲染机，不提示） */
+      const gpuBusy = computed(() => {
+        const g = store.gpu && store.gpu.data;
+        if (!g || !g.llm || !g.llm.online) return false;
+        return epDriver.value === (g.llm.node || "local");
+      });
 
       function typeLabel(t) {
         const m = TYPE_META[t];

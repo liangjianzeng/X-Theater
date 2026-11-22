@@ -5,12 +5,13 @@
  * 节点＝一台干活的机器（渲染 ComfyUI ＋ 可选 LLM 档案），state.nodes 是唯一拓扑事实源：
  *   - 可增删改（本模块 CRUD；不再写死 local/dgx 两台，加节点/撤节点运维台直接操作）
  *   - episode.driver＝节点 id（任意已登记节点），引擎改道由注册表 lane→node 绑定派生（dag/engine.js）
- *   - state.llm_node＝当前 LLM 承载节点（index.js cfg.llm getter 动态解析，热切换不重启）
+ *   - Agent 大脑＝llm_profiles[llm_active]（api/llmprofiles.js 增删切换）；llm_node 仅作存量迁移源
  *   - node.gpu_gate＝该机"LLM 与渲染互斥"（16G 单卡）；大卡节点 false 不受显存闸
  * 节点真实化：workers 经 index.js cfg.laneBase(lane)→注册表→节点档案取端点——改档案即热生效。
  * 首启种子（local/dgx）只为零配置开机，之后一切以 state 为准。写操作一律 ops 角色＋审计。
  */
 
+const { ensureLlmProfiles, llmHostNode } = require("../core/store");
 const http = require("http");
 
 /* 首启种子（仅 state.nodes 缺失时用；用户删过就不再回种）
@@ -86,11 +87,12 @@ function register(router, ctx) {
     return Object.keys(reg).filter((k) => reg[k] && reg[k].node === nodeId);
   }
 
-  // 节点档案种子：启动时补齐并落盘一次（幂等）；GET 之后保持只读
+  // 节点档案种子：启动时补齐并落盘一次（幂等）；随后把节点上的 LLM 档案迁入大脑注册表（一次性）
   ensureNodes(store.get());
+  ensureLlmProfiles(store.get());
   store.commit();
 
-  // GET /api/nodes — 节点注册表＋在线态＋每集驱动（运维设置数据源，只读）
+  // GET /api/nodes — 算力节点注册表＋每集/每用户分派（只管渲染拓扑；LLM 大脑档案见 /api/llm-profiles）
   router.add(
     "GET",
     "/api/nodes",
@@ -98,10 +100,10 @@ function register(router, ctx) {
       if (!auth) throw { code: "UNAUTHORIZED", message: "需要登录" };
       const st = store.get();
       const nodes = ensureNodes(st); // 内存兜底补齐（正常已在启动时落盘）
-      const llm = (ctx.llm && ctx.llm.enabled()) ? (ctx.llm.cached() || {}) : { configured: false, llmOnline: false };
-      // 在线探测：llm-gw 监视缓存（LLM）＋nodes 各 comfy 缓存（此处给 base，前端可按需调 POST /api/nodes/:id/probe）
+      // Agent 大脑宿主机（llm_profiles[llm_active].node）：节点卡「显存互斥」提示用
+      const llm_host_node = llmHostNode(st);
       return router.json(res, 200, {
-        llm_node: st.llm_node,
+        llm_host_node,
         nodes: Object.keys(nodes).map((id) => ({
           id,
           label: nodes[id].label,
@@ -117,16 +119,9 @@ function register(router, ctx) {
                 price_cents: Number(nodes[id].api.price_cents) || 0
               }
             : null,
-          llm: nodes[id].llm,
           engines: enginesOn(id),
-          comfy_online: id === st.llm_node ? !!(llm.comfy && llm.comfy.online) : null,
-          is_llm_host: st.llm_node === id
+          is_llm_host: llm_host_node === id
         })),
-        llm: {
-          online: !!llm.llmOnline,
-          model: llm.llmModel || (nodes[st.llm_node] && nodes[st.llm_node].llm.model) || null,
-          base: nodes[st.llm_node] && nodes[st.llm_node].llm.base
-        },
         // 用户默认算力（2026-11-22 用户级路由）：账户→默认节点，建集时落集
         users: Object.keys(st.users || {}).map((uid) => ({
           uid,
@@ -212,7 +207,7 @@ function register(router, ctx) {
       const node = nodes[params.id];
       if (!node) throw { code: "NOT_FOUND", message: "节点不存在: " + params.id };
       if (Object.keys(nodes).length <= 1) throw { code: "LAST_NODE", status: 409, message: "至少保留一个节点" };
-      if (st.llm_node === node.id) throw { code: "NODE_IS_LLM_HOST", status: 409, message: "该节点正承载 LLM——先在「算力节点」切换 LLM 承载节点" };
+      if (llmHostNode(st) === node.id) throw { code: "NODE_IS_LLM_HOST", status: 409, message: "Agent 大脑正落在这台机器上（LLM 档案运行位置指向它）——先去「Agent 助手 LLM」把档案运行位置改到别处或云端" };
       const engines = enginesOn(node.id);
       if (engines.length) throw { code: "NODE_HAS_ENGINES", status: 409, message: "该节点仍绑定引擎（" + engines.join("、") + "）——先在「引擎段位」改绑/删除", engines };
       const eps = Object.keys(st.episodes || {}).filter((k) => st.episodes[k].driver === node.id);
@@ -259,56 +254,10 @@ function register(router, ctx) {
     { auth: true }
   );
 
-  // PUT /api/nodes/llm {node?, base, model, bat?} — 改指定节点的 LLM 档案（node 缺省＝当前承载节点，向后兼容；
-  //   热生效：cfg.llm getter 每次调用动态读 nodes[llm_node]，非承载节点的档案在切换承载后生效）
-  // 注意：本路由与 llm-node 是单段静态 PUT，必须先于通用 PUT /api/nodes/:id 注册（否则被 :id 吞掉）
-  router.add(
-    "PUT",
-    "/api/nodes/llm",
-    (req, res, body, params, auth) => {
-      requireOps(auth);
-      const st = store.get();
-      const nodes = ensureNodes(st);
-      const b = body || {};
-      const nodeId = b.node != null && nodes[b.node] ? b.node : st.llm_node;
-      const node = nodes[nodeId];
-      if (!node) throw { code: "NOT_FOUND", message: "节点未配置: " + nodeId };
-      if (b.base != null) node.llm.base = String(b.base).trim().slice(0, 120);
-      if (b.model != null) node.llm.model = String(b.model).trim().slice(0, 60);
-      if (b.bat != null) node.llm.bat = String(b.bat).trim().slice(0, 160);
-      store.commit();
-      audit(auth, "llm_config_update", node.id, { base: node.llm.base, model: node.llm.model });
-      const hosting = st.llm_node === node.id;
-      return router.json(res, 200, {
-        node: node.id, llm: node.llm,
-        note: hosting
-          ? "热生效（llm-gw 每次调用动态读取）"
-          : "已保存到「" + node.label + "」档案（该机当前不承载 LLM，切换承载后生效）"
-      });
-    },
-    { auth: true }
-  );
+  // LLM 档案路由已迁出（2026-11-22 大脑层解耦）：/api/llm-profiles 增删改/切换/探测（api/llmprofiles.js）。
+  // 通用 PUT /api/nodes/:id 放在静态路由之后注册即可，无单段静态 PUT 竞争。
 
-  // PUT /api/nodes/llm-node {node} — 切换 LLM 承载节点（任意已登记节点，ops）
-  router.add(
-    "PUT",
-    "/api/nodes/llm-node",
-    (req, res, body, params, auth) => {
-      requireOps(auth);
-      const st = store.get();
-      const nodes = ensureNodes(st);
-      const node = (body || {}).node;
-      if (!nodes[node]) throw { code: "BAD_REQUEST", message: "未知节点: " + node };
-      st.llm_node = node;
-      store.commit();
-      audit(auth, "llm_node_switch", node);
-      return router.json(res, 200, { llm_node: node, llm: nodes[node].llm, note: "LLM 将按「" + nodes[node].label + "」档案调用（热生效）" });
-    },
-    { auth: true }
-  );
-
-  // PUT /api/nodes/:id {label?,gpu_gate?,api?} — 节点信息编辑（端点走 :id/comfy、LLM 档案走 /llm）。
-  // 通用 :id 路由放在静态 PUT（llm/llm-node）之后注册，避免单段路径被 :id 吞掉。
+  // PUT /api/nodes/:id {label?,gpu_gate?,api?} — 节点信息编辑（端点走 :id/comfy）。
   router.add(
     "PUT",
     "/api/nodes/:id",
