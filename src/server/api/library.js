@@ -486,7 +486,7 @@ function register(router, ctx) {
     const projectId = b.projectId ? String(b.projectId) : null;
     if (projectId && !(st.projects || {})[projectId]) throw { code: "NOT_FOUND", message: "项目不存在: " + projectId };
     const jobs = [];
-    const count = Math.max(1, Math.min(4, Number(b.count) || 2));
+    const count = Math.max(1, Math.min(4, Number(b.count) || 1));
     for (let i = 0; i < count; i++) {
       jobs.push(engine.enqueue("img_free", {
         type: ["establishing", "empty", "prop", "poster", "mood", "mv"].indexOf(b.type) >= 0 ? b.type : "mood",
