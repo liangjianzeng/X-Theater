@@ -18,6 +18,7 @@ const llmMod = require("../llm/llm");
 // 本机 Comfy lane（img5060 全部任务＋video）：显存与 llm-gw 互斥（img_free=素材中心自由生图，施工 B1）
 const LOCAL_GPU_TYPES = ["c1plan", "casting", "storyboard", "storyboard_char", "video", "img_free"];
 function llmBlocked(cfg) {
+  if (cfg && cfg.llmBlockedOverride != null) return !!cfg.llmBlockedOverride; // 自检确定性钩子
   try { return !!(llmMod && llmMod.blockedByLocalLLM && cfg && llmMod.blockedByLocalLLM(cfg)); } catch (e2) { return false; }
 }
 
@@ -139,6 +140,43 @@ function createEngine({ store, bus, cfg }) {
       for (const l of Object.keys(DEFAULT_LANE_NODE)) {
         if (familyOf(l) === family && DEFAULT_LANE_NODE[l] === nodeId) return l;
       }
+    }
+    return null;
+  }
+
+  /** 算力池解析（2026-11-22 用户裁决）：按族找第一个可用节点的车道。
+   *  候选序：集指定 → 发起人默认算力（users[uid].driver）→ 云 API 节点（endpoint 已配）→ 远端 comfy → 本机 → 其余登记节点。
+   *  可用＝在册＋同族车道有绑定＋gpu_gate 不挡（LLM 占卡的本机自动跳过）。找不到＝null（调用方收口）。 */
+  function poolPick(type, opts, st) {
+    const family = familyOf(laneFor(type, opts));
+    if (!family) return null;
+    const busyGate = llmBlocked(cfg);
+    const nodes = st.nodes || {};
+    const usable = function (id) {
+      if (!id || !nodes[id]) return null;
+      const laneT = laneBoundTo(family, id);
+      if (!laneT) return null;
+      const n = nodes[id];
+      if (busyGate && n.gpu_gate && st.llm_node === id && LOCAL_GPU_TYPES.indexOf(type) >= 0) return null;
+      return laneT;
+    };
+    const cand = [];
+    const ep = epOf(opts && opts.episodeId) || ((opts && opts.episodeId) ? null : null);
+    const epDrv = ep && ep.driver && nodes[ep.driver] ? ep.driver : null;
+    if (epDrv) cand.push(epDrv);
+    const uid = opts && opts.initiated_by;
+    const u = uid && (st.users || {})[uid];
+    if (u && u.driver && nodes[u.driver] && cand.indexOf(u.driver) < 0) cand.push(u.driver);
+    Object.keys(nodes).forEach(function (id) {
+      if (cand.indexOf(id) >= 0) return;
+      const n = nodes[id];
+      if (n.kind === "cloud") { if (((n.api || {}).endpoint)) cand.push(id); } // 云 API 没设置 → 不计入池
+      else if (id !== "local") cand.push(id); // 远端 comfy 先于本机
+    });
+    if (cand.indexOf("local") < 0 && nodes.local) cand.push("local");
+    for (const id of cand) {
+      const laneT = usable(id);
+      if (laneT) return { lane: laneT, node: id };
     }
     return null;
   }
@@ -386,53 +424,38 @@ function createEngine({ store, bus, cfg }) {
       // 剧集驱动节点路由（2026-11-22 数据驱动化）：episode.driver＝算力节点 id（state.nodes），
       // img/video 改道目标＝该节点绑定的同族车道（注册表 lane→node）——加节点/改绑定/删节点不再改代码。
       // driver 指向已不存在的节点（如节点被删后遗留）→ 回退首个登记节点（不写死 local，离开 5060 Ti 也能活）。
-      const epForDriver = epOf(opts.episodeId) || (payload && payload.episodeId ? epOf(payload.episodeId) : null);
-      const driver = epForDriver && (st.nodes || {})[epForDriver.driver]
-        ? epForDriver.driver
-        : Object.keys(st.nodes || {})[0] || "local";
+      /* ---------- 算力资源池（2026-11-22 用户裁决）：生图/音乐/视频/LLM 都是池资源 ----------
+         候选序：集指定节点 → 发起人默认算力 → 云 API 节点（endpoint 未配置不计）→ 远端 comfy → 本机 → 其余登记节点。
+         可用＝节点在册＋该族车道有绑定＋gpu_gate 不挡（LLM 占卡的本机被跳过，自动找下一个激活可用的）。
+         tier:high（H3 专用引擎工作流）保持固定车道不漂移。全空才收口一句（不点名硬件、不教绕路）。 */
       let lane = laneFor(type, opts);
-      if (DRIVER_ROUTABLE.indexOf(type) >= 0) {
-        const target = laneBoundTo(familyOf(lane), driver);
-        if (target) {
-          lane = target;
-        } else if (laneBoundNode(lane) !== driver) {
-          throw {
-            code: "NODE_NO_LANE",
-            message: "节点「" + driver + "」未绑定该类引擎车道——去运维台「引擎段位」给该节点登记或改绑一个同族引擎，或把本集驱动切回有引擎的节点"
-          };
+      if (DRIVER_ROUTABLE.indexOf(type) >= 0 && !(opts && opts.tier === "high")) {
+        const pick = poolPick(type, opts, st);
+        if (pick) {
+          lane = pick.lane;
+        } else {
+          const epDrv = epOf(opts.episodeId) || (payload && payload.episodeId ? epOf(payload.episodeId) : null);
+          const explicit = epDrv && (st.nodes || {})[epDrv.driver] ? epDrv.driver : null;
+          if (explicit && !laneBoundTo(familyOf(laneFor(type, opts)), explicit)) {
+            throw { code: "NODE_NO_LANE", message: "节点「" + ((st.nodes || {})[explicit] || {}).label + "」还没绑定这类引擎——去运维台「引擎段位」改绑，或把本集驱动切到有引擎的节点。" };
+          }
+          const busy = llmBlocked(cfg);
+          throw { code: "POOL_EMPTY", message: busy
+            ? "算力池暂时没有可用的渲染资源（本机 LLM 占卡中，其它节点未激活或未绑定引擎）。可在左下角 GPU 徽章「让路」后重试，或去运维台激活别的节点。"
+            : "算力池暂时没有可用的渲染资源——去运维台「引擎段位」给节点绑定引擎车道。" };
         }
       }
-      // 显存互斥硬闸（2026-11-21 引入；2026-11-22 数据驱动化）：车道归属节点开启 gpu_gate
-      // 且 LLM 正承载在同一节点 → 拒绝入队（16G 单卡装不下双家；DGX 等大卡节点 gpu_gate=false 不受闸）。
-      const laneNode = laneBoundNode(lane);
+      // 防御闸（池外路径兜底）：车道归属节点开 gpu_gate 且 LLM 承载同节点 → 拒绝
+      const laneNode0 = laneBoundNode(lane);
       if (
-        laneNode &&
-        st.llm_node === laneNode &&
-        ((st.nodes || {})[laneNode] || {}).gpu_gate &&
+        laneNode0 &&
+        st.llm_node === laneNode0 &&
+        ((st.nodes || {})[laneNode0] || {}).gpu_gate &&
         LOCAL_GPU_TYPES.indexOf(type) >= 0 &&
         llmBlocked(cfg)
       ) {
-        throw { code: "GPU_BUSY", message: "本机 LLM 正占用独显（约 14.4GB），本机生图/拍摄装不下——请在左下角 GPU 徽章「让路」停掉 LLM 后重试，或去运维台把本集驱动切到别的节点。" };
+        throw { code: "GPU_BUSY", message: "本机渲染资源被 LLM 占用中，算力池暂无其它可用节点——可在左下角 GPU 徽章「让路」后重试。" };
       }
-      const ep = epOf(opts.episodeId);
-      if (ep && ep.paused) {
-        const err = { code: "BUDGET", message: "预算护栏已触发，该集任务暂停（需运营处理）" };
-        throw err;
-      }
-      const job = {
-        id: util.uid("job"),
-        type,
-        lane,
-        status: "queued",
-        episodeId: opts.episodeId || null,
-        // 域归属（S3-6）：经 episode 反查（账本/事件/SSE 域过滤的租户维度；episodeId 是全任务公共键）
-        tid: (epOf(opts.episodeId || (payload && payload.episodeId) || null) || {}).tenantId || null,
-        payload: payload || {},
-        initiated_by: opts.initiated_by || "user",
-        free: !!opts.free,
-        attempts: 0,
-        at: util.now()
-      };
       jobs.set(job.id, job);
       logJob(job, "queued");
       laneOf(lane).queue.push(job.id);
