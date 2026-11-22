@@ -51,6 +51,14 @@
         if (d && d.type === "approval_request" && d.approval) {
           return orig.call(store, Object.assign({ type: "approval_new" }, T.sanitizeDeep(d.approval)));
         }
+        if (d && d.type === "msg_card" && d.card) {
+          /* 顾问卡挂到最新一条助手气泡（流式文本已落地，卡随后到） */
+          const lst = store.l2.msgs;
+          for (let i = lst.length - 1; i >= 0; i--) {
+            if (lst[i].me === 0 && !lst[i].card) { lst[i].card = T.sanitizeDeep(d.card); break; }
+          }
+          return;
+        }
         if (d && d.type === "msg_delta" && d.t == null && typeof d.text === "string") {
           orig.call(store, { type: "msg_delta", t: d.text });
           if (d.done) {
@@ -312,7 +320,8 @@
           ts: m && m.ts,
           sig: (m && m.sig) || null,
           runtime: (m && m.runtime) || null,
-          denied: !!(m && m.denied)
+          denied: !!(m && m.denied),
+          card: (m && m.card) ? T.sanitizeDeep(m.card) : null
         }));
         let dropKeep = false;
         if (keep) {
@@ -427,12 +436,28 @@
         finally { busyId.value = ""; }
       }
 
+      /* ---------- 顾问卡交互（2026-11-22）：选项点了就走既有通路 ----------
+         send＝把那句话发进会话（interpret→gate→审批全治理链照走，无旁路）；
+         href＝hash 路由跳转（直达卡流页/成本页/运维台）；tab＝助手栏内切页。
+         卡是一次性的：点过即收起，防重复触发；提问卡不嵌输入框，用户在主输入框直接答。
+         「点过」记在组件级 Set（消息签名），8s 全量合并重建消息数组也不会复活。 */
+      const usedCards = new Set();
+      function cardKey(m) { return (m && m.ts || 0) + ":" + String((m && m.t) || "").slice(0, 16); }
+      function isUsed(m) { return usedCards.has(cardKey(m)); }
+      function pickOpt(m, o) {
+        if (!m || !m.card || !o) return;
+        usedCards.add(cardKey(m));
+        if (o.tab) { tab.value = String(o.tab); return; }
+        if (o.href) { global.location.hash = String(o.href); return; }
+        if (o.send) { send(String(o.send)); return; }
+      }
+
       return {
         store, L, tab, draft, connecting, busyId, srvBroken, rootEl, bodyEl, onEnter, autoGrow, boundEp, clearCtx, menuOpen, histOpen, histList, openHist, loadSession, newSession, copyMsg, histSnip, histTs,
         CHIPS, open, toggleFab, closeRail, isMobile,
         connect, send, sseOff, budgetPct, budgetOver,
         pendingCount, apvSorted, msgCls, toolTxt, itemCls, apvStatus, ttlTxt,
-        canDecide, estCents, estTime, decide,
+        canDecide, estCents, estTime, decide, pickOpt, isUsed,
         fmtArgsStatic: fmtArgs,
         clean: T.sanitize, rel: T.relTime
       };
@@ -482,6 +507,12 @@
                 sub="问进度、问成本、重拍某镜、给某场配配乐，都能开口。"></empty-state>
               <div v-for="(m, i) in L.msgs" :key="i" class="v-copilot-msg" :class="msgCls(m)">
                 <div class="v-copilot-txt">{{ m.t }}<i class="v-copilot-caret" v-if="m.streaming">▍</i></div>
+                <!-- 顾问卡：选项（点了执行/跳转）／提问（主输入框直接答）；一次性，点过即收 -->
+                <div class="v-copilot-mcard" v-if="m.card && !isUsed(m)">
+                  <div class="v-copilot-mcard-q" v-if="m.card.question">❓ {{ m.card.question }}</div>
+                  <button v-for="(o, j) in (m.card.options || [])" :key="j" class="v-copilot-mopt"
+                    @click="pickOpt(m, o)">{{ o.label }}<span class="v-copilot-mopt-hint" v-if="o.hint"> · {{ o.hint }}</span></button>
+                </div>
                 <div class="v-copilot-meta" v-if="m.sig || m.runtime || m.ts">
                   <span class="badge" v-if="m.sig">{{ clean(m.sig) }}</span>
                   <span class="badge" v-if="m.runtime">{{ clean(m.runtime) }}</span>

@@ -198,9 +198,10 @@ ask 卡是长任务链的钩子。已通链路：
 | 芯片贴场景推导 | ✅ | copilot.js CHIPS computed | 未绑/绑 local+busy/绑 dgx 三态 |
 | 会话感知 stateSummary＋切集换会话 | ✅ | llmintent.js·copilot.js | 待拍板卡行已带中文名 |
 | GPU 徽章＋开机互斥知情提示 | ✅ | app.js·flow.js·adapter gpuNote | 中性文案不露型号 |
-| **顾问卡 v1（choices/ask/href/tab）** | 🔨 进行中 | l2/advisor.js·adapter say(card)·copilot msg_card | 代码已写未验证未提交 |
-| **顾问话术（replyFor/llmReply 三段式）** | 🔨 进行中 | adapter.js·llmintent.js | 同上 |
-| query_cards 富化（label/summary/依赖链） | 🔨 进行中 | tools.js·governance cardDigest | 同上 |
+| **顾问卡 v1（choices/ask/href/tab）** | ✅ | l2/advisor.js·adapter say(card)·copilot msg_card | 真机闭环：芯片→三段式回执→点选项跳转→一次性收起（合并不复活）；selfcheck 141/141 |
+| **顾问话术（replyFor/llmReply 三段式）** | ✅ | adapter.js·llmintent.js TOOL_ADVICE | 现状/评估/推荐，用户面不露 ID（真机验证） |
+| query_cards 富化（label/summary/依赖链） | ✅ | tools.js·governance cardDigest | 卡摘要入回执与选项 hint |
+| 顾问卡回归用例 | ✅ | test/selfcheck/l2.js | advisor 形状＋清洗面（javascript:/越权键位/无动作选项） |
 | 主动性 hint | ⬜ 未开工 | 规划 §3.6 | P2 |
 | C2-C8 节点感知深化 | ⬜ 未开工 | 规划 §2 矩阵「建议/交互」列 | P2 |
 | 会话记忆/项目事实摘要 | ⬜ 未开工 | 规划 §3.6 | P2 |

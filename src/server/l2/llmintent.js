@@ -38,7 +38,7 @@ function stateSummary(ctx, session) {
   }).join("、") || "无"));
   const pendingCards = Object.keys(st.cards || {}).map(function (k) { return st.cards[k]; })
     .filter(function (c) { return c.status === "pending" && String(c.episodeId) === String(epId); });
-  lines.push("待拍板卡：" + (pendingCards.map(function (c) { return c.type + "(" + c.id + ")"; }).join("、") || "无"));
+  lines.push("待拍板卡：" + (pendingCards.map(function (c) { return c.type + "·" + (governance.cardLabel(c.type) || "") + "(" + c.id + ")"; }).join("、") || "无"));
   lines.push("本集驱动：" + ((ep.driver === "dgx") ? "DGX 节点（生图/视频走远程，不占本机显存，LLM 可常驻）" : "本机 5060 Ti（与本机 LLM 互斥；可在运维台切 DGX）"));
   const chips = [];
   return lines.join("\n");
@@ -224,18 +224,29 @@ async function llmParse(text, chips, ctx, session) {
   return toIntent(ctx, session, out, epId, text);
 }
 
-/** LLM 人话回执（成功后；失败 → 回退 replyFor 模板） */
+/* 回执推荐视角（按工具注入；与 advisor.js 选项卡同向，话术不与卡片重复罗列） */
+const TOOL_ADVICE = {
+  query_cards: "挑最该先拍板的那张（依赖顺序 C1故事方向→C2S试妆试镜→C2演员定妆→C3演员表锁定→C4分镜画面→C5样片审看→C6开机报价→C7灰区批复→C9配乐→C8交付），说清下游什么在等它。",
+  query_progress: "指出卡点（排队/待复审/待拍板卡），给最短推进路径。",
+  query_cost: "对照预算判断余量，花得多就点出花在哪。",
+  query_gpu: "解释谁占着谁，给解锁选项（运维台切 DGX／停 LLM 让路），助手绝不代停。",
+  query_scenes: "点出最薄弱的一场，给一句改进方向。",
+  query_music: "说清哪些场还没挂音轨。"
+};
+
+/** LLM 人话回执（成功后；失败 → 回退 replyFor 模板）
+    顾问式三段：现状（中文名，不露 ID）→ 评估（卡在哪/影响什么）→ 推荐（下一步，选项卡承接动作）。 */
 async function llmReply(tool, args, r, ctx, session, fallbackText) {
   if (!ctx.llm || typeof ctx.llm.chat !== "function" || !ctx.llm.enabled()) return fallbackText;
   const res = r.result || {};
-  const sys = "你是剧场 Studio 的制片组助手。用一句话向制片人汇报刚办完的事，用大白话、带关键数字，不要客套。这是系统记录的真实结果，不许编造别的数字。";
-  const usr = "用户请求：工具 " + tool + "，参数 " + JSON.stringify(args) + "\n执行结果：" + JSON.stringify(res).slice(0, 600);
+  const sys = "你是剧场 Studio 的制片组助手——制片顾问，不是统计播报员。汇报连成一段大白话（≤150 字）：①现状，对象一律用中文名（《剧名》/卡类型中文名/场次名），绝不露 ep_/card_/pj_ 这类编号；②评估，这个结果意味着什么、卡在哪、影响下游什么；③推荐，给一条明确的下一步，可执行的动作会以选项卡出现在消息下方，话术点一句「我给你几个选项」即可，不必罗列步骤。只用执行结果里的真实数字与名称，禁止编造。";
+  const usr = "用户请求：工具 " + tool + "，参数 " + JSON.stringify(args).slice(0, 200) + "\n执行结果：" + JSON.stringify(res).slice(0, 900) + (TOOL_ADVICE[tool] ? "\n推荐视角：" + TOOL_ADVICE[tool] : "");
   const out = await ctx.llm.chat(
     [{ role: "system", content: sys }, { role: "user", content: usr }],
-    { temperature: 0.4, maxTokens: 160, timeoutMs: 15000 }
+    { temperature: 0.4, maxTokens: 280, timeoutMs: 20000 }
   );
   if (!out.ok || !out.content || out.content.length < 2) return fallbackText;
-  const t = String(out.content).trim().slice(0, 220);
+  const t = String(out.content).trim().slice(0, 280);
   return t;
 }
 

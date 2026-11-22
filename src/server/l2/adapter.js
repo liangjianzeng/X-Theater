@@ -11,6 +11,7 @@
  */
 const governance = require("./governance.js");
 const tools = require("./tools.js");
+const advisor = require("./advisor.js");
 
 const RUNTIME_LABEL = { A: "DSH·模式A", B: "自建·模式B" };
 
@@ -125,10 +126,15 @@ async function runTurn(opts) {
     session.msgs.push(m);
     return m;
   }
-  async function say(t) {
+  async function say(t, card) {
     const clean = sanitize(ctx, t);
     await stream.deltas(clean);
-    pushMsg(clean);
+    const m = pushMsg(clean);
+    const c = cleanCardOf(ctx, card);
+    if (c) {
+      m.card = c;
+      publish({ type: "msg_card", sid: session.id, card: c }); // 客户端桥接到最新一条助手气泡
+    }
     ctx.store.commit();
     return clean;
   }
@@ -158,7 +164,7 @@ async function runTurn(opts) {
 
   const intent = await interpret.parse(text, chips, ctx, session);
   if (!intent) {
-    await say(REPLY.fallback);
+    await say(REPLY.fallback, advisor.menuCard(ctx, session)); // 能力菜单卡：解析不出意图也给出可点的出口
     return { ok: true, intent: null, events: events, trace_id: trace0 };
   }
   if (intent.say) {
@@ -199,12 +205,12 @@ async function runTurn(opts) {
     const approval = governance.createApproval(session, tool, args, est, ctx);
     if (tool === "reroll_shot") {
       const shot = st.shots[args.shot_id] || {};
-      await say(REPLY.reroll_pre(shot.name || args.shot_id, est));
+      await say(REPLY.reroll_pre(shot.name || args.shot_id, est), advisor.approvalCard());
         } else if (tool === "music_candidates") {
       const scene = st.scenes[args.scene_id] || {};
-      await say(REPLY.music_pre(scene.name || args.scene_id, args.mood || scene.mood || "释然", est));
+      await say(REPLY.music_pre(scene.name || args.scene_id, args.mood || scene.mood || "释然", est), advisor.approvalCard());
     } else {
-      await say(REPLY.expensive_pre(tool, args, est, ctx));
+      await say(REPLY.expensive_pre(tool, args, est, ctx), advisor.approvalCard());
     }
     publish({ type: "approval_request", sid: session.id, approval: approval });
     // 前端契约事件（扁平）：approval_new
@@ -231,7 +237,7 @@ async function runTurn(opts) {
     if (r.ok && ctx.llm && typeof ctx.llm.chat === "function" && ctx.llm.enabled()) {
       try { rep = await require("./llmintent.js").llmReply(tool, args, r, ctx, session, fallback); } catch (e) { rep = fallback; }
     }
-    await say(rep);
+    await say(rep, advisor.buildCard(tool, args, r, ctx, session)); // 顾问卡：现状之后直接给可点的下一步
   }
   return {
     ok: !!r.ok,
@@ -243,13 +249,43 @@ async function runTurn(opts) {
   };
 }
 
+/** 顾问卡清洗（模块级，供 selfcheck 直测）：只放行 label/hint/send/href/tab 已知键位；
+    href 只许站内 hash 路由（防 javascript: 注入）；无动作的选项不放行；字符串全过 langlint。 */
+function cleanCardOf(ctx, card) {
+  if (!card || typeof card !== "object") return null;
+  const out = {};
+  if (card.kind) out.kind = String(card.kind).slice(0, 12);
+  if (card.question) out.question = sanitize(ctx, String(card.question)).slice(0, 120);
+  if (Array.isArray(card.options)) {
+    out.options = card.options.slice(0, 4).map(function (o) {
+      if (!o || typeof o !== "object") return null;
+      const c = { label: sanitize(ctx, String(o.label || "")).slice(0, 40) };
+      if (!c.label) return null;
+      if (o.hint) c.hint = sanitize(ctx, String(o.hint)).slice(0, 48);
+      if (o.send) c.send = sanitize(ctx, String(o.send)).slice(0, 120);
+      if (o.href && advisor.HREF_RE.test(String(o.href))) c.href = String(o.href);
+      if (o.tab && advisor.TABS.indexOf(o.tab) >= 0) c.tab = o.tab;
+      if (!c.send && !c.href && !c.tab) return null; // 无动作的选项不放行
+      return c;
+    }).filter(Boolean);
+    if (!out.options.length) delete out.options;
+  }
+  if (!out.question && !out.options) return null;
+  return out;
+}
+
 /** 工具执行后的人话回执（persona 口吻，全部经 sanitize） */
 function replyFor(tool, args, r, ctx, session) {
   const st = ctx.store.get();
   switch (tool) {
     case "query_progress": {
       const res = r.result || {};
-      return "《" + (res.episode_title || "本集") + "》目前完成 " + res.done + "/" + res.total + " 镜，队列里排着 " + res.queued + " 个活儿，我盯着呢。";
+      const done = Number(res.done) || 0, total = Number(res.total) || 0, queued = Number(res.queued) || 0;
+      let s = "《" + (res.episode_title || "本集") + "》目前完成 " + done + "/" + total + " 镜，队列里排着 " + queued + " 个活儿。";
+      if (total > 0 && done >= total) s += "都拍完了——下一步是导出成片（选项卡里点，我先出预检）。";
+      else if (queued > 0) s += "排队不动的话，多半在等卡拍板或复审——说「看看待拍板的卡」我来查。";
+      else if (done < total) s += "没有在跑的活儿，八成是等拍板——说「看看待拍板的卡」我来查。";
+      return s;
     }
     case "query_cost": {
       const res = r.result || {};
@@ -267,26 +303,38 @@ function replyFor(tool, args, r, ctx, session) {
       const res = r.result || {};
       const all = res.cards || [];
       const pen = all.filter(c => c.status === "pending");
-      if (!all.length) return "这集还没有卡进来——卡流会随创作流程自己长出来，我盯着。";
-      let s = "本集共 " + all.length + " 张卡";
-      if (pen.length) s += "，其中 " + pen.length + " 张待拍板（" + pen.map(c => c.type + "·" + String(c.id || "").slice(0, 10)).join("、") + "）。拍板我不代做——到卡流页核对后自己点，或告诉我看哪张卡。";
-      else s += "，都已在各自环节定案。有新卡进来我叫你。";
+      const title = res.episode_title || "本集";
+      if (!all.length) return "《" + title + "》还没有卡进来——卡流会随创作流程自己长出来，我盯着。";
+      /* 顾问式：先点名最该先拍板的那张（依赖链），再说全景 */
+      const ordered = pen.slice().sort((a, b) => governance.CARD_ORDER.indexOf(a.type) - governance.CARD_ORDER.indexOf(b.type));
+      const first = ordered[0];
+      let s;
+      if (first) {
+        const digest = governance.cardDigest(first);
+        s = "《" + title + "》卡流：" + all.length + " 张里 " + pen.length + " 张等你拍板。最先动这张——" + governance.cardLabel(first.type) + "卡" + (first.ver != null ? "（v" + first.ver + "）" : "") + (digest ? "，" + digest : "") + "，" + (governance.CARD_NEXT[first.type] || "拍板后下游才好走") + "。";
+        if (pen.length > 1) s += "其余待拍板：" + ordered.slice(1).map(c => governance.cardLabel(c.type)).join("、") + "。";
+        s += "拍板我不代做——选项卡里去卡流页核对，或让我先出修改建议。";
+      } else {
+        s = "《" + title + "》" + all.length + " 张卡都定案了，没有压着的审批。该往前走了——要推进开机或导出，选项卡里点；有新卡进来我叫你。";
+      }
       return s;
     }
     case "query_gpu": {
       const res = r.result || {};
       const llmOn = !!res.llmOnline;
       if (res.episode_driver === "dgx") {
-        return "本集走 DGX 节点渲染，不吃本机显存；本机 LLM " + (llmOn ? "在线，两边互不打架。" : "当前离线/未启用。");
+        return "本集走 DGX 节点渲染，不吃本机显存；本机 LLM " + (llmOn ? "在线，两边互不打架。" : "当前离线/未启用。") + (llmOn ? "创作咨询随时说。" : "");
       }
-      return "本集走本机渲染。本机 LLM " + (llmOn ? "在线——生图/拍摄要独占显存，所以开机拍摄暂时被挡着；要腾地方去运维台点「停止 LLM 让路」，我不代停。" : "离线/未启用，本机渲染畅通。");
+      return llmOn
+        ? "本机 LLM 正占着 5060 Ti，本机生图/拍摄暂时进不去——两个解法：去运维台把这部局的渲染节点切到 DGX（推荐，LLM 不用停），或临时停 LLM 让路。我不代停，选项卡里带你去。"
+        : "本机 LLM 离线/未启用，本机渲染畅通，直接开机就行。";
     }
     case "query_projects": {
       const res = r.result || {};
       const ps = res.projects || [];
       return ps.length
-        ? "现在有 " + ps.length + " 个项目：" + ps.map(p => "《" + (p.title || p.id) + "》").join("、") + "。想开新集或看某部剧的进度，直接说。"
-        : "还没有项目。说「帮我新建一部剧，就叫XX」，我给你从建项开始走。";
+        ? "现在有 " + ps.length + " 个项目：" + ps.map(p => "《" + (p.title || p.id) + "》").join("、") + "。想深入哪部，直接报名字；要开新剧也行。"
+        : "还没有项目——回复个剧名，我给你从建项开始走。";
     }
     default:
       void st; void session;
@@ -318,5 +366,6 @@ module.exports = {
   segment,
   sleep,
   REPLY,
-  RUNTIME_LABEL
+  RUNTIME_LABEL,
+  cleanCardOf
 };

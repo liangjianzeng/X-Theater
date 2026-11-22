@@ -434,6 +434,44 @@ function defaultEpisodeId(ctx, session) {
   return eps.length ? eps[0].id : null;
 }
 
+/* ---------- 卡类型语义（契约 §6 A，与客户端 TYPE_META 同源） ----------
+   助手是顾问不是统计播报员：回执必须说清「卡是什么/卡在哪/下游等什么/下一步做什么」。 */
+const CARD_LABEL = {
+  C1: "故事方向", C2: "演员定妆", C2S: "试妆试镜", C3: "演员表锁定",
+  C4: "分镜画面", C5: "样片审看", C6: "开机报价", C7: "灰区镜头批复",
+  C8: "交付确认", C9: "配乐提案"
+};
+/* 拍板后解锁什么（推荐话术的依据） */
+const CARD_NEXT = {
+  C1: "定妆、试镜、分镜全在等它",
+  C2S: "确认后才进批量出图",
+  C2: "定妆定了分镜首帧才好落",
+  C3: "演员表锁定才能试拍",
+  C4: "分镜定了才有样片",
+  C5: "样片过审就到开机报价",
+  C6: "报价拍板＝真金白银开跑",
+  C7: "批复完灰区镜头才放行",
+  C8: "全镜放行即可导出成片",
+  C9: "音轨就位后成片不返工"
+};
+/* 多张待拍板时的推荐顺序（依赖链） */
+const CARD_ORDER = ["C1", "C2S", "C2", "C3", "C4", "C5", "C6", "C7", "C9", "C8"];
+function cardLabel(type) { return CARD_LABEL[type] || (type + "卡"); }
+/* payload 人话摘要（只引用真实字段，取不到就 null，绝不编造） */
+function cardDigest(card) {
+  const p = (card && card.payload) || {};
+  let d = null;
+  if (p.note) d = p.note;
+  else if (p.summary) d = p.summary;
+  else if (p.role) d = "角色「" + p.role + "」试妆";
+  else if (Array.isArray(p.cast) && p.cast.length) d = "角色 " + p.cast.length + " 位";
+  else if (Array.isArray(p.casting) && p.casting.length) d = "角色 " + p.casting.length + " 位";
+  else if (p.estimate && p.estimate.time_min != null) d = "预估 " + p.estimate.time_min + " 分钟/" + (p.estimate.cents != null ? p.estimate.cents + " 分" : "待核价");
+  else if (Array.isArray(p.images) && p.images.length) d = "画面 " + p.images.length + " 张";
+  if (typeof d !== "string") return null;
+  return d.length > 48 ? d.slice(0, 48) + "…" : d;
+}
+
 module.exports = {
   TOOLS,
   WHITELIST,
@@ -454,5 +492,10 @@ module.exports = {
   consumeApproval,
   hasPendingApproval,
   traceTail,
-  defaultEpisodeId
+  defaultEpisodeId,
+  CARD_LABEL,
+  CARD_NEXT,
+  CARD_ORDER,
+  cardLabel,
+  cardDigest
 };

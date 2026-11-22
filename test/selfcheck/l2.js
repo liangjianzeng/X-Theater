@@ -477,6 +477,48 @@ async function main() {
     ok(adapter.sanitize(env2.ctx, "这条 take 的 seed 需要路由一下") === "这条 条 的 复刻编号 需要调度一下", "langlint.sanitize 挂上（用户面禁词过滤）");
     const segs = adapter.segment("第一句。第二句！第三句？第四句；第五句", 4);
     ok(segs.length === 4, "segment 均分 4 段");
+
+    /* ---------- 顾问卡（advisor 2026-11-22，蓝图 §3.4） ---------- */
+    const advisor = require("../../src/server/l2/advisor");
+    const env3 = makeCtx();
+    const st3c = env3.ctx.store.get();
+    const ep3 = Object.values(st3c.episodes || {})[0];
+    if (ep3 && ep3.id) {
+      /* 造一张 pending 卡（真实形状），验证推荐卡三件套 */
+      st3c.cards = st3c.cards || {};
+      st3c.cards["card_test_pending"] = { id: "card_test_pending", episodeId: ep3.id, type: "C1", status: "pending", ver: 3,
+        payload: { summary: "外卖员觉醒系统", cast: [{ role: "骑手" }, { role: "站长" }], scenes: [{}, {}] } };
+      const r1 = advisor.buildCard("query_cards", { episode_id: ep3.id }, { ok: true, result: { episode_id: ep3.id, pending: 1 } }, env3.ctx, { uid: "u1", id: "s1", ctx: [{ type: "episode", id: ep3.id }] });
+      ok(!!r1 && Array.isArray(r1.options) && r1.options.length === 3, "advisor：待拍板卡 → 三选项");
+      ok(r1.options[0].href === "#/ep/" + ep3.id + "/flow", "advisor：首选项导向卡流页");
+      ok(r1.options[1].send.indexOf("故事方向") >= 0, "advisor：send 话术用卡类型中文名（不露 ID）");
+      ok(r1.options.every(function (o) { return o.send || o.href || o.tab; }), "advisor：每个选项都有动作");
+      /* 无待拍板 → 推进卡 */
+      st3c.cards["card_test_pending"].status = "decided";
+      const r2 = advisor.buildCard("query_cards", { episode_id: ep3.id }, { ok: true, result: { episode_id: ep3.id, pending: 0 } }, env3.ctx, { uid: "u1", id: "s1", ctx: [{ type: "episode", id: ep3.id }] });
+      ok(!!r2 && r2.options.some(function (o) { return o.send === "导出成片"; }), "advisor：卡全定案 → 导出/推进选项");
+      /* 无项目 → ask 提问卡 */
+      const r3 = advisor.buildCard("query_projects", {}, { ok: true, result: { projects: [] } }, env3.ctx, { uid: "u1", id: "s1", ctx: [] });
+      ok(!!r3 && r3.kind === "ask" && !!r3.question, "advisor：无项目 → ask 提问卡");
+      /* fail-silent：垃圾输入 → null 不抛 */
+      ok(advisor.buildCard("query_cards", {}, null, env3.ctx, { uid: "u1", id: "s1" }) === null, "advisor：fail-silent（垃圾输入→null）");
+    }
+    /* 清洗面：href 白名单/键位白名单/无动作选项拒收 */
+    const cc = adapter.cleanCardOf(env2.ctx, {
+      kind: "choices",
+      options: [
+        { label: "好的", href: "javascript:alert(1)" },
+        { label: "站内跳转", href: "#/ep/ep_x/flow" },
+        { label: "切审批", tab: "apv" },
+        { label: "没动作的选项" },
+        { label: "越权键位", tool: "rm -rf" }
+      ]
+    });
+    ok(cc && cc.options.length === 2, "清洗：javascript: href 与无动作选项被拒");
+    ok(cc.options.some(function (o) { return o.href === "#/ep/ep_x/flow"; }), "清洗：站内 hash 放行");
+    ok(cc.options.some(function (o) { return o.tab === "apv"; }), "清洗：tab 白名单放行");
+    ok(!cc.options.some(function (o) { return o.tool; }), "清洗：越权键位不透传");
+    ok(adapter.cleanCardOf(env2.ctx, null) === null, "清洗：空卡→null");
   }
 
   /* ---------- 汇总 ---------- */

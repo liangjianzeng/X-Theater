@@ -215,13 +215,16 @@ async function execute(tool, args, ctx, session, auth, opts) {
     // ---- 全流程查询（2026-11-21 扩容） ----
     case "query_cards": {
       const epId = args.episode_id || governance.defaultEpisodeId(ctx, session);
+      const epC = st.episodes[epId] || {};
       const list = Object.keys(st.cards || {}).map((k) => st.cards[k])
         .filter((c) => c.episodeId === epId)
         .sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
         .map((c) => ({ id: c.id, type: c.type, status: c.status, ver: c.ver,
+          label: governance.cardLabel(c.type),
+          summary: governance.cardDigest(c),
           ai_verdict: c.payload && c.payload.ai_review ? c.payload.ai_review.verdict : null,
           decided_at: c.decided_at || null }));
-      result = { episode_id: epId, cards: list, pending: list.filter((c) => c.status === "pending").length };
+      result = { episode_id: epId, episode_title: epC.title || "", cards: list, pending: list.filter((c) => c.status === "pending").length };
       break;
     }
     case "query_card": {

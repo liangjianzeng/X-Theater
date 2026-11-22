@@ -584,6 +584,13 @@ a { color: inherit; text-decoration: none; }
 .v-copilot-menu-item:hover { background: #F3F1EA; }
 .v-copilot-hist { position: relative; }
 
+/* 顾问卡（2026-11-22）：助手消息内嵌可点选项/提问——send 走治理链、href 路由、tab 切页 */
+.v-copilot-mcard { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.v-copilot-mcard-q { font-size: 12.5px; font-weight: 600; color: var(--ink); background: #EDE9DF; border: 1px dashed #C9C2B2; border-radius: 8px; padding: 6px 10px; }
+.v-copilot-mopt { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--panel); font: inherit; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.v-copilot-mopt:hover { background: #EFECE3; border-color: #B9B2A0; }
+.v-copilot-mopt-hint { color: var(--ink2); font-size: 11.5px; }
+
 /* C2 角色定义＋真定妆＋分镜首帧（此前因 && 短路未入库，现补） */
 .v-flow-cast { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .v-flow-cast-title { font-size: 12px; color: var(--ink2); display: flex; gap: 8px; align-items: center; margin-top: 2px; }
