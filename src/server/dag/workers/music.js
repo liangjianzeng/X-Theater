@@ -87,6 +87,7 @@ async function runReal(ctx, job, p, mood) {
     mood, seconds: sec,
     seed: numFrom(hash12(ctx, { lane: NAME, jobId: job.id, mood })) % 4294967295,
     tags: String(p.tags || "").trim() || prompts.musicTags(mood, pkg),
+    bpm: Number(p.bpm) || undefined,
     lyrics: String(p.lyrics || "") || undefined,
     prompt: String(p.caption || "") || undefined,
     instrumental: !!p.instrumental || undefined

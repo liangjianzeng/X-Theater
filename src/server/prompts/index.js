@@ -169,7 +169,9 @@ function buildPosterPrompt(opts) {
  * 参考图时声明优先级（即梦式挂载：用户参考图优先，desc 兜底一致性）。 */
 function buildFreeImagePrompt(opts) {
   const o = opts || {};
-  const sizeLine = o.size ? dicts.SHOT_SIZE[o.size] ? "构图：" + String(o.size) + "景别。" : "" : "";
+  /* 景别织入用词典真话（「特写构图，面部充满画面，背景虚化（close-up）」），不再是同义反复的「特写景别」。 */
+  const sizeMeta = o.size ? dicts.SHOT_SIZE[o.size] : null;
+  const sizeLine = sizeMeta ? "景别：" + sizeMeta.zh + "（" + sizeMeta.en + "）。" : "";
   const lightLine = o.light ? "光线：" + String(o.light).slice(0, 80) + "。" : "";
   return [
     String(o.styleSuffix || "").trim(), // 风格锚（L0 风格包，最前）

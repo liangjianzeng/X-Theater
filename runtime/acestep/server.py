@@ -4,7 +4,7 @@ W-M 自部署生乐服务（ACE-Step 1.5）· FastAPI 常驻服务
 端口 127.0.0.1:8190 · 惰性加载 · 响应后释放显存（DiT/VAE/TE/LM 全部回 CPU RAM + empty_cache）
 
 API 契约:
-  POST /music            {mood: str, seconds: 30|45|60, seed?: int}  ->  {id, seconds, file, gen_seconds, ...}
+  POST /music            {mood, seconds 15-180, seed?, tags?, lyrics?, instrumental?, caption?, bpm?} -> {id, seconds, file, ...}
   GET  /music/{id}/file  -> 音频字节 (audio/wav)
   POST /unload           -> 释放显存 {ok, vram_*}
   GET  /health           -> 服务/模型/显存状态
@@ -188,26 +188,38 @@ def _ensure_models() -> float:
 
 class MusicRequest(BaseModel):
     mood: str = Field(..., min_length=1, max_length=500, description="情绪/场景描述（任意语言）")
-    seconds: int = Field(..., description="30|45|60")
+    seconds: int = Field(..., ge=15, le=180, description="目标时长秒（15–180；模型支持 10–600）")
     seed: int | None = Field(None, description="可复现随机种子；缺省随机")
+    tags: str = Field("", max_length=600, description="曲风/乐器/人声/BPM 逗号串（并入 caption 通道）")
+    lyrics: str = Field("", max_length=4000, description="歌词（含 [Verse] 等段标记）；空=纯音乐 [Instrumental]")
+    instrumental: bool = Field(True, description="纯音乐")
+    caption: str = Field("", max_length=500, description="自然语言主描述（缺省用 mood）")
+    bpm: int | None = Field(None, ge=30, le=300, description="节拍（缺省自动估计）")
 
 
 @app.post("/music")
 def post_music(req: MusicRequest):
-    if req.seconds not in VALID_SECONDS:
-        raise HTTPException(status_code=422, detail=f"seconds must be one of {VALID_SECONDS}")
+    # seconds 15–180 已由模型校验（ge/le）；duration 模型支持 10–600
     if not _gen_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="A generation is already running (single-GPU mutex)")
     try:
         t0 = time.time()
         warmup_s = _ensure_models()
 
+        # 配置项融入生成（2026-11-22 用户裁决）：tags 并入 caption 通道；实词 lyrics；bpm 直传
+        caption = ((req.caption or "").strip() or req.mood.strip())
+        if (req.tags or "").strip():
+            caption = (caption + ", " + req.tags.strip()).strip(", ")
+        lyrics = (req.lyrics or "").strip() or "[Instrumental]"
+        instrumental = bool(req.instrumental) or lyrics == "[Instrumental]"
+        vocal_language = "unknown"
         params = GenerationParams(
             task_type="text2music",
-            caption=req.mood,
-            lyrics="[Instrumental]",
-            instrumental=True,
-            vocal_language="unknown",
+            caption=caption[:500],
+            lyrics=lyrics[:4000],
+            instrumental=instrumental,
+            vocal_language=vocal_language,
+            bpm=req.bpm if req.bpm else None,
             duration=float(req.seconds),
             inference_steps=8,          # turbo 官方档
             seed=req.seed if req.seed is not None else -1,

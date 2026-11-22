@@ -466,7 +466,7 @@ function register(router, ctx) {
     const count = Math.max(1, Math.min(3, Number(b.count) || 2));
     for (let i = 0; i < count; i++) {
       jobs.push(engine.enqueue("music", {
-        type, mood, tags: finalTags, lyrics, instrumental,
+        type, mood, tags: finalTags, lyrics, instrumental, bpm: Number(b.bpm) || undefined,
         caption: caption || undefined, sec, projectId,
         gen_mode: String(b.mode || "quick").slice(0, 12)
       }, { initiated_by: "user" }));
