@@ -762,26 +762,29 @@
         <div class="panel" v-if="tab==='drafts'">
           <div class="panel-title">候选池 <span class="weak">生成未入库；评分收藏入库，不要的淘汰（7 天自动清）</span></div>
           <empty-state v-if="!draftsAll.length" icon="📥" text="候选池是空的" sub="去「音频」或「图像」生成一批。"></empty-state>
-          <div class="table-scroll" v-else>
-            <table class="table">
-              <thead><tr><th>候选</th><th>类型</th><th>预览</th><th>许可/成本</th><th>入库动作</th></tr></thead>
-              <tbody>
-                <tr v-for="d in draftsAll" :key="draftDomain(d)+d.id">
-                  <td><b>{{ d.title }}</b><div class="weak" v-if="d.mood">{{ d.mood }} · {{ fmtSec(d.sec) }}</div><div class="weak" v-if="d.tags">{{ d.tags }}</div><div class="weak" v-if="d.desc">{{ d.desc }}</div></td>
-                  <td><span class="badge">{{ draftDomain(d)==='music' ? '音频' : '图像' }}</span></td>
-                  <td>
-                    <template v-if="draftDomain(d)==='music'">
-                      <audio v-if="d.art && !audioFail[d.id]" controls preload="none" :src="srcOf(d.art)" style="max-width:170px;height:28px" @error="audioFail[d.id]=true"></audio>
-                      <span v-else-if="d.art" class="weak">音频文件不可用（占位或生成失败——音乐生成服务未运行时产物为占位）</span>
-                      <span v-else class="weak">生成中…</span>
-                    </template>
-                    <template v-else>
-                      <img v-if="d.art" :src="srcOf(d.art)" loading="lazy" style="max-height:90px;cursor:zoom-in" alt="" title="点击放大预览" @click="openPreview(d.art, d.title || d.desc)" />
-                      <span v-else class="weak">生成中…</span>
-                    </template>
-                  </td>
-                  <td><license-badge v-if="d.license" :license="d.license"></license-badge><money v-if="d.shadow_cents" :cents="d.shadow_cents"></money></td>
-                  <td>
+                      <div class="v-studio-drafts" v-else>
+              <div class="card v-studio-draft" v-for="d in draftsAll" :key="draftDomain(d)+d.id">
+                <div class="v-studio-draft-media">
+                  <template v-if="draftDomain(d)==='music'">
+                    <audio v-if="d.art && !audioFail[d.id]" controls preload="none" :src="srcOf(d.art)" style="width:100%" @error="audioFail[d.id]=true"></audio>
+                    <span v-else-if="d.art" class="weak">音频文件不可用（占位或生成失败——音乐生成服务未运行时产物为占位）</span>
+                    <span v-else class="weak">生成中…</span>
+                  </template>
+                  <template v-else>
+                    <img v-if="d.art" :src="srcOf(d.art)" loading="lazy" style="cursor:zoom-in" alt="" title="点击放大预览" @click="openPreview(d.art, d.title || d.desc)" />
+                    <span v-else class="weak">生成中…</span>
+                  </template>
+                </div>
+                <div class="v-studio-draft-body">
+                  <div class="row">
+                    <b class="grow">{{ d.title }}</b>
+                    <span class="badge">{{ draftDomain(d)==='music' ? '音频' : '图像' }}</span>
+                  </div>
+                  <div class="weak" v-if="d.mood">{{ d.mood }} · {{ fmtSec(d.sec) }}</div>
+                  <div class="weak" v-if="d.tags">{{ d.tags }}</div>
+                  <div class="weak v-studio-draft-desc" v-if="d.desc">{{ d.desc }}</div>
+                  <div class="row" style="margin-top:4px"><license-badge v-if="d.license" :license="d.license"></license-badge><money v-if="d.shadow_cents" :cents="d.shadow_cents"></money></div>
+                  <div class="v-studio-draft-acts">
                     <template v-if="draftDomain(d)==='music'">
                       <button class="btn btn-sm btn-primary" @click="adoptMusic(d)">收藏入库</button>
                     </template>
@@ -794,11 +797,10 @@
                       <button class="btn btn-sm btn-primary" @click="adoptImage(d)">收藏入库</button>
                     </template>
                     <button class="btn btn-sm btn-ghost" @click="discardDraft(draftDomain(d), d.id)">淘汰</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                  </div>
+                </div>
+              </div>
+            </div>
         </div>
 
         <!-- 灯箱预览（点击遮罩或图关闭；Esc 亦关） -->
