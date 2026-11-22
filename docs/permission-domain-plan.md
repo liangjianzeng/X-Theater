@@ -140,3 +140,30 @@ const view = ctx.scope(store.get(), auth);   // {tenant, projects, episodes, can
 - 投影层务必覆盖 `l2_sessions`（副驾会话含全量剧本上下文）与 `music_lib`（版权按域）。
 - 存量回填只跑一次：用 `state.tenants` 存在性做迁移标记，避免每次启动重灌。
 - 参考实现顺序建议：Phase 0 → Phase 1 的 scope 投影＋state.js（先只读隔离）→ 写侧归属校验 → SSE → 资产登录墙 → 前端切换器。
+
+## 6. 落地状态（2026-11-22 更新）
+
+**Phase 0/1/2 已全部落地上线**（8767 真机运行）。实际实现与方案的差异与增量：
+
+### 已落地（对照方案）
+
+| 方案项 | 落地实现 |
+|--------|----------|
+| Phase 0 按人发码 | `state.invites` 升级 `{code → {name, role, uid, tid?, domain_role?}}`；裸码保留旧 fallback（INV-DEMO-1 出厂行为不变）；运维台「🔐 成员」发码/吊销（最后一个码保护） |
+| token 堵兜底 | users 查不到 uid 一律 401（index.js useAuth） |
+| 资产登录墙 | `/var/out/*`、`/var/assets/*` 凭据三路校验（Bearer/Cookie `theater_tok`/`?token=`）＋域级 ACL（资产归属反查索引，store.rev 缓存失效） |
+| Phase 1 域核心 | `core/tenants.js`（accessOf/guard*/scopedView/membershipsOf）；state.js 只读投影（心脏）；写侧归属校验覆盖 projects/episodes/cards 全写端点（域外 404）；bus SSE 订阅端按域过滤；engine/账本 stamp tid |
+| Phase 2 RBAC | owner/admin/member/viewer 四角色全链（域码带 domain_role、成员身份变更、owner 转让、删域=仅空域+默认域保护）；域级预算护栏（Σ本域 cost > 预算×120% → 暂停全域进行中集＋告警，billing 账本行带 tid）；按域计费聚合 `GET /api/tenants/:tid/billing` |
+| 前端 | 设置页「🌐 域」面板（切换/建域/成员管理/预算/计费/域码）；nav 当前域名显示 |
+
+### 超出方案的增量（同日演进）
+
+1. **引擎目标全可配（离开 5060 Ti 也能活）**：lane→node→IP 由注册表绑定（并行线已落地）；本轮补齐——用户级默认算力（`users[uid].driver`，建集路由=请求节点>用户默认>首节点）、云 API 一等目标（node `kind:"cloud"` ＋ `img_cloud` worker，OpenAI 兼容 /v1/images/generations 适配，计费=单价×张数）、`vidsark` 拼写 bug 修正、engine 回退去 local 写死。视频/音乐云适配器待具体服务商再开 lane（路由层零改动）。
+2. **LLM 大脑统一面板**：运维台算力节点页顶部——剧场 AI 能力（AI 剧本/审查/建议片）＋制片助手同一份配置的显性化；未配置时醒目引导（当前规则兜底清单）；助手面板未配置/离线提示条（运营可点击直达）。
+3. **删除能力**：项目（仅空）/集（级联＋产物清理＋排队任务取消）/域（仅空域），全部二次确认＋审计带计数。
+4. **自愈层**：启动幂等补 stamp（漏 tenantId 实体归默认域）＋投影回退（漏 stamp 实体默认域可见）——真机踩过「副驾建集漏 stamp 全域隐形」。
+
+### 未开工
+
+- Phase 3（signed 分享链接/跨域协作）：按商业化节奏另开。
+- 静态资产域级 ACL 的索引反向覆盖：art 反查索引已建；素材中心 asset_lib（并行线新增）的租户归属尚未纳入索引，列为下轮事项。
