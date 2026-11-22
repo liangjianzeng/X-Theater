@@ -222,3 +222,12 @@ ask 卡是长任务链的钩子。已通链路：
 2. **不许再出现**：绕过 governance 的执行通道、绕过消息卡协议的私有交互格式、绕过语义资产表的散装话术。
 3. **补丁合法化**：用户报一个问题时，先归因（感知缺了？理解缺了？交互原语缺了？顾问缺了？），补丁落在对应层，并在 §7 回写。
 4. **验证底线**：LLM 在线/离线双态都要能用（fail-open）；selfcheck 全绿；真机闭环一遍（用户可见的行为必须有浏览器/接口证据）。
+
+### 8.1 双线文件分界协议（2026-11-22 用户裁决）
+
+背景：助手线与视频线同仓工作，共享文件竞态已三次互相吃编辑（store.js boot 崩溃、tools.js registry hunk 丢失、server 运行中互杀）。
+
+- **助手线专属**：`src/server/l2/llmintent.js`、`src/server/l2/advisor.js`、`src/server/l2/adapter.js`、`src/server/l2/modeB.js`、`src/client/js/views/copilot.js`、`docs/ai-blueprint.md`、`test/selfcheck/*`、`test/acceptance/*`
+- **视频线专属**：`src/server/dag/workers/*`、`src/server/api/prompts` 相关、`src/server/prompts/*`、`src/client/js/store.js`、`src/client/js/api.js`、`src/client/js/views/flow.js` 等流程/素材面
+- **共享错峰文件**：`src/server/l2/tools.js`、`src/server/l2/governance.js`、`src/server/api/cards.js`——双方都可能改；**动之前先声明，对方有未提交改动时等对方 commit 后再动**；提交前逐 hunk 隔离（只提交自己的）
+- **LLM 承载（用户裁决 2026-11-22）**：LLM 迁 DGX 缓行——LLM 最终只是节点档案里的一个配置（`state.llm_node` 热切换已就绪），运维台后续重构架构统一承载；本线不主动迁移
