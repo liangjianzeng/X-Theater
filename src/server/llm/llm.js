@@ -16,9 +16,10 @@ const { execFile } = require("child_process");
 
 /* ---------- 状态监视（模块级单例，进程内共享） ---------- */
 const monitor = { base: null, llmOnline: false, llmModel: "", ts: 0, comfy: null, timer: null };
-/* 看护（2026-11-21）：LLM 说断就断的结构根因＝16G 显存满负荷（15.3GB LLM），任何显存竞争都挤崩 llama-server。
-   monitor 探测离线连续 3 次 → 自动拉起用户 bat（detached）；45s 冷却（等模型加载）；10 分钟内 ≤3 次，超限熔断转人工（alert）。 */
-const watchdog = { fails: 0, lastStart: 0, starts: [] };
+/* 自动拉起已移除（2026-11-23 用户要求）：
+   原 watchdog 会在 monitor 连续 3 次探测离线时 spawn 本机 8090 bat，导致服务被杀后又被反复拉起。
+   现仅保留在线状态监视（fail-open 与显存互斥闸依赖 monitor），不再启动任何本机模型进程。 */
+let lastOnline = null;
 
 async function fetchJson(url, opts, timeoutMs) {
   const ctrl = new AbortController();
@@ -179,23 +180,10 @@ function startMonitor(cfg, bus) {
     } catch (e) {
       monitor.llmOnline = false;
     }
-    if (!monitor.llmOnline) console.log("[watchdog] offline fails=" + watchdog.fails + " bat=" + (c.bat ? "set" : "EMPTY") + " starts=" + watchdog.starts.length);
-    if (!monitor.llmOnline && c.bat) {
-      watchdog.fails += 1;
-      const now = Date.now();
-      watchdog.starts = watchdog.starts.filter(function (t) { return now - t < 600000; });
-      if (watchdog.fails >= 3 && now - watchdog.lastStart > 45000 && watchdog.starts.length < 3) {
-        watchdog.lastStart = now;
-        watchdog.starts.push(now);
-        watchdog.fails = 0;
-        try {
-          const { spawn } = require("child_process");
-          spawn("cmd.exe", ["/c", c.bat], { cwd: require("path").dirname(c.bat), detached: true, stdio: "ignore" }).unref();
-          if (busRef) busRef.publish("alerts", { id: "al_" + Date.now(), kind: "llm_watchdog", msg: "本机 LLM 掉线，已自动拉起（" + c.bat + "）。约 30–60 秒恢复；若反复掉线请检查显存冲突（生图/拍摄与 LLM 同卡）。", ts: now, acked: false });
-        } catch (eW) { /* 拉起失败下轮再试 */ }
-      }
-    } else if (monitor.llmOnline) {
-      watchdog.fails = 0;
+    // 仅记录在线/离线翻转，不再自动拉起（2026-11-23：自动拉起会与用户的手动启停冲突）
+    if (monitor.llmOnline !== lastOnline) {
+      lastOnline = monitor.llmOnline;
+      console.log(monitor.llmOnline ? "[llm] online model=" + monitor.llmModel : "[llm] offline (auto-restart disabled) base=" + c.base);
     }
     if (c.comfyBase) {
       const r = await fetchJson(c.comfyBase + "/system_stats", {}, 1500);

@@ -101,7 +101,7 @@
                   <option value="">☁️ 云端 / 远程（不占渲染机显存）</option>
                   <option v-for="n in (nodesList || [])" :key="n.id" :value="n.id">🖥 {{ n.label }}（占该机显存）</option>
                 </select></label>
-              <label class="weak">自动拉起脚本（本机才用）<br /><input class="input" v-model.trim="brainForm.bat" placeholder="E:\\MyLLM\\xxx.bat（可空＝不守护）" style="max-width:230px" /></label>
+              <label class="weak">重启脚本（仅提示用）<br /><input class="input" v-model.trim="brainForm.bat" placeholder="E:\\MyLLM\\xxx.bat（可空，只在停服提示里显示，不自动运行）" style="max-width:230px" /></label>
               <button class="btn btn-sm btn-primary" :disabled="brainState.saving === 'add'" @click="addBrainProfile">登记</button>
             </div>
 
@@ -127,8 +127,8 @@
                   <input class="input" v-model.trim="p.base" style="max-width:300px" placeholder="http://127.0.0.1:8090" />
                   <span class="weak">模型</span>
                   <input class="input" v-model.trim="p.model" style="max-width:170px" placeholder="模型别名" />
-                  <span class="weak">拉起脚本</span>
-                  <input class="input" v-model.trim="p.bat" style="max-width:210px" placeholder="E:\\MyLLM\\xxx.bat（可空）" />
+                  <span class="weak">重启脚本（手动）</span>
+                  <input class="input" v-model.trim="p.bat" style="max-width:210px" placeholder="E:\\MyLLM\\xxx.bat（可空，仅提示）" />
                   <button class="btn btn-sm btn-primary" :disabled="brainState.saving === p.id" @click="saveBrainProfile(p)">保存</button>
                   <button class="btn btn-ghost btn-sm" :disabled="brainState.probe[p.id] && brainState.probe[p.id].busy" @click="probeBrainProfile(p)">
                     {{ brainState.probe[p.id] && brainState.probe[p.id].busy ? "探测中…" : "探测" }}</button>
@@ -141,7 +141,7 @@
               </div>
             </div>
             <div class="weak" style="margin-top:6px" v-if="brainState.data">
-              守护：本机档案掉线自动拉起脚本（45s 冷却，10 分钟内 ≤3 次，超限转人工告警）；云端档案不做进程守护。
+              LLM 进程完全由你手动启停：平台只探测在线状态，绝不自动拉起任何模型进程；离线＝AI 能力如实报错＋规则兜底。
               未配置档案＝AI 能力全部规则兜底（AI 剧本落占位结构、AI 审查只走规则、助手无人话增强、建议片不可用）。
             </div>
           </div>

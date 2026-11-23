@@ -159,7 +159,7 @@ const ctx = { store, bus, engine, rules, l2: null, util, cfg, llm: null, tenants
 try {
   const llmMod = require("./llm/llm");
   ctx.llm = llmMod.create(cfg);
-  llmMod.startMonitor(cfg, bus); // 看护掉线自动拉起＋alerts 通知
+  llmMod.startMonitor(cfg, bus); // 在线状态监视（供显存互斥闸/fail-open 用；不拉起任何模型进程，2026-11-23）
 } catch (e) {
   console.warn("[index] llm-gw 装配失败（LLM 相关能力回退规则模式）:", e.message);
 }

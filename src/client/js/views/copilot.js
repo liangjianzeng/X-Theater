@@ -592,7 +592,7 @@
         if (o.send) { send(String(o.send)); return; }
       }
 
-      /* ---------- AI 能力提示（2026-11-22）：LLM 未配置→规则模式引导；离线→守护拉起中 ---------- */
+      /* ---------- AI 能力提示（2026-11-23）：LLM 未配置→规则模式引导；离线→提示手动启动（无自动拉起） ---------- */
       const llmState = Vue.computed(() => {
         const g = store.gpu.data;
         const llm = (g && g.llm) || {};
@@ -646,14 +646,14 @@
           </div>
           <div class="v-copilot-off" v-if="sseOff">实时断了，重连中</div>
 
-          <!-- AI 能力提示（2026-11-22）：未配置→规则模式引导；已配置离线→守护拉起中 -->
+          <!-- AI 能力提示（2026-11-23）：未配置→规则模式引导；已配置离线→提示手动启动 -->
           <div class="v-copilot-off" v-if="llmState.show && !llmState.configured"
             style="cursor:pointer" @click="llmState.isOps && goLlmConfig()"
             :title="llmState.isOps ? '点击去运维台配置' : ''">
             ⚠️ AI 能力未启用——助手与 AI 剧本/审查正运行在规则兜底模式。<template v-if="llmState.isOps">点这里去运维台填 LLM 端点启用 →</template><template v-else>请运营在运维台配置 LLM。</template>
           </div>
           <div class="v-copilot-off" v-else-if="llmState.show && llmState.configured && !llmState.online">
-            ⏳ LLM 离线——守护自动拉起中，AI 增强暂不可用（规则兜底继续）。
+            ⏳ LLM 离线——请手动启动本机模型（或到运维台切换可用档案）；AI 增强暂不可用（规则兜底继续）。
           </div>
 
           <div class="v-copilot-tabwrap">

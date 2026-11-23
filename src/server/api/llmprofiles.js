@@ -3,7 +3,7 @@
  * api/llmprofiles.js — Agent 助手 LLM 档案注册表（2026-11-22 大脑层解耦）
  *
  * Agent 助手（制片助手 / AI 剧本 / AI 审查 / 建议片）用哪个大模型＝一份可增删配置的档案表：
- *   state.llm_profiles[id] = { label, base(OpenAI 兼容 /v1), model, bat(本机守护拉起脚本), key(云 API 密钥), node }
+ *   state.llm_profiles[id] = { label, base(OpenAI 兼容 /v1), model, bat(重启脚本路径，仅在停服/提示里展示，不自动运行), key(云 API 密钥), node }
  *   state.llm_active = 当前启用档案 id（热切换，cfg.llm getter 动态读）
  * profile.node ＝ 这台 LLM 物理跑在哪台渲染机上：
  *   - 指向渲染机 → LLM 在线时占那台机显存（该机若开 gpu_gate，生图/拍摄被显存闸挡）；
