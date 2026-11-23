@@ -109,8 +109,13 @@ function safeSeg(s) {
     .slice(0, 120);
   return v || "x";
 }
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为。
+   runtime/bin/ffmpeg.exe 等仓库根静态二进制不受 THEATER_VAR 影响，仍走 process.cwd()（仓库根约定）。 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
@@ -143,9 +148,9 @@ function readRefBytes(ctx, refImage) {
     // 剧本 refImage 位于 var/assets/cast（ensureInComfyInput 同源）；候选产物在 var/out；
     // 素材库上传为 var/ 全相对路径（2026-11-22 图像上传编辑）——三种候选按序找
     const candidates = [
-      path.join(process.cwd(), "var", "assets", "cast", name),
-      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), name),
-      path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel)
+      path.join(vdir(ctx), "assets", "cast", name),
+      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join(vdir(ctx), "out")), name),
+      path.isAbsolute(rel) ? rel : path.join(vdir(ctx), rel.replace(/^var\//, ""))
     ];
     for (const p of candidates) if (fs.existsSync(p)) return fs.readFileSync(p);
   } catch (e) { /* fallthrough */ }
@@ -166,14 +171,15 @@ function runFfmpeg(args, timeoutMs) {
   });
 }
 
-const CAST_DIR = path.join(process.cwd(), "var", "assets", "cast");
-function castAssetPath(rel) {
+function castAssetPath(ctx, rel) {
   // rel 可为 var/... 全相对路径（含角色 views 子目录）、var/out/xxx、裸文件名 → 绝对路径
+  // （2026-11-23 深审 D1：原模块级 CAST_DIR 常量按 process.cwd() 解析，THEATER_VAR 部署错位——改 ctx 驱动）
+  const vd = vdir(ctx);
   const s = String(rel || "");
   const name = safeSeg(s.replace(/^.*[\\/]/, ""));
   const cands = [];
-  if (/^var[\\/]/.test(s)) cands.push(path.join(process.cwd(), s)); // 全相对路径优先（保子目录）
-  cands.push(path.join(CAST_DIR, name), path.join(process.cwd(), "var", "out", name));
+  if (/^var[\\/]/.test(s)) cands.push(path.join(vd, s.replace(/^var[\\/]/, ""))); // 全相对路径优先（保子目录）
+  cands.push(path.join(vd, "assets", "cast", name), path.join(vd, "out", name));
   for (const p of cands) if (fs.existsSync(p)) return p;
   return null;
 }
@@ -329,7 +335,7 @@ async function runRemoteScreenTest(ctx, job, p, seed, cents) {
   const script = (ep && ep.script) || { cast: [] };
   const castDef = script.cast.find((c) => c.role === p.role) || script.cast.find((c) => c.refImage) || script.cast[0] || {};
   if (!castDef.refImage) throw Object.assign(new Error("初始定妆未确认：请先在 C2 卡上传或生成初始图并确认"), { code: "CAST_REF_MISSING" });
-  const refPath = castAssetPath(castDef.refImage);
+  const refPath = castAssetPath(ctx, castDef.refImage);
   if (!refPath) throw Object.assign(new Error("初始定妆文件缺失: " + castDef.refImage), { code: "CAST_FILE_MISSING" });
 
   // 1) 孤儿产物接续（断点续跑，2026-11-21）：服务重启/重派时，远端已渲染成功的同规格
@@ -377,7 +383,7 @@ async function runRemoteScreenTest(ctx, job, p, seed, cents) {
   // 2) 无可接续产物 → 首帧等比适配＋FL2VA 真跑
   let renderMeta = null;
   if (!mp4Bytes) {
-    const tmpDir = path.join(process.cwd(), "var", "tmp");
+    const tmpDir = path.join(vdir(ctx), "tmp");
     fs.mkdirSync(tmpDir, { recursive: true });
     const fitPath = path.join(tmpDir, safeSeg(j.id) + "_fit.png");
     await runFfmpeg(["-y", "-i", refPath, "-vf", "scale=" + ST_W + ":" + ST_H + ":force_original_aspect_ratio=increase,crop=" + ST_W + ":" + ST_H, fitPath]);
@@ -409,7 +415,7 @@ async function runRemoteScreenTest(ctx, job, p, seed, cents) {
   const mp4Path = writeOut(ctx, mp4Name, mp4Bytes);
 
   // 3) 抽帧（每 8 帧取 1 → 约 30 帧全分辨率候选，736×1312；巡游段多，加密抽帧）
-  const outDir = path.join(process.cwd(), "var", "out");
+  const outDir = path.join(vdir(ctx), "out");
   const prefix = safeSeg(j.id) + "_view_";
   const viewPat = path.join(outDir, prefix + "%02d.png");
   await runFfmpeg(["-y", "-i", mp4Path, "-vf", "select=not(mod(n\\," + ST_STEP + "))", "-vsync", "vfr", viewPat]);
@@ -473,7 +479,7 @@ async function runRemoteCharShots(ctx, job, p, seed, cents) {
   (script.scenes || []).forEach((sc) => (sc.shots || []).forEach((sh) => shots.push(Object.assign({ scene: sc.name, mood: sc.mood }, sh))));
   const viewsByRole = (st0.viewRefs || {})[p.episodeId] || {};
   const castDef0 = cast.find((x) => x.refImage) || cast[0] || {};
-  const outDirAbs = path.join(process.cwd(), "var", "out");
+  const outDirAbs = path.join(vdir(ctx), "out");
   const images = [];
   let rendered = 0;
   for (let i = 0; i < shots.length; i++) {
@@ -489,13 +495,13 @@ async function runRemoteCharShots(ctx, job, p, seed, cents) {
     roles.forEach((role) => {
       const cd = cast.find((x) => x.role === role || x.name === role) || {};
       const view = pickView(viewsByRole[role], need, i);
-      const srcAbs = view ? castAssetPath(view.art) : (cd.refImage ? castAssetPath(cd.refImage) : null);
+      const srcAbs = view ? castAssetPath(ctx, view.art) : (cd.refImage ? castAssetPath(ctx, cd.refImage) : null);
       if (srcAbs && fs.existsSync(srcAbs)) refFrames.push({ bytes: fs.readFileSync(srcAbs), def: cd, role });
     });
     const view0 = roles.length ? pickView(viewsByRole[roles[0]], need, i) : null;
     // 不再回退「别人的定妆图/试棚帧」——那正是场景污染源（热舞派对复盘）。无拍板帧 → 跳过该镜
     // 首帧，视频走参考条件路径（R2VA 按 desc 出场景）。
-    const copyAbs = view0 ? castAssetPath(view0.art) : null;
+    const copyAbs = view0 ? castAssetPath(ctx, view0.art) : null;
     let done = false, usedSeed = numFrom(seed) + i;
     if (refFrames.length) {
       // —— v2 参考条件生成（场景按描述，身份按参考）——

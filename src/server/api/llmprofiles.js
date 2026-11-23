@@ -34,14 +34,17 @@ function register(router, ctx) {
     return st.llm_profiles;
   }
 
-  function profileView(st, p) {
+  /* 档案视图（D4 同类面收口 2026-11-23）：bat（服务器本机重启脚本路径）与 base（内网端点）
+     只随 ops 身份下发——普通登录用户不下发（与 gpu.js restart_hint 同一纪律；唯一消费面是运维台页）。
+     在线态/model 保留：客户端非 ops 面（助手横幅、GPU 徽章）需要。 */
+  function profileView(st, p, isOps) {
     const nodeLabel = p.node && (st.nodes || {})[p.node] ? st.nodes[p.node].label : null;
     return {
       id: p.id,
       label: p.label,
-      base: p.base,
+      base: isOps ? p.base : "",
       model: p.model,
-      bat: p.bat || "",
+      bat: isOps ? p.bat || "" : "",
       has_key: !!p.key,
       node: p.node || null,
       node_label: nodeLabel,
@@ -97,7 +100,7 @@ function register(router, ctx) {
           online: !!llm.llmOnline,
           model: llm.llmModel || (llmActiveProfile(st) || {}).model || null
         },
-        profiles: Object.keys(profiles).map((id) => profileView(st, profiles[id]))
+        profiles: Object.keys(profiles).map((id) => profileView(st, profiles[id], auth.role === "ops"))
       });
     },
     { auth: true }
@@ -120,7 +123,7 @@ function register(router, ctx) {
       store.commit();
       audit(auth, "llm_profile_add", id, { label: c.label, base: c.base, node: c.node || null });
       return router.json(res, 201, {
-        profile: profileView(st, profiles[id]),
+        profile: profileView(st, profiles[id], true),
         note: "档案「" + c.label + "」已登记" + (st.llm_active === id ? "并启用（热生效）" : "——点「启用」切换")
       });
     },
@@ -143,7 +146,7 @@ function register(router, ctx) {
       audit(auth, "llm_profile_update", p.id, { label: p.label, base: p.base, node: p.node || null });
       const hosting = st.llm_active === p.id;
       return router.json(res, 200, {
-        profile: profileView(st, p),
+        profile: profileView(st, p, true),
         note: hosting ? "已保存并热生效（llm-gw 每次调用动态读取）" : "已保存到「" + p.label + "」（当前未启用，切换后生效）"
       });
     },
@@ -167,7 +170,7 @@ function register(router, ctx) {
       try { ctx.bus.publish("nodes", { event: "llm_profile_activate", profile: id }); } catch (e) { /* SSE 未就绪 */ }
       return router.json(res, 200, {
         active: id,
-        profile: profileView(st, profiles[id]),
+        profile: profileView(st, profiles[id], true),
         note: "Agent 助手大脑已切到「" + profiles[id].label + "」（热生效）"
       });
     },

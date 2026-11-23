@@ -43,8 +43,13 @@ function safeSeg(s) {
     .slice(0, 120);
   return v || "x";
 }
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为。
+   runtime/bin/ffmpeg.exe 等仓库根静态二进制不受 THEATER_VAR 影响，仍走 process.cwd()（仓库根约定）。 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
@@ -83,13 +88,13 @@ function probeMedia(file) {
   });
 }
 
-/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 CWD 字面路径 */
+/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 varDir 字面路径 */
 function resolveArt(ctx, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 function stripLead(s) {
   let x = String(s == null ? "" : s);

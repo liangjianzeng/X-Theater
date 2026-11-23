@@ -26,6 +26,11 @@ const TMPL_EDIT = "qwen-image-edit-cast";
 // 换 util.stubPng 可见真 PNG（深底斜纹竖屏），网格/灯箱一眼可辨「这是占位」
 const PNG_STUB = require("../../core/util.js").stubPng(720, 1280);
 
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
+
 function fnv1a(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -55,19 +60,19 @@ function safeSeg(s) {
   return v || "x";
 }
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
   return fp;
 }
-/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 CWD 字面路径 */
+/** art 虚拟路径（var/out/x）→ 物理文件：优先 cfg.outDir＋basename（THEATER_VAR 部署可变），兜底 varDir 字面路径 */
 function resolveArt(ctx, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 function scriptOf(ctx, episodeId) {
   try {
@@ -88,7 +93,7 @@ function ensureInComfyInput(ctx, refImage) {
   const dst = path.join(base, safeSeg(refImage));
   try {
     if (!fs.existsSync(dst)) {
-      const src = path.join(process.cwd(), "var", "assets", "cast", refImage);
+      const src = path.join(vdir(ctx), "assets", "cast", refImage);
       if (fs.existsSync(src)) fs.copyFileSync(src, dst);
       else return null;
     }
@@ -207,7 +212,7 @@ async function runComfy(ctx, job, p, seed, cents) {
     if (p.refImage) {
       // 参考图解析（素材中心 2026-11-22 修复）：库内 var/ 相对路径 ＋ 裸文件名（var/assets/cast 约定）
       const r1 = resolveArt(ctx, p.refImage);
-      const r2 = path.join(process.cwd(), "var", "assets", "cast", path.basename(String(p.refImage).replace(/\\/g, "/")));
+      const r2 = path.join(vdir(ctx), "assets", "cast", path.basename(String(p.refImage).replace(/\\/g, "/")));
       const local = (r1 && fs.existsSync(r1)) ? r1 : (fs.existsSync(r2) ? r2 : null);
       const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
       if (local && inputDir) {
@@ -281,7 +286,7 @@ async function runComfy(ctx, job, p, seed, cents) {
       const art = actor && (actor.candidates || []).map((x) => x.art).filter(Boolean)[0];
       if (!art) continue; // 定妆未就绪（编排层保证次序）
       // 编辑输入优先剧本 refImage（用户原图=定妆终稿），退化用 casting 候选产物
-      const refOrig = castDef.refImage ? path.join(process.cwd(), 'var', 'assets', 'cast', safeSeg(String(castDef.refImage).replace(/^.*[\/]/, ''))) : null;
+      const refOrig = castDef.refImage ? path.join(vdir(ctx), 'assets', 'cast', safeSeg(String(castDef.refImage).replace(/^.*[\/]/, ''))) : null;
       const local = (refOrig && fs.existsSync(refOrig)) ? refOrig : resolveArt(ctx, art);
       const inputName = "cast_" + safeSeg(refName) + ".png";
       const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");

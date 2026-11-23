@@ -20,6 +20,11 @@ const ENGINE_USER = "自部署·精修档";
 const COST_CENTS = 10;
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
 
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
+
 function fnv1a(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -46,7 +51,7 @@ function safeSeg(s) {
   return v || "x";
 }
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
@@ -54,10 +59,10 @@ function writeOut(ctx, fileName, data) {
 }
 function resolveArt(ctx, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 
 async function runReal(ctx, j, p, seed) {

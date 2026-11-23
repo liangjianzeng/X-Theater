@@ -12,6 +12,11 @@ const prompts = require("../../prompts/index.js");
 
 const NAME = "music";
 const ENGINE = "ACE-Step 1.5";
+
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
 const MOOD_BASE = { "离别": "码头暮色", "释然": "晚风", "压抑": "汽笛" };
 const DEFAULT_MOOD = "释然";
 const MP3_STUB = Buffer.from("ID3\x03\x00\x00\x00\x00\x00\x00XTHEATER-STUB", "latin1");
@@ -98,7 +103,7 @@ function resolveVoice(ctx, voiceId) {
   const vo = voices.find((x) => x && x.id === voiceId);
   if (!vo || vo.kind !== "clone" || !vo.ref) return null;
   const ref = String(vo.ref).replace(/\\/g, "/").replace(/^\/+/, "");
-  const outDir = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(process.cwd(), "var", "out"));
+  const outDir = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const varRoot = path.dirname(outDir);
   const ref_abs = path.isAbsolute(ref) ? ref
     : (ref.indexOf("var/") === 0 ? path.join(varRoot, ref.slice("var/".length)) : path.resolve(ref));

@@ -53,8 +53,13 @@ function safeSeg(s) {
     .slice(0, 120);
   return v || "x";
 }
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为。
+   runtime/bin/ffmpeg.exe 等仓库根静态二进制不受 THEATER_VAR 影响，仍走 process.cwd()（仓库根约定）。 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
@@ -163,10 +168,10 @@ function sbFileForShot(ctx, episodeId, shotId) {
 /** art 虚拟路径（var/out/x）→ cfg.outDir 物理文件（读回产物统一口径） */
 function resolveArt(ctx, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const base = String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 
 /** 该镜主角色（cast[0]）的定妆原片 → 拷进 ComfyUI input 作 overlap 参考；无则 null */
@@ -458,7 +463,7 @@ async function runTransitionComfy(ctx, j, p, seed) {
   if (!fs.existsSync(srcA)) throw (() => { const e = new Error("起点镜 take 文件缺失: " + srcA); e.code = "TAKE_MISSING"; return e; })();
   const inputDir = String((ctx.cfg && ctx.cfg.comfy && ctx.cfg.comfy.inputDir) || "");
   if (!inputDir) throw (() => { const e = new Error("ComfyUI input 目录未配置"); e.code = "NO_INPUT_DIR"; return e; })();
-  const tmpDir = path.join(process.cwd(), "var", "tmp");
+  const tmpDir = path.join(vdir(ctx), "tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
   const frameTmp = path.join(tmpDir, "trA_" + safeSeg(shotA.id) + ".png");
   await extractLastFrame(srcA, frameTmp);

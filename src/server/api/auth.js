@@ -8,6 +8,37 @@ const TOKEN_TTL_MS = 7 * 24 * 3600 * 1000; // 7 天
 
 const Tenants = require("../core/tenants.js");
 
+/* login 速率限制（2026-11-23 深审 D2）：POST /api/login 此前无限尝试，邀请码可被暴力枚举。
+   进程内 Map 按客户端 IP 记连续失败：达 LOGIN_FAIL_MAX 次 → 锁 LOGIN_BLOCK_MS（RATE_LIMITED→429），
+   成功后清零；Map 超 LOGIN_TRACK_MAX 条时按插入序淘汰最旧（防长跑内存涨）。
+   注：remoteAddress 在反代后可能是代理 IP——一期内网自部署可接受；公网部署前应换持久化退避＋
+   真实 IP（X-Forwarded-For 需受信代理）＋按 IP 限频（深审报告 D2 归二期安全包）。 */
+const LOGIN_FAIL_MAX = 10;
+const LOGIN_BLOCK_MS = 30000;
+const LOGIN_TRACK_MAX = 2048;
+const loginFails = new Map(); // ip → { n, until }
+function loginIp(req) {
+  try { return String((req && req.socket && req.socket.remoteAddress) || "?"); } catch (e) { return "?"; }
+}
+function loginBlockLeftMs(ip) {
+  const r = loginFails.get(ip);
+  if (!r) return 0;
+  if (r.until && r.until > Date.now()) return r.until - Date.now();
+  if (r.until && r.until <= Date.now()) loginFails.delete(ip); // 锁到期清计数
+  return 0;
+}
+function loginFailNote(ip) {
+  if (loginFails.size >= LOGIN_TRACK_MAX) {
+    const oldest = loginFails.keys().next().value; // Map 保持插入序 → 淘汰最旧
+    if (oldest !== undefined) loginFails.delete(oldest);
+  }
+  const r = loginFails.get(ip) || { n: 0, until: 0 };
+  r.n += 1;
+  if (r.n >= LOGIN_FAIL_MAX) { r.until = Date.now() + LOGIN_BLOCK_MS; r.n = 0; }
+  loginFails.set(ip, r);
+}
+function loginOkNote(ip) { loginFails.delete(ip); }
+
 // 邀请码两形态（2026-11-22 按人发码升级）：
 //   老数组 ["CODE"] → 登录时就地升级 {CODE:{}}；
 //   新对象 {CODE:{name?,role?,uid?}} → 配置过的码首次使用建档绑定（一人一码一号）；
@@ -40,10 +71,16 @@ function register(router, ctx) {
       if (!code || typeof code !== "string") {
         throw { code: "BAD_REQUEST", message: "缺少邀请码 code" };
       }
+      const ip = loginIp(req); // D2 速率限制（按 IP 连续失败退避）
+      const blockedMs = loginBlockLeftMs(ip);
+      if (blockedMs > 0) {
+        throw { code: "RATE_LIMITED", message: "邀请码尝试过于频繁，请 " + Math.ceil(blockedMs / 1000) + " 秒后再试" };
+      }
       const st = store.get();
       const m = inviteMap(st, store);
       const inv = m[code];
       if (!inv) {
+        loginFailNote(ip);
         throw { code: "INVALID_CODE", message: "邀请码无效" };
       }
       st.users = st.users || {};
@@ -109,6 +146,7 @@ function register(router, ctx) {
         }
       }
 
+      loginOkNote(ip); // D2：成功登录清失败计数
       const token = util.sign({
         uid: user.id,
         role: user.role,

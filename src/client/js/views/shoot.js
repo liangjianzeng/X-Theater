@@ -3,14 +3,13 @@
    ＋store.loadJobs（SSE jobs 事件骨架就地更新，本视图另设 4s 轮询兜底，onUnmounted 清理）。
    纪律：全中文人话；引擎型号名不进模板字面量（出 store 后再经 T.sanitize 包一层；
    任务账本里的 lane/worker_type 是内部代号，一律不上屏）；金额 <b class=num>（Money 组件）。
-   BACKEND-ISSUE: GET /api/jobs?episodeId= 实测（冒烟服 8767）落到 store.readLog("job") 账本：
-     行形状 {id:log_xxx, ts, job_id, worker_type, type, lane, status, episodeId, initiated_by,
-     free, attempts}，没有 payload，且同一 job_id 按状态变迁有多行。后果：①任务无法归属到具体
-     镜头（payload.shotId 缺失），镜格内的「停/重拍」按钮只能在任务带 payload.shotId 时点亮，
-     当前以集级「队列任务」区兜底给 stop/retry（retry 404 属正常，store 已有人话 toast）；
+   账本行形状（GET /api/jobs?episodeId= 落 store.readLog("job")）：
+     {id:log_xxx, ts, job_id, worker_type, type, lane, status, episodeId, shotId, initiated_by,
+     free, attempts}，同一 job_id 按状态变迁有多行。①归属镜头：单镜任务带顶层 shotId（账本
+     可读化后已补，video_ms 串拍组行无单镜 shotId，由集级「队列任务」区兜底 stop/retry）；
      ②操作必须传 job_id（传行 id 会 404），视图已按 job_id 取键并按 ts 去重取最新行。
-   BACKEND-ISSUE: shots.status 永不为 "failed"（video 任务失败后镜头仍停在 pending/moderating），
-     failed 高亮只能来自 failed 的 video 任务行；若后端把失败回写到镜头状态，镜格高亮自动跟上。
+   已修（2026-11-23 深审）：后端 cards.js handleShootJobStatus 已把 video/video_ms 真失败回写
+     shot.status="failed"（重新排队回 pending），镜格红带/失败筛选双来源：live 任务行 ∪ 镜头状态。
    BACKEND-ISSUE: 种子镜名带「PROTO·」前缀（用户面忌词），建议数据侧清理；视图 clean() 已遮罩。 */
 (function (global) {
   "use strict";
@@ -75,7 +74,8 @@
       const jobOf = shot => jobRows.value.find(j => j.live !== false && (j.shotId === shot.id || (j.payload && j.payload.shotId === shot.id))) || null;
       const jobFailed = shot => {
         const j = jobOf(shot);
-        return !!j && j.status === "failed";
+        // 双来源（2026-11-23 深审）：live 任务行 failed ∪ 后端回写的 shot.status==="failed"（重启后仍成立）
+        return (!!j && j.status === "failed") || String(shot.status) === "failed";
       };
       /* 镜格状态色带（纯展示映射，不改任何状态）：ok 绿 / run 蓝 / queued 灰 / 复审黄 / 失败红 */
       function cellCls(shot) {
@@ -182,7 +182,7 @@
         const j = jobOf(s);
         if (f === "queued") return !!j && ["queued", "pending"].indexOf(String(j.status)) >= 0;
         if (f === "running") return !!j && String(j.status) === "running";
-        if (f === "failed") return (!!j && String(j.status) === "failed") || !!(s.flags && s.flags.stale);
+        if (f === "failed") return (!!j && String(j.status) === "failed") || String(s.status) === "failed" || !!(s.flags && s.flags.stale);
         if (f === "review") return String(s.status) === "pending_review";
         if (f === "ok") return String(s.status) === "ok";
         return true;

@@ -1,6 +1,6 @@
 /* 剧场 Studio · 成本视图（视图 B：costs） */
-// BACKEND-ISSUE: GET /api/episodes/:id/costs 的镜级行不透出引擎档位（takes[].engine 未随账本返回），
-//   本页「产出档」列暂以账本条目 kind 人话化代替；期望后端在 shots[] 内补 engine/tier 字段。
+// 已修（2026-11-23 深审）：后端 shots[] 已透出 engine（出片 take 的人话引擎名，与 compose 选条
+//   同规则）与 tier（job 账本派单档位）。本页「产出档」列主用 engine·tier，缺字段的老数据回落 kind 人话化。
 (function (global) {
   "use strict";
   const T = global.__T;
@@ -24,6 +24,15 @@
       if (seen.indexOf(h) < 0) seen.push(h);
     });
     return seen.join("、");
+  }
+  /* 产出档：engine（人话引擎名，已含档位）＋tier（账本派单档位）去重拼接；老数据回落 kindsOf */
+  const TIER_CN = { fast: "快速档", high: "高价值档", std: "标准档" };
+  function produceOf(s) {
+    const eng = s && s.engine ? T.sanitize(String(s.engine)) : "";
+    const tl = s && s.tier ? (TIER_CN[String(s.tier)] || T.sanitize(String(s.tier))) : "";
+    if (eng) return tl && eng.indexOf(tl) < 0 ? eng + " · " + tl : eng;
+    if (tl) return tl;
+    return kindsOf((s && s.items) || []);
   }
 
   views.Costs = {
@@ -82,7 +91,7 @@
                     <td><span class="mono muted">{{ s.seq }}.</span> {{ hs(s.name) }}</td>
                     <td><status-dot :status="s.status"></status-dot></td>
                     <td><b class="num">{{ s.takes }}</b></td>
-                    <td class="weak">{{ kindsOf(s.items) }}</td>
+                    <td class="weak">{{ produceOf(s) }}</td>
                     <td class="ta-r"><money :cents="s.cents"></money></td>
                   </tr>
                   <tr v-for="(c, i) in common" :key="'cm' + i" class="v-costs-common">
@@ -170,6 +179,7 @@
         reload, showBilling,
         hs: s => T.sanitize(s),
         kindsOf,
+        produceOf,
         kindHuman,
         workerHuman: w => (w == null || w === "" ? "—" : T.sanitize(String(w))),
         fmtTime: ts => T.fmtTime(ts),

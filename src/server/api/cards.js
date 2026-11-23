@@ -1118,8 +1118,43 @@ function onMusicDone(ctx, job, episodeId) {
   return true;
 }
 
+/* 拍摄失败回写（2026-11-23 深审）：video/video_ms 烧完补拍梯子真失败 → shot.status="failed"。
+   此前镜头永远停在 pending——服务重启后 live 任务消失，客户端镜格无法显示失败（shoot.js BACKEND-ISSUE）。
+   重新排队/执行（新拍或 jobs retry）→ failed 回 "pending"。只覆盖 pending 态：已有 take 的
+   moderating/ok/pending_review 不夺回（失败的是本次派单，不否定既有产出）。 */
+function handleShootJobStatus(ctx, evt) {
+  const job = evt.job;
+  if (!job || (job.type !== "video" && job.type !== "video_ms")) return;
+  const p = job.payload || {};
+  const ids = Array.isArray(p.shotIds) ? p.shotIds : p.shotId ? [p.shotId] : [];
+  if (!ids.length) return;
+  const st = ctx.store.get();
+  let touched = false;
+  ids.forEach((sid) => {
+    const shot = (st.shots || {})[String(sid)];
+    if (!shot) return;
+    if (evt.event === "failed") {
+      if (shot.status === "pending") {
+        shot.status = "failed";
+        touched = true;
+      }
+    } else if (shot.status === "failed") {
+      // queued/running：该镜又有真活在路上，失败态回到排队语义
+      shot.status = "pending";
+      touched = true;
+    }
+  });
+  if (touched) ctx.store.commit();
+}
+
 function handleJobDone(ctx, evt) {
-  if (!evt || evt.event !== "done" || !evt.job) return;
+  if (!evt || !evt.job) return;
+  // 非 done 的队列事件：只处理拍摄链失败回写，不进 done switch（2026-11-23 深审）
+  if (evt.event === "failed" || evt.event === "queued" || evt.event === "running") {
+    handleShootJobStatus(ctx, evt);
+    return;
+  }
+  if (evt.event !== "done") return;
   const job = evt.job;
   if (job.status && job.status !== "done") return;
   const st = ctx.store.get();

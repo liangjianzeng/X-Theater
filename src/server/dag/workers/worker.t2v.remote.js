@@ -113,8 +113,8 @@ function probeHasAudio(abs) {
 }
 
 /** 首帧等比适配到镜幅（cover 居中裁切，不拉伸——试妆抽帧 736×1312 → 镜幅 768×1344 等） */
-async function fitFrame(bytes, width, height, tag) {
-  const tmpDir = path.join(process.cwd(), "var", "tmp");
+async function fitFrame(ctx, bytes, width, height, tag) {
+  const tmpDir = path.join(vdir(ctx), "tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
   const src = path.join(tmpDir, "ff_" + tag + "_src.png");
   const dst = path.join(tmpDir, "ff_" + tag + "_fit.png");
@@ -155,8 +155,13 @@ function safeSeg(s) {
     .slice(0, 120);
   return v || "x";
 }
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源；兜底 process.cwd()/var＝cfg 缺省旧行为。
+   runtime/bin/ffmpeg.exe 等仓库根静态二进制不受 THEATER_VAR 影响，仍走 process.cwd()（仓库根约定）。 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
 function writeOut(ctx, fileName, data) {
-  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join("var", "out")));
+  const dir = path.join(String((ctx && ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out")));
   fs.mkdirSync(dir, { recursive: true });
   const fp = path.join(dir, safeSeg(fileName));
   fs.writeFileSync(fp, data);
@@ -253,8 +258,8 @@ function castRefArts(ctx, episodeId, castDefs) {
     if (!cd.refImage) continue;
     const name = safeSeg(String(cd.refImage).replace(/^.*[\\/]/, ""));
     const candidates = [
-      path.join(process.cwd(), "var", "assets", "cast", name),
-      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join("var", "out")), name)
+      path.join(vdir(ctx), "assets", "cast", name),
+      path.join(String(ctx.cfg && ctx.cfg.outDir || path.join(vdir(ctx), "out")), name)
     ];
     for (const p of candidates) {
       if (fs.existsSync(p)) { arts.push({ bytes: fs.readFileSync(p), def: cd }); break; }
@@ -285,7 +290,7 @@ async function runLtxFastComfy(ctx, job, p, seed, ventry) {
   const dlg = scr.dialogue ? "，台词：「" + scr.dialogue + "」" : "";
   const PROMPT = "0.0s-" + sec.toFixed(1) + "s：" + (scr.desc || shot.name || "") + dlg + "\n" + prompts.style.irStyleEn(pkg);
   await comfy.ensureFree(base, 8);
-  const fitBytes = await fitFrame(sb.bytes, width, height, safeSeg(shotId).slice(0, 24));
+  const fitBytes = await fitFrame(ctx, sb.bytes, width, height, safeSeg(shotId).slice(0, 24));
   const ffName = await comfy.uploadAsset(base, fitBytes, "t2vr_ltx_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
   const r = await comfy.runTemplate(ctx, job, {
     base,
@@ -408,7 +413,7 @@ async function runRemoteComfy(ctx, job, p, seed, cents, settings) {
     // 已接续：直接出 take（跳过渲染）
   } else if (sbBytes) {
     // 首帧等比适配到镜幅（开机前校准 2026-11-21：试妆抽帧 736×1312 → 镜幅 768×1344，cover 裁切防拉伸）
-    const fitBytes = await fitFrame(sbBytes, width, height, safeSeg(shotId).slice(0, 24));
+    const fitBytes = await fitFrame(ctx, sbBytes, width, height, safeSeg(shotId).slice(0, 24));
     const ffName = await comfy.uploadAsset(base, fitBytes, "t2vr_sb_" + safeSeg(shotId) + "_" + seed.slice(0, 6) + ".png");
     const ir = h3ir.buildFL2VA({
       shotDesc: scr.desc, dialogue: scr.dialogue, lang: "中文",
@@ -618,19 +623,19 @@ async function runTransitionRemote(ctx, j, p, seed, fast) {
   const takesA = (shotA.takes || []).filter((t) => t && t.art);
   const bestA = takesA.filter((t) => t.best).pop() || takesA[takesA.length - 1];
   if (!bestA) throw (() => { const e = new Error("起点镜尚无成片 take: " + shotA.id); e.code = "NO_SOURCE_TAKE"; return e; })();
-  const srcA = resolveArtLocal(bestA.art);
+  const srcA = resolveArtLocal(ctx, bestA.art);
   if (!fs.existsSync(srcA)) throw (() => { const e = new Error("起点镜 take 文件缺失: " + srcA); e.code = "TAKE_MISSING"; return e; })();
   const sbB = sbArtForShot(ctx, episodeId, shotB.id);
   if (!sbB) throw (() => { const e = new Error("终点镜没有可用的分镜首帧: " + shotB.id); e.code = "NO_REMOTE_INPUT_ART"; return e; })();
   // A 尾帧抽取（本机 ffmpeg）→ cover 适配镜幅 → 上传
-  const tmpDir = path.join(process.cwd(), "var", "tmp");
+  const tmpDir = path.join(vdir(ctx), "tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
   const frameTmp = path.join(tmpDir, "trA_" + safeSeg(shotA.id) + "_src.png");
   await runFfmpeg(["-y", "-sseof", "-0.05", "-i", srcA, "-frames:v", "1", "-q:v", "2", frameTmp], 60000);
   const width = Number(p.width) > 0 ? Number(p.width) : 768;
   const height = Number(p.height) > 0 ? Number(p.height) : 1344;
   const frameBytes = fs.readFileSync(frameTmp);
-  const fitBytes = await fitFrame(frameBytes, width, height, safeSeg(shotA.id).slice(0, 24));
+  const fitBytes = await fitFrame(ctx, frameBytes, width, height, safeSeg(shotA.id).slice(0, 24));
   const imgA = await comfy.uploadAsset(base, fitBytes, "t2vr_trA_" + safeSeg(shotA.id) + "_" + seed.slice(0, 6) + ".png");
   const imgB = await comfy.uploadAsset(base, sbB.bytes, "t2vr_trB_" + safeSeg(shotB.id) + "_" + seed.slice(0, 6) + ".png");
   const scrA = shotScript(ctx, episodeId, shotA);
@@ -683,12 +688,12 @@ async function runTransitionRemote(ctx, j, p, seed, fast) {
 }
 
 /** art 虚拟路径 → 物理文件（远端车道用） */
-function resolveArtLocal(art) {
+function resolveArtLocal(ctx, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const base = path.join(process.cwd(), "var", "out");
+  const base = path.join(vdir(ctx), "out");
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 
 /** 远端车道 stub：多镜串拍（分段占位）与转场衔接镜共用 */

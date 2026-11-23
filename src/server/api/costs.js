@@ -59,14 +59,35 @@ function register(router, ctx) {
         byShot[key].items.push({ kind: b.kind || b.type || "other", cents: b.cents || 0, ts: b.ts });
         total += b.cents || 0;
       });
+      // 产出档透出（2026-11-23 深审）：档位来自 job 账本（派单时 engine.logJob 写 tier），
+      // 同 job_id 取最新行；串拍组行无单镜 shotId → 该镜 tier 为 null（客户端如实显「—」）。
+      const tierByShot = {};
+      try {
+        const latest = {}; // job_id → 最新账本行
+        (store.readLog("job") || []).forEach((r) => {
+          if (!r || r.episodeId !== params.id) return;
+          const k = String(r.job_id != null ? r.job_id : r.id);
+          if (!latest[k] || Number(r.ts || 0) >= Number(latest[k].ts || 0)) latest[k] = r;
+        });
+        Object.keys(latest).forEach((k) => {
+          const r = latest[k];
+          if (r.shotId && (r.type === "video" || r.type === "video_ms")) tierByShot[String(r.shotId)] = r.tier || null;
+        });
+      } catch (e) { /* 账本读失败不阻断成本页：档位列留空 */ }
       const shotRows = shots.map((sh) => {
         const g = byShot[sh.id] || { shotId: sh.id, cents: 0, items: [] };
+        // 引擎＝实际出片那条 take 的人话名（与 compose 选条同规则：best 最后一条，否则最新一条）
+        const tks = (sh.takes || []).filter((t) => t && t.art);
+        const bests = tks.filter((t) => t.best);
+        const best = bests.length ? bests[bests.length - 1] : (tks.length ? tks[tks.length - 1] : null);
         return {
           shotId: sh.id,
           name: sh.name,
           seq: sh.seq,
           status: sh.status,
           takes: (sh.takes || []).length,
+          engine: (best && best.engine) || null,
+          tier: tierByShot[sh.id] || null,
           cents: g.cents,
           items: g.items
         };

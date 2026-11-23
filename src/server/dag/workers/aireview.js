@@ -20,11 +20,18 @@ const ENGINE = "规则机检（多人格视角）";
 
 /* ---------------- 公共读取 ---------------- */
 
-function safeJoin(base, art) {
+/* var 数据根（2026-11-23 深审 D1 收口）：cfg.varDir＝唯一事实源（index.js 按 repoRoot/THEATER_VAR
+   解析）；禁止 CWD 拼 var 路径——THEATER_VAR/非仓库根 CWD 下错位（female_ref.png 事故同根因）。
+   兜底保持 process.cwd()/var＝cfg 缺省时行为不变。 */
+function vdir(ctx) {
+  return (ctx && ctx.cfg && ctx.cfg.varDir) || path.join(process.cwd(), "var");
+}
+
+function safeJoin(ctx, base, art) {
   const a = String(art || "").replace(/\\/g, "/").replace(/^\/+/, "");
   const byBase = path.join(base, path.basename(a));
   if (fs.existsSync(byBase)) return byBase;
-  return path.join(process.cwd(), a);
+  return path.join(vdir(ctx), a.replace(/^var\//, ""));
 }
 
 function readCtx(ctx, episodeId) {
@@ -210,7 +217,7 @@ function reviewC2(ctx, card, episodeId) {
 function reviewC4(ctx, card, episodeId) {
   const p = card.payload || {};
   const { st } = readCtx(ctx, episodeId);
-  const base = String((ctx.cfg && ctx.cfg.outDir) || path.join("var", "out"));
+  const base = String((ctx.cfg && ctx.cfg.outDir) || path.join(vdir(ctx), "out"));
   const out = [];
 
   // 摄影师视角：分镜图落盘
@@ -219,7 +226,7 @@ function reviewC4(ctx, card, episodeId) {
     const imgs = p.images || [];
     if (!imgs.length) f.push("fail：本卡没有分镜图");
     let onDisk = 0;
-    imgs.forEach((im) => { if (im.art && fs.existsSync(safeJoin(base, im.art))) onDisk += 1; });
+    imgs.forEach((im) => { if (im.art && fs.existsSync(safeJoin(ctx, base, im.art))) onDisk += 1; });
     if (imgs.length && onDisk < imgs.length) f.push("fail：" + (imgs.length - onDisk) + " 张分镜图文件缺失（卡片有引用、盘上没有）");
     else if (imgs.length) f.push("pass：" + onDisk + " 张分镜图全部落盘");
     out.push(mk("摄影师视角", verdictOf(f), f));

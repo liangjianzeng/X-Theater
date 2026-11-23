@@ -185,6 +185,21 @@ function makeAssetIndex(store) {
           if (c && c.refImage) add("var/assets/cast/" + c.refImage, tidOf(eid));
         });
       });
+      // D5 深审 2026-11-23：转场 take.art 与场景定场图此前不入反查索引 → /var 资产墙退化为登录墙
+      //（不越权但少隔离）。转场按集定域；场景卡按 scope 定域——project 归项目租户，global 不入库
+      //（共享素材维持登录墙语义，与「素材库共享是设计」的既定判断一致）。
+      Object.keys(st.transitions || {}).forEach((k) => {
+        const tr = st.transitions[k];
+        if (tr && tr.take) add(tr.take.art, tidOf(tr.episodeId));
+      });
+      const tidOfProject = (pid) => ((st.projects || {})[pid] || {}).tenantId || null;
+      (((st.asset_lib || {}).scenes) || []).forEach((sc) => {
+        if (!sc || sc.scope !== "project" || !sc.projectId) return;
+        const tid = tidOfProject(sc.projectId);
+        if (!tid) return;
+        add(sc.establishing, tid);
+        (sc.variants || []).forEach((v) => v && add(v.img, tid));
+      });
     }
     return cache[rel] || null;
   };

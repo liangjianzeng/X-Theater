@@ -105,6 +105,9 @@ function register(router, ctx) {
       const nodes = ensureNodes(st); // 内存兜底补齐（正常已在启动时落盘）
       // Agent 大脑宿主机（llm_profiles[llm_active].node）：节点卡「显存互斥」提示用
       const llm_host_node = llmHostNode(st);
+      // 数据面按角色收窄（2026-11-23 深审 D3）：全体用户清单＋剧集标题清单＝运维台（ops）数据，
+      // 普通用户不再可见他域用户/剧集（节点拓扑本身保留——创建者需要看到可驱动节点做本地化提示）。
+      const isOps = auth.role === "ops";
       return router.json(res, 200, {
         llm_host_node,
         nodes: Object.keys(nodes).map((id) => ({
@@ -126,16 +129,21 @@ function register(router, ctx) {
           engines: enginesOn(id),
           is_llm_host: llm_host_node === id
         })),
-        // 用户默认算力（2026-11-22 用户级路由）：账户→默认节点，建集时落集
-        users: Object.keys(st.users || {}).map((uid) => ({
-          uid,
-          name: st.users[uid].name,
-          role: st.users[uid].role,
-          driver: st.users[uid].driver || ""
-        })),
-        episodes: Object.keys(st.episodes || {}).map((k) => ({
-          id: k, title: st.episodes[k].title, driver: st.episodes[k].driver || "local"
-        }))
+        // 用户默认算力（2026-11-22 用户级路由）：账户→默认节点，建集时落集。
+        // 非 ops 一律空清单（D3 深审）：普通用户无需（也不应）看到全体用户与全域剧集标题。
+        users: isOps
+          ? Object.keys(st.users || {}).map((uid) => ({
+              uid,
+              name: st.users[uid].name,
+              role: st.users[uid].role,
+              driver: st.users[uid].driver || ""
+            }))
+          : [],
+        episodes: isOps
+          ? Object.keys(st.episodes || {}).map((k) => ({
+              id: k, title: st.episodes[k].title, driver: st.episodes[k].driver || "local"
+            }))
+          : []
       });
     },
     { auth: true }
