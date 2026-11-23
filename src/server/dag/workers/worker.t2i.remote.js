@@ -814,7 +814,9 @@ async function run(job, ctx) {
   const meta = {
     kind: "image-stub",
     lane: NAME,
-    engine: reg.model || ENGINE,
+    // 诚实标注（2026-11-23）：stub 占位绝不冒真引擎名——此前印 reg.model 导致候选池看到「真引擎」却拿到占位图
+    engine: "占位·远端未连通（" + (reg.model || ENGINE) + " 未拨通）",
+    model_ref: reg.model || ENGINE,
     jobType: j.type || null,
     episodeId: p.episodeId || j.episodeId || null,
     seed,
@@ -828,7 +830,7 @@ async function run(job, ctx) {
   writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
   meta.art_abs = abs;
 
-  const bag = { ok: true, cents, art, meta, engine: reg.model || ENGINE, path: art };
+  const bag = { ok: true, cents, art, meta, engine: meta.engine, path: art };
   j.result = bag;
   j.art = bag;
   return { ok: true, cents, art, meta };

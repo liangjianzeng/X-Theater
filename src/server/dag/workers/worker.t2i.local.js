@@ -383,12 +383,18 @@ async function runStub(ctx, job, p, seed, cents) {
   const fileName = idSeg + ".png";
   const meta = {
     kind: "image-stub", // 诚实标注：这是占位，不是真模型产物
-    lane: NAME, engine: ENGINE, engine_user: ENGINE_USER,
+    lane: NAME,
+    // 诚实标注（2026-11-23）：stub 占位绝不冒真引擎名（此前 ENGINE＝真模型名，候选池看到真引擎却拿到占位图）
+    engine: "占位·本机 ComfyUI 未启用（" + ENGINE + " 未拨通）",
+    model_ref: ENGINE,
+    engine_user: ENGINE_USER,
     jobType: j.type || null, episodeId: p.episodeId || j.episodeId || null,
     seed, tmpl_hash: "h_" + seed.slice(8, 20), comfy_commit: "c" + seed.slice(0, 7),
     cn_commit: "c" + seed.slice(4, 11), weights: WEIGHTS, cents
   };
-  return bag(ctx, j, { bytes: PNG_STUB, fileName, meta, cents });
+  const b = bag(ctx, j, { bytes: PNG_STUB, fileName, meta, cents });
+  b.engine = meta.engine; // stub 面如实标注（真跑路径不受影响）
+  return b;
 }
 
 async function run(job, ctx) {

@@ -173,7 +173,7 @@ function createEngine({ store, bus, cfg }) {
   /** 算力池解析（2026-11-22 用户裁决）：按族找第一个可用节点的车道。
    *  候选序：集指定 → 发起人默认算力（users[uid].driver）→ 云 API 节点（endpoint 已配）→ 远端 comfy → 本机 → 其余登记节点。
    *  可用＝在册＋同族车道有绑定＋档位类有引擎（wantClass 时过滤）＋gpu_gate 不挡（LLM 占卡的本机自动跳过）。找不到＝null（调用方收口）。 */
-  function poolPick(type, opts, st) {
+  function poolPick(type, opts, st, payload) {
     const family = familyOf(laneFor(type, opts));
     if (!family) return null;
     const wantClass = family === "video" ? wantClassOf(opts) : null;
@@ -185,7 +185,8 @@ function createEngine({ store, bus, cfg }) {
       if (!laneT) return null;
       if (!nodeHasVideoClass(st, id, wantClass)) return null; // 档位类过滤（2026-11-22 运营化）
       const n = nodes[id];
-      if (busyGate && n.gpu_gate && llmHostNode(st) === id && LOCAL_GPU_TYPES.indexOf(type) >= 0) return null; // 大脑宿主机＝档案注册表（云端大脑不挡任何机器）
+      // 大脑宿主机门控（云端大脑不挡任何机器）；img_free 豁免＝素材生图写死本机 5060Ti 买单（2026-11-22 用户裁决）
+      if (busyGate && n.gpu_gate && llmHostNode(st) === id && LOCAL_GPU_TYPES.indexOf(type) >= 0 && type !== "img_free") return null;
       return laneT;
     };
     const cand = [];
@@ -195,6 +196,12 @@ function createEngine({ store, bus, cfg }) {
     const uid = opts && opts.initiated_by;
     const u = uid && (st.users || {})[uid];
     if (u && u.driver && nodes[u.driver] && cand.indexOf(u.driver) < 0) cand.push(u.driver);
+    // 素材生图本机优先（2026-11-23 池化落地 2026-11-22 裁决「写死从 5060ti 调用买单」）：
+    // img_free 默认先本机 5060Ti，远端只作回落；唯一例外「超清 2048²·远端」（tier uhd）保持远端优先的显式意图。
+    // 此前远端优先导致 DGX 离线时素材图全部落 stub 占位（且冒真引擎名）。
+    const tier = (opts && opts.tier) || (payload && payload.tier) || null;
+    const localFirst = type === "img_free" && tier !== "uhd";
+    if (localFirst && nodes.local && cand.indexOf("local") < 0) cand.push("local");
     Object.keys(nodes).forEach(function (id) {
       if (cand.indexOf(id) >= 0) return;
       const n = nodes[id];
@@ -473,7 +480,7 @@ function createEngine({ store, bus, cfg }) {
       // 档位类过滤进池（2026-11-22 运营化）：fast/high 不再固定车道——池按「节点上有没有该类视频引擎」
       // 过滤（如 dgx 同时登记 H3=quality 与 LTX=fast）；候选序不变（集驱动 → 用户默认 → 云 → 远端 → 本机）。
       if (DRIVER_ROUTABLE.indexOf(type) >= 0) {
-        const pick = poolPick(type, opts, st);
+        const pick = poolPick(type, opts, st, payload);
         if (pick) {
           lane = pick.lane;
         } else {
