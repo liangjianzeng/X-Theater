@@ -23,6 +23,17 @@ AI 短剧全链路创作 SaaS —— 一期完全自部署（5060 Ti ＋ DGX Spa
 | [theater-review-report-2026-11-20.md](docs/theater-review-report-2026-11-20.md) | 评审汇总与战略裁决记录 |
 | [theater-preflight-confirmation-2026-11-20.md](docs/theater-preflight-confirmation-2026-11-20.md) | 开工前最终确认（GO 判定） |
 
+## 启动服务
+
+```bash
+PORT=8766 node src/server/index.js          # 数据目录默认仓库 var/（THEATER_VAR 可覆盖）
+# 登录：POST /api/login {"code":"INV-DEMO-1"}
+```
+
+**成片交付口径（2026-11-23）**：`POST /api/episodes/:id/export` ＝真合成出货——`runtime/bin/ffmpeg.exe` 在就真跑；缺失则 503 如实拦截（`COMPOSE_UNAVAILABLE`），绝不产占位冒充成片。出货路径持久化进 `episodes[id].final_art/final_meta`（state.json），交付页读集直显＋内嵌播放，重启不丢。`THEATER_COMPOSE_REAL=0` 为验收套件显式 stub 模式专用（占位如实标 `placeholder:true`），真机环境勿设。
+
+回归：`node test/run.js`（套件自动注入 stub 模式）＋ `node test/selfcheck/workers.js`。
+
 ## UI 原型
 
 [docs/html-prototype/index.html](docs/html-prototype/index.html) —— S1–S18 全量可点击，桌面/H5 设备切换。零依赖，本地起服务预览：

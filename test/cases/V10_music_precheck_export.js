@@ -133,6 +133,17 @@ async function fn(ctx) {
   expect.ok(metaFile, `var/out 缺 sidecar meta（文件=${files.join(',')}）`);
   const metaText = fs.readFileSync(path.join(outDir, metaFile), 'utf8');
   expect.match(metaText, /"explicit_mark"\s*:\s*true/, `sidecar ${metaFile} 应含 explicit_mark:true`);
+
+  // ---- 成片存库随时可看（2026-11-23 用户令）：交付路径必须持久化进 episode（重启不丢） ----
+  const stAfter = await H.getState(ctx);
+  const epAfter = H.asMap(stAfter.episodes)[epId] || {}; // /api/state 的 episodes 是数组（H.asMap 兼容两种形态）
+  expect.ok(epAfter.final_art, '导出后 ep.final_art 应持久化交付路径（旧版只活在内存 jobs Map，重启即蒸发）');
+  const finalAbs = path.join(ctx.actualVarDir, String(epAfter.final_art || '').replace(/^var\//, ''));
+  expect.ok(fs.existsSync(finalAbs), `ep.final_art 指向的文件应存在：${finalAbs}`);
+  expect.ok(epAfter.final_meta && epAfter.final_meta.delivered_at, 'final_meta 应含 delivered_at 出货时间');
+  expect.eq(epAfter.final_meta && epAfter.final_meta.placeholder, true,
+    '套件 stub 模式出货必须如实标 placeholder（真合成出货由真机 E2E 覆盖）');
+
   ctx.note(`export artifacts: ${files.join(',')}`);
 }
 

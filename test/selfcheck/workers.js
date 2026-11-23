@@ -3,6 +3,9 @@
  * test/selfcheck/workers.js —— workers 模块自查（只测名下 worker＋rules；假 ctx 注入，不 require core/engine/api/l2）
  * 运行：node test/selfcheck/workers.js  → 全 PASS 则 exit 0。
  */
+// 套件显式 stub 模式（2026-11-23 compose 真合成默认化）：自查 take 是占位字节，
+// 真 ffmpeg concat 必炸；占位出货由 meta placeholder 如实标注，真合成出货走真机 E2E。
+process.env.THEATER_COMPOSE_REAL = process.env.THEATER_COMPOSE_REAL || "0";
 const assert = require("assert");
 const fs = require("fs");
 const os = require("os");

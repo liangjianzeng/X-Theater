@@ -89,7 +89,9 @@ async function startServer({ port, varDir, readyTimeoutMs = 20000 } = {}) {
   fs.mkdirSync(varDir, { recursive: true });
   const child = spawn(process.execPath, [SERVER_ENTRY], {
     cwd: ROOT,
-    env: Object.assign({}, process.env, { PORT: String(port), THEATER_VAR: varDir }),
+    // THEATER_COMPOSE_REAL=0：套件显式 stub 模式（t2v take 是占位字节，真 ffmpeg concat 必炸；
+    // 占位出货由 meta placeholder 如实标注，真合成出货走真机 E2E——2026-11-23 compose 真合成默认化）
+    env: Object.assign({}, process.env, { PORT: String(port), THEATER_VAR: varDir, THEATER_COMPOSE_REAL: '0' }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

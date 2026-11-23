@@ -1060,11 +1060,30 @@ function onModerateDone(ctx, job, episodeId) {
 function onComposeDone(ctx, job, episodeId) {
   const payload = job.payload || {};
   if (payload.purpose === "export") {
+    const artStr =
+      (job.art && (job.art.art || job.art.path)) ||
+      (typeof job.art === "string" ? job.art : null);
+    // 成片存库（2026-11-23 用户令「交付了就要存库随时可看」）：产物路径写进 episode 持久字段。
+    // 旧版只活在 engine 内存 jobs Map 里，重启即蒸发→交付页产物清单变空（床头情歌事故根因之二）。
+    const st = ctx.store.get();
+    const ep = (st.episodes || {})[episodeId];
+    if (ep && artStr) {
+      const bag = (job.art && typeof job.art === "object") ? job.art : {};
+      const m = bag.meta || {};
+      ep.final_art = artStr;
+      ep.final_meta = {
+        art: artStr,
+        resolution: bag.resolution || m.resolution || null,
+        fps: bag.fps || m.fps || null,
+        placeholder: !!m.placeholder || /stub/i.test(String(m.kind || "")), // 显式 stub 模式出货如实标占位
+        delivered_at: new Date().toISOString()
+      };
+    }
     ctx.store.log("audit", {
       operator: null,
       action: "export_artifacts",
       target: episodeId,
-      artifacts: (job.art && (job.art.art || job.art.path || job.art)) || null
+      artifacts: artStr
     });
     try {
       ctx.bus.publish("cards", {
@@ -1074,7 +1093,7 @@ function onComposeDone(ctx, job, episodeId) {
         job_id: job.id
       });
     } catch (e) {}
-    return false;
+    return !!(ep && artStr); // touched → handleJobDone commit（成片路径随 state 落盘）
   }
   // 样片 compose → C5
   const r = upsertCard(ctx, {

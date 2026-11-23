@@ -7,8 +7,12 @@
  *   compose done 后（cards.js 监听）artifacts 回 job.art＋audit＋bus publish "cards"。
  */
 
+const fs = require("fs");
+const path = require("path");
+
 const PRECHECK_ITEM_MUSIC = "配乐双许可";
 const Tenants = require("../core/tenants.js");
+const FFMPEG_EXE = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
 
 /** 曲库读取（素材中心 2026-11-22）：asset_lib.audio.music 优先（迁移后旧 music_lib 只读留档，不重复计数） */
 function musicLibOf(ctx) {
@@ -169,6 +173,15 @@ function register(router, ctx) {
       const stE = store.get();
       const epE = requireEpisode(params.id);
       Tenants.guardWrite(stE, auth, epE.tenantId || Tenants.defaultTid(stE)); // 域外一律 404；viewer 不可导出（2026-11-23 深审）
+      // 交付硬闸（2026-11-23 用户令「交付了就要存库随时可看」）：真合成不可用→同步拦截如实报错，
+      // 绝不放行去产出 28 字节占位冒充成片（床头情歌 stub 出货事故）。THEATER_COMPOSE_REAL=0 为
+      // 验收套件显式 stub 模式专用（占位由 worker 如实标注 placeholder）。
+      if (process.env.THEATER_COMPOSE_REAL !== "0" && !fs.existsSync(FFMPEG_EXE)) {
+        throw {
+          code: "COMPOSE_UNAVAILABLE",
+          message: "本机 ffmpeg 缺失（runtime/bin/ffmpeg.exe），无法真合成出货；已拦截导出——占位文件不算交付"
+        };
+      }
       const pre = computePrecheck(ctx, params.id);
       if (!pre.pass) {
         throw {

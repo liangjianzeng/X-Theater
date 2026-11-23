@@ -28,7 +28,9 @@
     return Math.floor(d / 86400000) + " 天前";
   };
   T.fmtTime = function (ts) {
-    const d = new Date(Number(ts || 0));
+    // 兼容数字毫秒与 ISO 字符串（final_meta.delivered_at 走 ISO；旧版 Number() 强转→NaN 显示 NaN-NaN）
+    const d = ts instanceof Date ? ts : new Date(typeof ts === "string" ? ts : Number(ts || 0));
+    if (isNaN(d.getTime())) return "—";
     const p = n => String(n).padStart(2, "0");
     return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   };

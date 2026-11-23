@@ -391,6 +391,7 @@ function createEngine({ store, bus, cfg }) {
 
   function failJob(job, errMsg) {
     job.attempts += 1;
+    job.error = String(errMsg == null ? "unknown" : errMsg).slice(0, 300); // 失败原因随 job 透出（交付页如实显示合成失败原因，2026-11-23）
     if (job.attempts < 3) {
       // 自动补拍梯子（≤2 次；系统发起不计费，契约 §2/A7）
       job.status = "queued";

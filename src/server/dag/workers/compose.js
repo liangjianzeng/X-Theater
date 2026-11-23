@@ -1,9 +1,15 @@
 "use strict";
 /**
- * workers/compose.js — 成片合成（FFmpeg stub）
- * 契约 §4：读 episode 全 shots 的 takes→成片 stub 写 var/out/<episodeId>_final.mp4＋sidecar .meta.json，
+ * workers/compose.js — 成片合成（FFmpeg）
+ * 契约 §4：读 episode 全 shots 的 takes→成片写 var/out/<episodeId>_final.mp4＋sidecar .meta.json，
  * sidecar 必含 {explicit_mark:true, implicit_mark:true, watermark:"内测水印", music:[每场挂曲及 license 快照],
- *              resolution:"1080x1920", fps:30}。确定性排序：场景 seq→镜 seq→id。
+ *              resolution, fps}。确定性排序：场景 seq→镜 seq→id。
+ * 交付口径（2026-11-23 用户令「交付了就要存库随时可看」）：
+ *  - purpose=export＝真合成出货：runtime/bin/ffmpeg.exe 在就真跑；缺→如实报错（COMPOSE_NO_FFMPEG），
+ *    绝不再写 28 字节占位冒充交付成片（床头情歌 stub 出货事故根因：旧版靠 THEATER_COMPOSE_REAL=1 才真跑，
+ *    重启丢环境变量→静默出货占位）。
+ *  - THEATER_COMPOSE_REAL=0＝显式 stub 模式（验收套件专用）：写占位＋meta 如实标 placeholder/kind:*-stub。
+ *  - purpose=preview（C5 样片）永远走占位链且写 <episodeId>_preview.mp4——不再覆写已出货的 _final。
  */
 const fs = require("fs");
 const path = require("path");
@@ -12,6 +18,14 @@ const NAME = "compose";
 const ENGINE = "FFmpeg stub";
 const COST_CENTS = 20; // 合成档成本无契约硬性数字，固定 20 分（假设，见交付说明）
 const MP4_STUB = Buffer.from("\x00\x00\x00\x20ftypiso6\x00\x00\x02\x00iso6avc1mp41", "latin1");
+const FFMPEG_EXE = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
+function hasFfmpeg() {
+  return fs.existsSync(FFMPEG_EXE);
+}
+// 显式 stub 模式仅一个值 "0"（验收套件）；未设/其它值＝真合成默认（有 ffmpeg 就真跑）
+function stubMode() {
+  return process.env.THEATER_COMPOSE_REAL === "0";
+}
 
 function fnv1a(str) {
   let h = 0x811c9dc5;
@@ -59,9 +73,8 @@ function writeOut(ctx, fileName, data) {
 function runFfmpeg(ctx, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const { spawn } = require("child_process");
-    const exe = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
-    if (!fs.existsSync(exe)) return reject(Object.assign(new Error("ffmpeg 不存在（runtime/bin）"), { code: "NO_FFMPEG" }));
-    const pr = spawn(exe, args, { cwd: process.cwd() });
+    if (!hasFfmpeg()) return reject(Object.assign(new Error("ffmpeg 不存在（runtime/bin）"), { code: "NO_FFMPEG" }));
+    const pr = spawn(FFMPEG_EXE, args, { cwd: process.cwd() });
     let err = "";
     pr.stderr.on("data", (d) => { err = (err + String(d)).slice(-4000); });
     pr.on("close", (code) => code === 0 ? resolve(true) : reject(Object.assign(new Error("ffmpeg 失败：" + err.slice(-400))), { code: "FFMPEG_FAIL" }));
@@ -74,8 +87,7 @@ function runFfmpeg(ctx, args, timeoutMs) {
 function probeMedia(file) {
   return new Promise((resolve) => {
     const { spawn } = require("child_process");
-    const exe = path.join(process.cwd(), "runtime", "bin", "ffmpeg.exe");
-    const pr = spawn(exe, ["-i", file], { cwd: process.cwd() });
+    const pr = spawn(FFMPEG_EXE, ["-i", file], { cwd: process.cwd() });
     let err = "";
     pr.stderr.on("data", (d) => { err += String(d); });
     pr.on("close", () => {
@@ -123,10 +135,14 @@ async function runReal(ctx, job, p, episodeId, shotsSorted, musicInfo, lib) {
   // 1) 片头字幕卡（黑底白字 2s；垫无声轨保证 concat 流统一）
   const title = (episode.title || "短剧") + "｜" + String(episode.brief || "").slice(0, 20);
   const cardMp4 = path.join(tmp, "card.mp4");
+  // 片头卡 drawtext 显式 fontfile（Windows fontconfig 回退不可靠，缺字/失败会炸整个交付任务，2026-11-23 E2E 前加固）
+  const cardFont = pickZhFont();
+  const cardVf = "drawtext=" + (cardFont ? "fontfile=" + cardFont.replace(/\\/g, "/").replace(":", "\\:") + ":" : "") +
+    "text=" + JSON.stringify(title.replace(/['":\\]/g, "").slice(0, 30)) + ":fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2";
   await runFfmpeg(ctx, ["-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=2:r=24",
     "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
     "-map", "0:v", "-map", "1:a", "-shortest",
-    "-vf", "drawtext=text=" + JSON.stringify(title.replace(/['":\\]/g, "").slice(0, 30)) + ":fontcolor=white:fontsize=34:x=(w-text_w)/2:y=(h-text_h)/2",
+    "-vf", cardVf,
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", cardMp4], 120000);
   parts.push(cardMp4);
   const partShots = [null]; // parts[i] ↔ 镜对象（0=片头卡；转场镜段=null）
@@ -411,7 +427,13 @@ async function run(job, ctx) {
       }
     }));
 
-  if (p.purpose === "export" && process.env.THEATER_COMPOSE_REAL === "1") {
+  if (p.purpose === "export" && !stubMode()) {
+    // 交付出货＝真合成（2026-11-23 铁规）：ffmpeg 缺→如实报错，绝不写占位冒充成片
+    if (!hasFfmpeg()) {
+      throw Object.assign(new Error("本机 ffmpeg 缺失（runtime/bin/ffmpeg.exe），无法真合成出货；stub 占位不算交付"), {
+        code: "COMPOSE_NO_FFMPEG"
+      });
+    }
     const t0 = Date.now();
     const real = await runReal(ctx, job, p, episodeId, shots, music, lib);
     const seedR = hash12(ctx, { lane: NAME, episodeId, k: "real" });
@@ -425,6 +447,7 @@ async function run(job, ctx) {
       bgm: real.bgm, dialogue_lines: real.dialogue != null ? real.dialogue : null,
       transitions_used: real.transUsed || [],
       subtitles: { enabled: (real.subtitleCues || []).length > 0, burned: !!real.subtitlesBurned, cues: real.subtitleCues || [] },
+      delivered_at: new Date().toISOString(),
       gen_seconds: Math.round((Date.now() - t0) / 1000), seed: seedR
     };
     writeOut(ctx, fileName + ".meta.json", Buffer.from(JSON.stringify(meta, null, 2), "utf8"));
@@ -433,11 +456,14 @@ async function run(job, ctx) {
     return { ok: true, cents: COST_CENTS, art, meta };
   }
   const seed = hash12(ctx, { lane: NAME, episodeId, shots: shotList, music });
-  const fileName = safeSeg(episodeId) + "_final.mp4";
+  // preview（C5 样片）永远占位且独立命名；_final 文件名只属于真交付或显式 stub 模式（验收套件）
+  const isExportStub = p.purpose === "export";
+  const fileName = safeSeg(episodeId) + (isExportStub ? "_final" : "_preview") + ".mp4";
   const art = "var/out/" + fileName;
 
   const meta = {
-    kind: "final-stub",
+    kind: isExportStub ? "final-stub" : "preview-stub",
+    placeholder: true, // 占位如实标注（UI 据此显示「占位」而非「合成完成」）
     lane: NAME,
     engine: ENGINE,
     episodeId,

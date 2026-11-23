@@ -36,6 +36,7 @@
   function statusCn(s) {
     const k = String(s || "").toLowerCase();
     if (k === "done") return "合成完成";
+    if (k === "failed" || k === "error" || k === "cancelled" || k === "canceled") return "合成失败";
     if (k === "queued" || k === "pending") return "排队中";
     return "进行中";
   }
@@ -49,6 +50,27 @@
     props: { epId: { type: String, required: true } },
     template: `
       <div class="v-deliver">
+        <div class="panel" v-if="delivered">
+          <div class="panel-title">成片（已交付）
+            <span class="badge" :class="delivered.placeholder ? 'badge-warn' : 'badge-ok'">
+              {{ delivered.placeholder ? '占位·套件模式' : '已出货 ✓' }}</span>
+          </div>
+          <div class="col" style="align-items:center">
+            <video controls preload="metadata" :src="delivered.href"
+              style="max-height:60vh;max-width:100%;background:#000;border-radius:8px"></video>
+          </div>
+          <div class="row wrap" style="margin-top:6px;justify-content:center">
+            <span class="muted mono">{{ delivered.name }}</span>
+            <span class="muted" v-if="delivered.info">{{ delivered.info }}</span>
+            <span class="muted" v-if="delivered.at">交付于 {{ delivered.at }}</span>
+          </div>
+          <div class="row" style="margin-top:6px;justify-content:center">
+            <a class="btn btn-primary btn-sm" :href="delivered.href" download>下载成片</a>
+            <a class="btn btn-ghost btn-sm" :href="delivered.href" target="_blank" rel="noopener">打开</a>
+            <a class="btn btn-ghost btn-sm" :href="delivered.metaHref" target="_blank" rel="noopener">元数据</a>
+          </div>
+        </div>
+
         <div class="panel">
           <div class="panel-title">交付预检
             <span class="badge" :class="allGreen ? 'badge-ok' : 'badge-warn'" v-if="pre">
@@ -83,10 +105,11 @@
           </div>
           <div v-if="done" class="col">
             <div class="row wrap">
-              <span class="badge" :class="done.pending ? 'badge-warn' : 'badge-ok'">{{ statusCn(done.status) }}</span>
+              <span class="badge" :class="done.status === 'failed' ? 'badge-err' : done.pending ? 'badge-warn' : 'badge-ok'">{{ statusCn(done.status) }}</span>
               <span class="muted mono" v-if="done.jobId">任务 {{ done.jobId }}</span>
             </div>
             <div class="weak" v-if="done.pending">合成任务已排队，产物出来后再刷新本页即可看到。</div>
+            <div class="weak" v-if="done.status === 'failed'" style="color:var(--err)">{{ done.error || '合成任务失败，原因见任务详情' }}</div>
             <div v-if="done.items.length">
               <div class="card-sub" style="margin:6px 0 2px">产物清单</div>
               <div class="v-deliver-art" v-for="(a, i) in done.items" :key="i">
@@ -106,6 +129,28 @@
       const expErr = Vue.ref(null);
       const done = Vue.ref(null);
       const allGreen = Vue.computed(() => !!(pre.value && pre.value.pass));
+      // 成片随时可看（2026-11-23）：交付链接读 episode 持久字段（compose 出货时 cards 存库），
+      // 不再依赖 engine 内存 jobs——重启后产物清单不再变空（床头情歌事故根因之二）。
+      const delivered = Vue.computed(() => {
+        const st = store.state;
+        const eps = st && st.episodes;
+        // /api/state 的 episodes 是数组——map 形态一并兼容
+        const ep = Array.isArray(eps)
+          ? eps.find((e) => e && e.id === props.epId)
+          : eps && eps[props.epId];
+        const art = ep && ep.final_art;
+        if (!art) return null;
+        const href = "/" + String(art).replace(/^\/+/, "");
+        const m = ep.final_meta || {};
+        return {
+          name: String(art).split(/[\\/]/).pop(),
+          href,
+          metaHref: href + ".meta.json",
+          placeholder: !!m.placeholder,
+          at: m.delivered_at ? T.fmtTime(m.delivered_at) : null,
+          info: [m.resolution, m.fps ? m.fps + "fps" : null].filter(Boolean).join(" · ") || null
+        };
+      });
 
       async function runPrecheck() {
         if (preBusy.value) return;
@@ -148,9 +193,17 @@
       function artifactsFromJobs() {
         const lst = store.jobs.list || [];
         const exp = lst
-          .filter(j => /compose/i.test(String(j.type || "")) && j.payload && j.payload.purpose === "export" && String(j.status) === "done")
+          .filter(j => /compose/i.test(String(j.type || "")) && j.payload && j.payload.purpose === "export")
           .sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
         if (!exp) return null;
+        const st = String(exp.status || "").toLowerCase();
+        if (st === "failed" || st === "error" || st === "cancelled" || st === "canceled") {
+          // 合成失败如实显示（真合成/占位都不再假成功，2026-11-23）
+          return { jobId: exp.job_id || exp.id, status: "failed", pending: false, items: [], error: exp.error || null };
+        }
+        if (st !== "done") {
+          return { jobId: exp.job_id || exp.id, status: st || "queued", pending: true, items: [] };
+        }
         const art = exp.art || exp.result || null;
         return {
           jobId: exp.job_id || exp.id,
@@ -162,10 +215,15 @@
       Vue.watch(() => store.jobs.list, () => {
         const a = artifactsFromJobs();
         if (a) done.value = a;
+        // 导出合成完成 → 拉一次 state，让 cards 刚存库的 ep.final_art 立刻可见
+        const lst = store.jobs.list || [];
+        if (lst.some(j => /compose/i.test(String(j.type || "")) && j.payload && j.payload.purpose === "export" && String(j.status) === "done")) {
+          store.refreshState().catch(() => {});
+        }
       });
 
       return {
-        pre, preBusy, preErr, expBusy, expErr, done, allGreen,
+        pre, preBusy, preErr, expBusy, expErr, done, allGreen, delivered,
         runPrecheck, doExport,
         hs: s => T.sanitize(s),
         statusCn

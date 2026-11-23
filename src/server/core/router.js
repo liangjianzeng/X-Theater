@@ -60,6 +60,7 @@ const CODE_STATUS = {
   BAD_DECISION: 400,
   RUNTIME: 503,
   L2_UNAVAILABLE: 503,
+  COMPOSE_UNAVAILABLE: 503, // 交付真合成不可用（本机 ffmpeg 缺失）——导出如实拦截，不产占位（2026-11-23）
   TURN_LIMIT: 429,
   RATE_LIMITED: 429 // login 暴力枚举退避（2026-11-23 深审 D2）
 };
